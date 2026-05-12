@@ -1,0 +1,10 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const page = await ctx.newPage();
+await page.goto('http://127.0.0.1:8742/', { waitUntil: 'networkidle' });
+await page.getByRole('button', { name: /^Skills$/ }).first().click();
+await page.waitForTimeout(700);
+await page.screenshot({ path: '.screenshots/after-skills-zoom.png', clip: { x: 240, y: 0, width: 1200, height: 900 } });
+await browser.close();
+console.log('done');
