@@ -1,33 +1,69 @@
-# zab
+<p align="center">
+  <img src="docs/assets/zab-logo.png" alt="zab logo" width="120" />
+</p>
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+<h1 align="center">zab</h1>
 
-> **zab** is a local-first CLI and dashboard that unifies your AI workspace — skills, MCP servers, projects, connectors, and agent memory — into one searchable, agent-ready control plane.
+<p align="center">
+  <strong>One command center for your entire AI stack — skills · MCP · scan — local-first.</strong>
+</p>
+
+<p align="center">
+  <em>Un seul poste de pilotage pour toute ta stack IA — skills · MCP · scan — 100&nbsp;% local.</em>
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green.svg" alt="License: Apache-2.0"></a>
+</p>
+
+<p align="center">
+  <code>skills · MCP · scan</code>
+</p>
+
+---
+
+## The story
+
+You run **Cursor**, **Claude Code**, **Codex**, **Kimi**, **Hermes**, a pile of **MCP servers**, skills repos, `.env` files, and cloud crons. Each tool is great on its own — but nothing shares a map of your setup.
+
+**zab does not replace your agents.** It is the **sovereign aggregation layer** on your machine:
+
+1. **Scan** what you already have (skills, MCP, connectors, CLIs, projects).
+2. **Index** it into a regenerable local cache (`~/.local/share/zab/state.yaml`).
+3. **Operate** through a CLI, a web dashboard, and a read-only MCP server so any agent can bootstrap without guessing paths or leaking secrets.
+
+Your data stays under XDG paths (`~/.config/zab`, `~/.local/share/zab`). No cloud dependency for core workflows.
+
+→ Full brand voice: [docs/BRAND.md](docs/BRAND.md)
+
+## Dashboard
+
+| Overview — local-first index at a glance | Organizations — skills grouped by org |
+|:---:|:---:|
+| ![Overview](docs/assets/screenshots/overview.png) | ![Organizations](docs/assets/screenshots/organizations.png) |
+
+| Projects — per-repo skills & security jobs | Skills registry — adopt, sync, broadcast |
+|:---:|:---:|
+| ![Projects](docs/assets/screenshots/projects.png) | ![Skills](docs/assets/screenshots/skills.png) |
+
+| Conversations — aggregate CLI histories | Configuration — guided `config.yaml` |
+|:---:|:---:|
+| ![Conversations](docs/assets/screenshots/conversations.png) | ![Configuration](docs/assets/screenshots/configuration-cli-watchlist.png) |
+
+*Optional Postgres memory (`ZAB_MEMORY_DATABASE_URL`) powers conversation archive and full-text search.*
 
 ## Why zab
 
-If you run multiple AI coding tools (Cursor, Claude Code, Codex, Kimi, Hermes, …), your setup quickly fragments across skills folders, MCP configs, IDE settings, env files, and project roots.
+If you run multiple AI coding tools, your setup fragments across skills folders, MCP configs, IDE settings, env files, and project roots.
 
-**zab does not replace those tools.** It acts as a sovereign aggregation layer on your machine:
-
-- scans and indexes what you already have
-- exposes it through a CLI, a web dashboard, and a read-only MCP server
-- helps coding agents bootstrap with structured local context
-
-Your data stays local under XDG paths (`~/.config/zab`, `~/.local/share/zab`).
-
-## Vision
-
-**zab** is the local orchestrator for developers who run parallel AI workflows. Instead of reinventing agents or skills, it makes your existing toolchain coherent: discoverable, inspectable, and safe to hand off to any MCP-compatible client.
-
-In practice, zab helps you:
+**zab** makes your existing toolchain **coherent**: discoverable, inspectable, and safe to hand off to any MCP-compatible client.
 
 - **Unify** scattered AI tooling into one regenerable local index
 - **Bootstrap agents** with `agent bootstrap`, `search`, `inspect`, `context-pack`, and `mcp serve`
-- **Stay local-first** with offline-capable caches and no cloud dependency for core workflows
+- **Stay local-first** with offline-capable caches
 - **Operate safely** with env tracking, security scans, and no raw secret echo
-- **Bridge ecosystems** via skills broadcast, task aggregation, and optional Postgres memory
+- **Bridge ecosystems** via skills broadcast, task aggregation, MemPalace, CodexBar, Composio, Hermes
 
 ## Features
 
@@ -230,6 +266,7 @@ cd zab-ui && npm run test:e2e
 
 ## Documentation
 
+- [Brand & storytelling](docs/BRAND.md)
 - [Skills broadcast](docs/skills-broadcast.md)
 - [Skills registry migration](docs/skills-registry-migration.md)
 - [Composio integration notes](docs/composio-integration.md)

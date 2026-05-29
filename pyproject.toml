@@ -30,10 +30,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/zab-dev/zab"
-Documentation = "https://github.com/zab-dev/zab#readme"
-Repository = "https://github.com/zab-dev/zab"
-Issues = "https://github.com/zab-dev/zab/issues"
+Homepage = "https://github.com/mbakkali/zab"
+Documentation = "https://github.com/mbakkali/zab#readme"
+Repository = "https://github.com/mbakkali/zab"
+Issues = "https://github.com/mbakkali/zab/issues"
 
 [project.scripts]
 zab = "zab.cli:main"

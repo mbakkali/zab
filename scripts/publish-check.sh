@@ -24,7 +24,7 @@ echo "== publish-check: forbidden patterns =="
 
 scan_pattern "telegram bot token" '[0-9]{8,10}:[A-Za-z0-9_-]{35,}' --glob '!zab/tests/**'
 scan_pattern "composio user api key" 'uak_[A-Za-z0-9]{8,}' --glob '!zab/tests/**'
-scan_pattern "personal username" 'mbakkali' --glob '!zab/tests/**' --glob '!zab/CONNECTORS-PLAN.md'
+scan_pattern "personal home path username" '/Users/mbakkali|mbakkali-workstation|gs://mbakkali' --glob '!zab/tests/**' --glob '!zab/CONNECTORS-PLAN.md'
 scan_pattern "personal email" 'mehdi\.bakkali|mehdi@flowmetrik' --glob '!zab/tests/**'
 scan_pattern "telegram user id" '8996436319'
 scan_pattern "personal bot handle" 'Bakoutbot'

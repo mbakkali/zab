@@ -1,0 +1,17 @@
+title = "zab gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore local-only and generated paths"
+paths = [
+  '''\.hermes/''',
+  '''\.cursor/''',
+  '''flowmetrik-openwebui/''',
+  '''deploy/''',
+  '''agent\.md''',
+  '''vision\.md''',
+  '''uv\.lock''',
+  '''zab-ui/package-lock\.json''',
+]
