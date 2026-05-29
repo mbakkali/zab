@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from zab.paths import user_home
-from zab.user_config import projects_roots_resolved
+from zab.paths import skills_roots_resolved_from_config, user_home
+from zab.services.project_git import project_git_metadata
+from zab.user_config import projects_roots_resolved, skills_sync_settings
 
 # Parcours .cursor / .claude : ignorer autant que possible le bruit / la volumétrie
 _PROJECT_SUBTREE_SKIP: frozenset[str] = frozenset(
@@ -113,6 +114,7 @@ def discover_skills_in_project(project_path: Path) -> list[Path]:
 
 
 def _immediate_project_dirs(projects_root: Path) -> list[Path]:
+    excluded = _excluded_project_dirs()
     try:
         items = sorted(projects_root.iterdir(), key=lambda x: x.name.casefold())
     except OSError:
@@ -123,7 +125,26 @@ def _immediate_project_dirs(projects_root: Path) -> list[Path]:
             continue
         if p.name.startswith("."):
             continue
+        try:
+            if p.resolve() in excluded:
+                continue
+        except OSError:
+            continue
         out.append(p)
+    return out
+
+
+def _excluded_project_dirs() -> set[Path]:
+    out: set[Path] = set()
+    try:
+        out.add(Path(str(skills_sync_settings()["repo_root"])).expanduser().resolve())
+    except OSError:
+        pass
+    for root in skills_roots_resolved_from_config():
+        try:
+            out.add(root.resolve())
+        except OSError:
+            continue
     return out
 
 
@@ -161,6 +182,7 @@ def _project_row(
     }
     if workspace_parent is not None:
         row["workspace_parent"] = workspace_parent
+    row.update(project_git_metadata(path))
     return row
 
 

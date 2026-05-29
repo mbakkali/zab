@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react'
 import {
   CompassIcon,
@@ -14,6 +15,10 @@ import {
   CpuIcon,
   Folder02Icon,
   CheckListIcon,
+  CloudUploadIcon,
+  PlayCircleIcon,
+  MessageMultiple02Icon,
+  Mail01Icon,
 } from '@hugeicons/core-free-icons'
 import {
   Dialog,
@@ -21,13 +26,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { LanguageSwitcher } from '@/components/language-switcher'
+import { useI18n } from '@/i18n/use-i18n'
+import { NAV_I18N_KEY } from '@/i18n/nav-labels'
 import { cn } from '@/lib/utils'
 
 export type NavId =
   | 'overview'
+  | 'system_check'
   | 'orgs'
   | 'projects'
   | 'tasks_inbox'
+  | 'channels'
+  | 'conversations'
   | 'plugins'
   | 'connectors'
   | 'config'
@@ -37,26 +48,36 @@ export type NavId =
   | 'memory'
   | 'ide'
   | 'models'
+  | 'workstation'
+  | 'hermes'
   | 'skills'
+  | 'crons'
 
-const items: { id: NavId; label: string; icon: unknown; group: 'main' | 'tools' }[] = [
-  { id: 'overview', label: 'Vue d’ensemble', icon: CompassIcon, group: 'main' },
-  { id: 'orgs', label: 'Organisations', icon: Briefcase01Icon, group: 'main' },
-  { id: 'projects', label: 'Projets', icon: Folder02Icon, group: 'main' },
-  { id: 'tasks_inbox', label: 'Tâches (multi-outils)', icon: CheckListIcon, group: 'main' },
-  { id: 'plugins', label: 'Plugins', icon: PuzzleIcon, group: 'main' },
-  { id: 'connectors', label: 'Connecteurs', icon: Plug02Icon, group: 'main' },
-  { id: 'config', label: 'Configuration', icon: Settings02Icon, group: 'main' },
-  { id: 'skills', label: 'Skills', icon: SparklesIcon, group: 'main' },
-  { id: 'models', label: 'Modèles / Cursor', icon: CpuIcon, group: 'main' },
-  { id: 'tests', label: 'Tests & jobs', icon: TestTube01Icon, group: 'tools' },
-  { id: 'memory', label: 'Mémoire', icon: AiBrain02Icon, group: 'tools' },
-  { id: 'security', label: 'Sécurité', icon: LockKeyIcon, group: 'tools' },
-  { id: 'exports', label: 'Exports', icon: Upload03Icon, group: 'tools' },
-  { id: 'ide', label: 'IDE / outils', icon: Settings02Icon, group: 'tools' },
+const NAV_ITEMS: { id: NavId; icon: unknown; group: 'main' | 'tools' }[] = [
+  { id: 'overview', icon: CompassIcon, group: 'main' },
+  { id: 'system_check', icon: TestTube01Icon, group: 'main' },
+  { id: 'orgs', icon: Briefcase01Icon, group: 'main' },
+  { id: 'projects', icon: Folder02Icon, group: 'main' },
+  { id: 'tasks_inbox', icon: CheckListIcon, group: 'main' },
+  { id: 'channels', icon: Mail01Icon, group: 'main' },
+  { id: 'conversations', icon: MessageMultiple02Icon, group: 'main' },
+  { id: 'plugins', icon: PuzzleIcon, group: 'main' },
+  { id: 'connectors', icon: Plug02Icon, group: 'main' },
+  { id: 'config', icon: Settings02Icon, group: 'main' },
+  { id: 'skills', icon: SparklesIcon, group: 'main' },
+  { id: 'models', icon: CpuIcon, group: 'main' },
+  { id: 'workstation', icon: CloudUploadIcon, group: 'main' },
+  { id: 'hermes', icon: PlayCircleIcon, group: 'main' },
+  { id: 'crons', icon: CheckListIcon, group: 'main' },
+  { id: 'tests', icon: TestTube01Icon, group: 'tools' },
+  { id: 'memory', icon: AiBrain02Icon, group: 'tools' },
+  { id: 'security', icon: LockKeyIcon, group: 'tools' },
+  { id: 'exports', icon: Upload03Icon, group: 'tools' },
+  { id: 'ide', icon: Settings02Icon, group: 'tools' },
 ]
 
 function NavBrand() {
+  const { t } = useI18n()
   return (
     <div className="mb-6 flex items-center gap-2 px-2">
       <div className="flex size-8 items-center justify-center rounded-lg bg-zinc-900 text-white">
@@ -64,7 +85,7 @@ function NavBrand() {
       </div>
       <div>
         <p className="text-sm font-semibold tracking-tight">zab</p>
-        <p className="text-muted-foreground text-[11px]">skills · MCP · scan</p>
+        <p className="text-muted-foreground text-[11px]">{t('nav.brandTagline')}</p>
       </div>
     </div>
   )
@@ -76,13 +97,23 @@ export function SidebarNavPanel({
   onChange,
   className,
   showEditSkillLink = false,
+  showLanguageSwitcher = false,
 }: {
   value: NavId
   onChange: (id: NavId) => void
   className?: string
-  /** Sur mobile, raccourci vers l’onglet Skills + éditeur ; masqué sur desktop (FAB). */
   showEditSkillLink?: boolean
+  showLanguageSwitcher?: boolean
 }) {
+  const { t } = useI18n()
+  const items = useMemo(
+    () =>
+      NAV_ITEMS.map((it) => ({
+        ...it,
+        label: t(NAV_I18N_KEY[it.id]),
+      })),
+    [t],
+  )
   const main = items.filter((it) => it.group === 'main')
   const tools = items.filter((it) => it.group === 'tools')
 
@@ -100,7 +131,9 @@ export function SidebarNavPanel({
           />
         ))}
       </nav>
-      <p className="text-muted-foreground mt-6 mb-2 px-2 text-[11px] font-medium tracking-wider uppercase">Outils</p>
+      <p className="text-muted-foreground mt-6 mb-2 px-2 text-[11px] font-medium tracking-wider uppercase">
+        {t('nav.toolsGroup')}
+      </p>
       <nav className="flex flex-col gap-1">
         {tools.map((it) => (
           <NavButton
@@ -116,10 +149,15 @@ export function SidebarNavPanel({
             active={value === 'skills'}
             onClick={() => onChange('skills' as NavId)}
             icon={PencilEdit02Icon}
-            label="Éditer SKILL"
+            label={t('nav.editSkill')}
           />
         ) : null}
       </nav>
+      {showLanguageSwitcher ? (
+        <div className="mt-6 px-2">
+          <LanguageSwitcher className="w-full justify-center" />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -127,12 +165,11 @@ export function SidebarNavPanel({
 export function SidebarNav({ value, onChange }: { value: NavId; onChange: (id: NavId) => void }) {
   return (
     <aside className="bg-sidebar border-sidebar-border sticky top-0 hidden h-screen w-60 shrink-0 border-r px-3 py-5 md:block">
-      <SidebarNavPanel value={value} onChange={onChange} />
+      <SidebarNavPanel value={value} onChange={onChange} showLanguageSwitcher />
     </aside>
   )
 }
 
-/** Menu mobile : même navigation que la sidebar (visible uniquement lorsque ``open``). */
 export function MobileNavDrawer({
   open,
   onOpenChange,
@@ -144,6 +181,7 @@ export function MobileNavDrawer({
   value: NavId
   onChange: (id: NavId) => void
 }) {
+  const { t } = useI18n()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -155,13 +193,9 @@ export function MobileNavDrawer({
       >
         <div className="bg-sidebar flex max-h-[100dvh] min-h-0 flex-1 flex-col overflow-y-auto border-r px-3 py-5">
           <DialogHeader className="sr-only">
-            <DialogTitle>Navigation zab</DialogTitle>
+            <DialogTitle>{t('nav.mobileDrawerTitle')}</DialogTitle>
           </DialogHeader>
-          <SidebarNavPanel
-            value={value}
-            onChange={onChange}
-            showEditSkillLink
-          />
+          <SidebarNavPanel value={value} onChange={onChange} showEditSkillLink showLanguageSwitcher />
         </div>
       </DialogContent>
     </Dialog>

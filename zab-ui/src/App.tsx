@@ -21,9 +21,10 @@ import {
   Search01Icon,
   HelpSquareIcon,
   CpuIcon,
+  MessageMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { Menu } from 'lucide-react'
+import { ChevronDown, ChevronRight, Menu, CheckCircle2, XCircle, AlertTriangle, Loader2, Download, Wrench } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
@@ -35,12 +36,38 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { SidebarNav, MobileNavDrawer, type NavId } from '@/components/sidebar-nav'
-import { ConnectorsView, ConnectorsConfigFilesPanel } from '@/components/connectors-view'
+import { ConnectorsView } from '@/components/connectors-view'
+import { ConfigView } from '@/components/config-view'
 import { SkillsView } from '@/components/skills-view'
 import { ProjectsView } from '@/components/projects-view'
 import { TasksInboxView } from '@/components/tasks-inbox-view'
+import { ConversationsView } from '@/components/conversations-view'
+import { WorkstationView } from '@/components/workstation-view'
+import CronsView from '@/components/crons-view'
+import { ChannelsView, type ChannelItem } from '@/components/channels-view'
+import { vscodeFileHref } from '@/lib/env-open'
 import { shortenHomeInPath, vscodeFileHrefForSkill } from '@/lib/skill-open'
+import {
+  buildSystemCheckReport,
+  consumeSystemCheckStream,
+  downloadSystemCheckReport,
+  type SystemCheckItem,
+  type SystemCheckReport,
+  type SystemCheckStatus,
+  type SystemCheckSummary,
+} from '@/lib/system-check-stream'
+import { startJobAndCollectLines } from '@/lib/job-stream'
 import { cn } from '@/lib/utils'
+import { LanguageSwitcher } from '@/components/language-switcher'
+import { useI18n } from '@/i18n/use-i18n'
+import { NAV_I18N_KEY } from '@/i18n/nav-labels'
+import { useFormatDate } from '@/i18n/format'
+
+const HERMES_OPENWEBUI_URL = 'http://127.0.0.1:3000'
+/** Port hôte du bridge (mapping docker-compose 8081:8080). */
+const HERMES_BRIDGE_HEALTH_URL = 'http://127.0.0.1:8081/health'
+/** Chemin sous le dépôt zab ; validation projects_roots (petit-enfant de ~/projects). */
+const FLOWMETRIK_OPENWEBUI_PROJECT = '~/projects/zab/flowmetrik-openwebui'
 
 type McpOverviewBlock = {
   source: string
@@ -54,12 +81,19 @@ type OverviewProject = {
   projects_root: string
   workspace_parent?: string | null
   skills: { id: string; path: string; rel_from_home?: string; source?: string }[]
+  git_repo?: boolean
+  git_branch?: string | null
+  remote_host?: string | null
+  origin_url?: string | null
+  origin_https?: string | null
 }
 
 type Overview = {
   skills_root: string | null
+  skills_roots?: string[]
   skills_root_configured: boolean
   skills_root_yaml_raw?: string | null
+  skills_roots_yaml?: string[]
   user_config_path?: string
   zab_version?: string
   dashboard_warning: string | null
@@ -81,12 +115,28 @@ type ScanToolsPayload = {
   scripts: { id: string; name: string; kind: string; path: string; description: string }[]
 }
 
-type EnvRow = {
-  name: string
-  present: boolean
-  in_process: boolean
-  in_file: boolean
-  masked: string
+type StateSummary = {
+  version?: string
+  last_sync_at?: string
+  path?: string
+  counts: Record<string, number>
+}
+
+type CodeToolRow = {
+  key: string
+  id: string
+  display_name?: string
+  provider?: string
+  kind?: string
+  binary?: string | null
+  installed?: boolean
+}
+
+type SecurityReportRow = {
+  key: string
+  path: string
+  updated_at_utc: string
+  bytes: number
 }
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -99,6 +149,7 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function useJobRunner() {
+  const { t } = useI18n()
   const [lines, setLines] = useState<string[]>([])
   const [jobId, setJobId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -132,8 +183,8 @@ function useJobRunner() {
                 setRunning(false)
                 const st = data.summary.status
                 const code = data.summary.exit_code
-                if (st === 'done' && code === 0) toast.success('Job terminé')
-                else toast.error(`Job terminé : ${st} (code ${code})`)
+                if (st === 'done' && code === 0) toast.success(t('common.jobDone'))
+                else toast.error(t('common.jobDoneWithCode', { status: st, code: String(code) }))
               }
             } catch {
               const fallback = ev.data != null ? String(ev.data) : ''
@@ -143,7 +194,7 @@ function useJobRunner() {
           es.onerror = () => {
             es.close()
             setRunning(false)
-            toast.error('Flux SSE interrompu')
+            toast.error(t('common.sseInterrupted'))
           }
         } catch (e) {
           setRunning(false)
@@ -158,28 +209,69 @@ function useJobRunner() {
 }
 
 const VALID_TABS: NavId[] = [
-  'overview', 'orgs', 'projects', 'tasks_inbox', 'plugins', 'connectors', 'config',
-  'tests', 'security', 'exports', 'memory', 'ide', 'models', 'skills',
+  'overview', 'system_check', 'orgs', 'projects', 'tasks_inbox', 'channels', 'conversations', 'plugins', 'connectors', 'config',
+  'tests', 'security', 'exports', 'memory', 'ide', 'models', 'workstation', 'hermes', 'skills', 'crons',
 ]
 
+/** Accepte `#conversations`, `#/conversations`, `#conversations?…` pour le SPA hash routing. */
+function parseLocationHashToNavId(): NavId | null {
+  let raw = window.location.hash.replace(/^#/, '').trim()
+  if (!raw) return null
+  if (raw.startsWith('/')) raw = raw.slice(1)
+  const segment = (raw.split(/[/?]/)[0] ?? '').trim()
+  if (!segment) return null
+  const id = segment as NavId
+  return VALID_TABS.includes(id) ? id : null
+}
+
 export default function App() {
+  const { t } = useI18n()
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [envRows, setEnvRows] = useState<EnvRow[]>([])
   const [toolsLocal, setToolsLocal] = useState<Record<string, unknown> | null>(null)
   const [exportHints, setExportHints] = useState<Record<string, unknown> | null>(null)
+  const [stateSummary, setStateSummary] = useState<StateSummary | null>(null)
   const { lines, jobId, running, runPreset } = useJobRunner()
+  const {
+    lines: securityLines,
+    jobId: securityJobId,
+    running: securityRunning,
+    runPreset: runSecurityPreset,
+  } = useJobRunner()
+  const [miningProjectPath, setMiningProjectPath] = useState<string | null>(null)
+
+  const handleMineProjectMemory = useCallback(async (projectPath: string, projectName: string) => {
+    setMiningProjectPath(projectPath)
+    try {
+      const r = await startJobAndCollectLines('mempalace_mine', {
+        project_path: projectPath,
+        wing: projectName,
+        mode: 'projects',
+      })
+      if (r.status === 'done' && r.exit_code === 0) {
+        toast.success(t('memory.toast.mempalaceDone', { name: projectName }))
+      } else {
+        toast.error(
+          t('memory.toast.mempalaceFail', {
+            name: projectName,
+            status: r.status,
+            code: String(r.exit_code),
+          }),
+        )
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMiningProjectPath(null)
+    }
+  }, [t])
 
   const [skillPath, setSkillPath] = useState('orgs/flowmetrik/skills/flowmetrik-context/SKILL.md')
   const [skillContent, setSkillContent] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
 
-  const [tab, setTab] = useState<NavId>(() => {
-    const hash = window.location.hash.replace('#', '') as NavId
-    return VALID_TABS.includes(hash) ? hash : 'overview'
-  })
+  const [tab, setTab] = useState<NavId>(() => parseLocationHashToNavId() ?? 'overview')
   const [scanTools, setScanTools] = useState<ScanToolsPayload | null>(null)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  const hydratedFromHashRef = useRef(false)
 
   const navigateTab = useCallback((id: NavId) => {
     setTab(id)
@@ -188,18 +280,9 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (hydratedFromHashRef.current) return
-    hydratedFromHashRef.current = true
-    const hash = window.location.hash.replace('#', '') as NavId
-    if (VALID_TABS.includes(hash)) {
-      setTab(hash)
-    }
-  }, [])
-
-  useEffect(() => {
     const handler = () => {
-      const hash = window.location.hash.replace('#', '') as NavId
-      if (VALID_TABS.includes(hash)) setTab(hash)
+      const id = parseLocationHashToNavId()
+      if (id) setTab(id)
     }
     window.addEventListener('hashchange', handler)
     return () => window.removeEventListener('hashchange', handler)
@@ -208,18 +291,18 @@ export default function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const [ov, sec, tl, ex, sc] = await Promise.all([
+        const [ov, tl, ex, sc, st] = await Promise.all([
           apiJson<Overview>('/api/overview'),
-          apiJson<{ variables: EnvRow[] }>('/api/security/env'),
           apiJson<Record<string, unknown>>('/api/tools/local'),
           apiJson<Record<string, unknown>>('/api/exports/hints'),
           apiJson<ScanToolsPayload>('/api/tools/scan'),
+          apiJson<StateSummary>('/api/state'),
         ])
         setOverview(ov)
-        setEnvRows(sec.variables)
         setToolsLocal(tl)
         setExportHints(ex)
         setScanTools(sc)
+        setStateSummary(st)
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e))
       }
@@ -254,11 +337,11 @@ export default function App() {
     try {
       const r = await apiJson<{ content: string }>(`/api/skills/file?path=${encodeURIComponent(target)}`)
       setSkillContent(r.content)
-      toast.success('SKILL chargé')
+      toast.success(t('skillEditor.toastLoaded'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
-  }, [skillPath])
+  }, [skillPath, t])
 
   const saveSkill = async () => {
     try {
@@ -267,7 +350,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: skillContent }),
       })
-      toast.success('SKILL enregistré (backup .zab-backup-*)')
+      toast.success(t('skillEditor.toastSaved'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
@@ -282,11 +365,26 @@ export default function App() {
     try {
       const sc = await apiJson<ScanToolsPayload>('/api/tools/scan')
       setScanTools(sc)
-      toast.success(`Scan terminé — ${sc.cli_commands.length} commandes zab, ${sc.scripts.length} scripts`)
+      toast.success(
+        t('overview.toast.scanDone', {
+          cli: String(sc.cli_commands.length),
+          scripts: String(sc.scripts.length),
+        }),
+      )
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
-  }, [])
+  }, [t])
+
+  const syncState = useCallback(async () => {
+    try {
+      const st = await apiJson<StateSummary>('/api/sync', { method: 'POST' })
+      setStateSummary(st)
+      toast.success(t('overview.toast.indexSynced'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }, [t])
 
   const probe = async (kind: 'litellm' | 'openrouter') => {
     try {
@@ -297,22 +395,12 @@ export default function App() {
     }
   }
 
-  const titles: Record<NavId, string> = {
-    overview: 'Vue d’ensemble',
-    orgs: 'Organisations',
-    projects: 'Projets',
-    tasks_inbox: 'Tâches (multi-outils)',
-    plugins: 'Plugins',
-    connectors: 'Connecteurs',
-    config: 'Configuration',
-    tests: 'Tests & jobs',
-    security: 'Sécurité',
-    exports: 'Exports',
-    memory: 'Mémoire',
-    ide: 'IDE & outils',
-    models: 'Modèles / Cursor',
-    skills: 'Skills',
-  }
+  const tabTitle = useMemo(() => t(NAV_I18N_KEY[tab]), [t, tab])
+
+  useEffect(() => {
+    document.title =
+      tab === 'overview' ? t('app.docTitle') : t('app.docTitleTab', { title: tabTitle })
+  }, [tab, tabTitle, t])
 
   return (
     <div className="bg-muted/40 text-foreground min-h-screen">
@@ -327,7 +415,7 @@ export default function App() {
                 variant="ghost"
                 size="icon"
                 className="shrink-0 md:hidden"
-                aria-label="Ouvrir le menu de navigation"
+                aria-label={t('nav.openMenu')}
                 onClick={() => setMobileNavOpen(true)}
               >
                 <Menu className="size-5" />
@@ -335,18 +423,19 @@ export default function App() {
               <div className="flex min-w-0 items-center gap-2 text-sm">
                 <span className="text-muted-foreground shrink-0">zab</span>
                 <span className="text-muted-foreground shrink-0">/</span>
-                <span className="truncate font-medium tracking-tight">{titles[tab]}</span>
+                <span className="truncate font-medium tracking-tight">{tabTitle}</span>
               </div>
             </div>
-            <div className="text-muted-foreground flex min-w-0 max-w-[42%] flex-shrink-0 items-center justify-end sm:max-w-[48%] md:max-w-[55%] lg:max-w-md">
+            <div className="text-muted-foreground flex min-w-0 max-w-[42%] flex-shrink-0 items-center justify-end gap-2 sm:max-w-[48%] md:max-w-[55%] lg:max-w-md">
+              <LanguageSwitcher />
               {overview ? (
                 overview.skills_root ? (
-                  <code className="bg-muted truncate rounded-md px-2 py-1 text-left font-mono text-[10px] sm:text-xs">
+                  <code className="bg-muted hidden truncate rounded-md px-2 py-1 text-left font-mono text-[10px] sm:inline sm:text-xs">
                     {overview.skills_root.replace(/^\/Users\/[^/]+/, '~')}
                   </code>
                 ) : (
-                  <span className="text-amber-700 dark:text-amber-400 line-clamp-2 text-right text-[10px] sm:text-xs">
-                    Config skills manquante
+                  <span className="text-amber-700 dark:text-amber-400 line-clamp-2 hidden text-right text-[10px] sm:inline sm:text-xs">
+                    {t('app.skillsConfigMissing')}
                   </span>
                 )
               ) : null}
@@ -360,8 +449,18 @@ export default function App() {
                 totalSkills={totalSkills}
                 totalConnectors={totalConnectors}
                 enabledConnectors={enabledConnectors}
+                stateSummary={stateSummary}
                 onJump={navigateTab}
                 refreshScanTools={refreshScanTools}
+                syncState={syncState}
+              />
+            )}
+            {tab === 'system_check' && <SystemCheckSection />}
+            {tab === 'channels' && (
+              <ChannelsView
+                orgs={overview?.orgs}
+                onRefreshStats={refreshOverview}
+                onOpenConnectorsConfig={(_channel: ChannelItem) => navigateTab('connectors')}
               />
             )}
             {tab === 'orgs' && (
@@ -378,6 +477,12 @@ export default function App() {
             {tab === 'projects' && (
               <ProjectsView
                 overview={overview}
+                miningProjectPath={miningProjectPath}
+                onMineMemory={handleMineProjectMemory}
+                onRunSecurityScan={(preset, projectPath) => {
+                  navigateTab('security')
+                  runSecurityPreset(preset, { project_path: projectPath })
+                }}
                 onOpenSkill={(path) => {
                   navigateTab('skills')
                   void loadSkill(path)
@@ -387,9 +492,10 @@ export default function App() {
               />
             )}
             {tab === 'tasks_inbox' && <TasksInboxView onJump={navigateTab} />}
+            {tab === 'conversations' && <ConversationsView />}
             {tab === 'plugins' && <PluginsSection overview={overview} onJump={navigateTab} />}
             {tab === 'connectors' && <ConnectorsView />}
-            {tab === 'config' && <ConnectorsConfigFilesPanel />}
+            {tab === 'config' && <ConfigView />}
             {tab === 'skills' && (
               <SkillsView
                 orgs={overview?.orgs}
@@ -405,21 +511,30 @@ export default function App() {
             )}
             {tab === 'security' && (
               <SecuritySection
-                envRows={envRows}
-                refreshEnvRows={async () => {
-                  const sec = await apiJson<{ variables: EnvRow[] }>('/api/security/env')
-                  setEnvRows(sec.variables)
-                }}
+                running={securityRunning}
+                runPreset={runSecurityPreset}
+                jobId={securityJobId}
+                jobLines={securityLines}
               />
             )}
             {tab === 'exports' && (
               <ExportsSection running={running} runPreset={runPreset} hints={exportHints} />
             )}
             {tab === 'memory' && (
-              <MemorySection running={running} runPreset={runPreset} jobLines={lines} jobId={jobId} />
+              <MemorySection
+                projects={overview?.projects ?? []}
+                miningProjectPath={miningProjectPath}
+                running={running}
+                runPreset={runPreset}
+                jobLines={lines}
+                jobId={jobId}
+              />
             )}
             {tab === 'ide' && <IdeSection toolsLocal={toolsLocal} scanTools={scanTools} probe={probe} />}
             {tab === 'models' && <ModelsCodySection />}
+            {tab === 'workstation' && <WorkstationView />}
+            {tab === 'hermes' && <HermesSection />}
+            {tab === 'crons' && <CronsView />}
           </div>
         </main>
       </div>
@@ -438,22 +553,342 @@ export default function App() {
   )
 }
 
+function StatusIcon({ status }: { status: SystemCheckStatus }) {
+  if (status === 'ok') return <CheckCircle2 className="size-5 text-emerald-600" />
+  if (status === 'warn') return <AlertTriangle className="size-5 text-amber-500" />
+  if (status === 'fail') return <XCircle className="size-5 text-red-600" />
+  if (status === 'running') return <Loader2 className="size-5 animate-spin text-blue-500" />
+  // pending — grisé
+  return <div className="size-5 rounded-full border-2 border-gray-300 bg-gray-100" />
+}
+
+function statusLabel(status: SystemCheckStatus, t: (key: string) => string) {
+  if (status === 'ok') return t('common.ok')
+  if (status === 'warn') return t('common.warn')
+  if (status === 'fail') return t('common.fail')
+  if (status === 'running') return t('systemCheck.running')
+  return t('common.pending')
+}
+
+function applySystemCheckReport(
+  report: SystemCheckReport,
+  setters: {
+    setChecks: (v: Record<string, SystemCheckItem>) => void
+    setSummary: (v: SystemCheckSummary) => void
+    setReport: (v: SystemCheckReport) => void
+    checksRef: { current: Record<string, SystemCheckItem> }
+  },
+) {
+  const map: Record<string, SystemCheckItem> = {}
+  for (const chk of report.checks) {
+    map[chk.id] = chk
+  }
+  setters.checksRef.current = map
+  setters.setChecks(map)
+  setters.setSummary({
+    generated_at_utc: report.generated_at_utc,
+    percentage: report.percentage,
+    score: report.score,
+    total: report.total,
+    ok: report.ok,
+    warn: report.warn,
+    fail: report.fail,
+  })
+  setters.setReport(report)
+}
+
+function SystemCheckSection() {
+  const { t } = useI18n()
+  const { formatDateTime } = useFormatDate()
+  const [checks, setChecks] = useState<Record<string, SystemCheckItem>>({})
+  const [summary, setSummary] = useState<SystemCheckSummary | null>(null)
+  const [report, setReport] = useState<SystemCheckReport | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const streamAbortRef = useRef<AbortController | null>(null)
+  const checksRef = useRef<Record<string, SystemCheckItem>>({})
+
+  const runCheck = useCallback(() => {
+    streamAbortRef.current?.abort()
+    const controller = new AbortController()
+    streamAbortRef.current = controller
+    checksRef.current = {}
+
+    setLoading(true)
+    setError(null)
+    setSummary(null)
+    setReport(null)
+    setChecks({})
+
+    void (async () => {
+      try {
+        const out: { report: SystemCheckReport | null } = { report: null }
+        await consumeSystemCheckStream(
+          {
+            onRegistry: (descriptors) => {
+              const init: Record<string, SystemCheckItem> = {}
+              for (const d of descriptors) {
+                init[d.id] = { ...d, status: 'pending', message: '' }
+              }
+              checksRef.current = init
+              setChecks(init)
+            },
+            onCheck: (chk) => {
+              checksRef.current = { ...checksRef.current, [chk.id]: chk }
+              setChecks((prev) => {
+                const next = { ...prev }
+                for (const id of Object.keys(next)) {
+                  if (next[id].status === 'pending') {
+                    next[id] = { ...next[id], status: 'running' }
+                    break
+                  }
+                }
+                next[chk.id] = { ...chk }
+                return next
+              })
+            },
+            onDone: (s) => {
+              out.report = buildSystemCheckReport(s, checksRef.current)
+              applySystemCheckReport(out.report, { setChecks, setSummary, setReport, checksRef })
+            },
+          },
+          controller.signal,
+        )
+        if (out.report) {
+          await apiJson<{ saved: boolean; path: string }>('/api/system/check/last', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ report: out.report }),
+          })
+          toast.success(t('systemCheck.toast.done', { pct: String(out.report.percentage) }))
+        }
+      } catch (e) {
+        if (controller.signal.aborted) return
+        const message = e instanceof Error ? e.message : String(e)
+        setError(message)
+        toast.error(message)
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [t])
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const payload = await apiJson<{
+          present: boolean
+          report?: SystemCheckReport
+        }>('/api/system/check/last')
+        if (payload.present && payload.report) {
+          applySystemCheckReport(payload.report, { setChecks, setSummary, setReport, checksRef })
+        }
+      } catch {
+        /* pas de rapport persisté */
+      }
+    })()
+    return () => {
+      streamAbortRef.current?.abort()
+    }
+  }, [])
+
+  const handleDownloadReport = useCallback(() => {
+    if (report) {
+      downloadSystemCheckReport(report)
+      toast.success(t('systemCheck.toast.reportDownloaded'))
+      return
+    }
+    if (summary) {
+      const built = buildSystemCheckReport(summary, checks)
+      downloadSystemCheckReport(built)
+      toast.success(t('systemCheck.toast.reportDownloaded'))
+      return
+    }
+    toast.error(t('systemCheck.runFirst'))
+  }, [report, summary, checks, t])
+
+  const [fixing, setFixing] = useState(false)
+
+  const handleFix = useCallback(async () => {
+    setFixing(true)
+    try {
+      const r = await fetch('/api/system/fix', { method: 'POST' })
+      if (!r.ok) {
+        const t = await r.text()
+        toast.error(t || r.statusText)
+      } else {
+        const data = await r.json() as { launched?: boolean; reason?: string; issues_count?: number }
+        if (data.launched) {
+          toast.success(t('systemCheck.toast.hermesIssues', { count: String(data.issues_count ?? 0) }))
+        } else {
+          toast.success(t('systemCheck.toast.allOk'))
+        }
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setFixing(false)
+    }
+  }, [t])
+
+  const checkList = useMemo(() => Object.values(checks), [checks])
+
+  const hasIssues = checkList.some((c) => c.status === 'warn' || c.status === 'fail')
+
+  const grouped = useMemo(() => {
+    return checkList.reduce<Record<string, SystemCheckItem[]>>((acc, row) => {
+      const key = row.category || 'autres'
+      acc[key] = [...(acc[key] ?? []), row]
+      return acc
+    }, {})
+  }, [checkList])
+
+  // Live progressive computation from checks state
+  const totalChecks = checkList.length
+  const doneChecks = checkList.filter((c) => c.status === 'ok' || c.status === 'warn' || c.status === 'fail')
+  const okCount = doneChecks.filter((c) => c.status === 'ok').length
+  const warnCount = doneChecks.filter((c) => c.status === 'warn').length
+  const failCount = doneChecks.filter((c) => c.status === 'fail').length
+  const weights: Record<string, number> = { ok: 1, warn: 0.5, fail: 0 }
+  const liveScore = doneChecks.reduce((sum, c) => sum + (weights[c.status] ?? 0), 0)
+  const percentage = totalChecks > 0 ? Math.round((liveScore / totalChecks) * 100) : 0
+
+  const meterClass = percentage >= 80 ? 'bg-emerald-500' : percentage >= 50 ? 'bg-amber-500' : 'bg-red-500'
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+        <div>
+          <p className="text-muted-foreground text-sm font-medium tracking-wide uppercase">{t('systemCheck.dashboard')}</p>
+          <h1 className="text-3xl font-semibold tracking-tight">{t('systemCheck.title')}</h1>
+          <p className="text-muted-foreground mt-2 max-w-2xl text-sm">{t('systemCheck.subtitleFull')}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={runCheck} disabled={loading}>
+            {loading ? <Loader2 className="mr-2 size-4 animate-spin" /> : <HugeiconsIcon icon={PlayCircleIcon} className="mr-2 size-4" />}
+            {t('systemCheck.run')}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleDownloadReport}
+            disabled={loading || (!report && !summary)}
+          >
+            <Download className="mr-2 size-4" />
+            {t('systemCheck.downloadReport')}
+          </Button>
+          {hasIssues && (
+            <Button onClick={() => void handleFix()} disabled={fixing} variant="outline">
+              {fixing ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Wrench className="mr-2 size-4" />}
+              {t('systemCheck.fixWithHermes')}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-5xl font-semibold tracking-tight">{totalChecks > 0 ? `${percentage}%` : '—'}</div>
+              <p className="text-muted-foreground mt-1 text-sm">
+                {totalChecks > 0
+                  ? t('systemCheck.summaryCounts', {
+                      ok: String(okCount),
+                      warn: String(warnCount),
+                      fail: String(failCount),
+                      total: String(totalChecks),
+                    })
+                  : t('systemCheck.noChecksYet')}
+              </p>
+            </div>
+            <div className="w-full md:max-w-xl">
+              <div className="bg-muted h-4 overflow-hidden rounded-full">
+                <div className={cn('h-full rounded-full transition-all duration-500', meterClass)} style={{ width: `${percentage}%` }} />
+              </div>
+              <p className="text-muted-foreground mt-2 text-xs">
+                {t('overview.lastCheck')}{' '}
+                {summary?.generated_at_utc ? formatDateTime(summary.generated_at_utc) : t('common.dash')}
+              </p>
+            </div>
+          </div>
+          {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
+        </CardContent>
+      </Card>
+
+      {Object.entries(grouped).map(([category, rows]) => (
+        <Card key={category}>
+          <CardHeader>
+            <CardTitle className="capitalize">{category}</CardTitle>
+            <CardDescription>{t('systemCheck.checksCount', { count: rows.length })}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12">{t('systemCheck.table.status')}</TableHead>
+                  <TableHead>{t('systemCheck.table.service')}</TableHead>
+                  <TableHead>{t('systemCheck.table.message')}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t('systemCheck.table.details')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row) => {
+                  const isPending = row.status === 'pending'
+                  const isRunning = row.status === 'running'
+                  return (
+                    <TableRow
+                      key={row.id}
+                      className={cn(
+                        'transition-opacity duration-300',
+                        isPending && 'opacity-40',
+                        isRunning && 'opacity-80',
+                      )}
+                    >
+                      <TableCell><StatusIcon status={row.status} /></TableCell>
+                      <TableCell>
+                        <div className="font-medium">{row.label}</div>
+                        <div className="text-muted-foreground text-xs">{statusLabel(row.status, t)}</div>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {isRunning ? t('systemCheck.running') : row.message || t('common.dash')}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground hidden max-w-md truncate font-mono text-xs lg:table-cell">
+                        {row.detail ? JSON.stringify(row.detail).slice(0, 220) : t('common.dash')}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
 function OverviewSection({
   overview,
   totalSkills,
   totalConnectors,
   enabledConnectors,
+  stateSummary,
   onJump,
   refreshScanTools,
+  syncState,
 }: {
   overview: Overview | null
   totalSkills: number
   totalConnectors: number
   enabledConnectors: number
+  stateSummary: StateSummary | null
   onJump: (id: NavId) => void
   refreshScanTools: () => Promise<void>
+  syncState: () => Promise<void>
 }) {
+  const { t } = useI18n()
   const [scanRefreshing, setScanRefreshing] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [cliOpen, setCliOpen] = useState(false)
   const [cliText, setCliText] = useState('')
   const [cliLoading, setCliLoading] = useState(false)
@@ -474,32 +909,32 @@ function OverviewSection({
     })()
   }
 
-  if (!overview) return <p className="text-muted-foreground">Chargement…</p>
+  if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
 
   const stats = [
     {
-      label: 'Organisations',
+      label: t('overview.stats.orgs'),
       value: overview.orgs.length,
       icon: Folder02Icon,
       tone: 'bg-amber-100 text-amber-700',
       target: 'orgs' as NavId,
     },
     {
-      label: 'Skills',
+      label: t('overview.stats.skills'),
       value: totalSkills,
       icon: SparklesIcon,
       tone: 'bg-violet-100 text-violet-700',
       target: 'skills' as NavId,
     },
     {
-      label: 'Connecteurs',
+      label: t('overview.stats.connectors'),
       value: `${enabledConnectors}/${totalConnectors}`,
       icon: Plug02Icon,
       tone: 'bg-blue-100 text-blue-700',
       target: 'connectors' as NavId,
     },
     {
-      label: 'Plugins',
+      label: t('overview.stats.plugins'),
       value: overview.plugin_bundles.length,
       icon: PuzzleIcon,
       tone: 'bg-emerald-100 text-emerald-700',
@@ -510,10 +945,8 @@ function OverviewSection({
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Vue d’ensemble</h2>
-        <p className="text-muted-foreground text-sm">
-          État du dépôt skills, MCP et plugins (chemins lus depuis ~/.config/zab/config.yaml).
-        </p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('overview.title')}</h2>
+        <p className="text-muted-foreground text-sm">{t('overview.subtitle')}</p>
       </header>
 
       {overview.dashboard_warning ? (
@@ -523,16 +956,17 @@ function OverviewSection({
       ) : null}
 
       <p className="text-muted-foreground text-xs leading-relaxed">
-        Serveur zab {overview.zab_version ?? '—'} · Fichier lu :{' '}
-        <code className="bg-muted rounded px-1 py-0.5 font-mono text-[11px]">
-          {(overview.user_config_path ?? '').replace(/^\/Users\/[^/]+/, '~') || '—'}
-        </code>
-        · Clé <code className="bg-muted rounded px-1 py-0.5 font-mono text-[11px]">skills_root</code> dans ce fichier :{' '}
-        {overview.skills_root_yaml_raw ? (
-          <code className="bg-muted rounded px-1 py-0.5 font-mono text-[11px]">{overview.skills_root_yaml_raw}</code>
-        ) : (
-          <span className="text-amber-800 dark:text-amber-300">absente (le dashboard ne doit pas charger le dépôt)</span>
-        )}
+        {t('overview.serverStatus', {
+          version: overview.zab_version ?? '—',
+          configPath:
+            (overview.user_config_path ?? '').replace(/^\/Users\/[^/]+/, '~') || '—',
+          skillsPaths:
+            overview.skills_roots_yaml && overview.skills_roots_yaml.length > 0
+              ? overview.skills_roots_yaml.map((r: string) => r.replace(/^\/Users\/[^/]+/, '~')).join(', ')
+              : overview.skills_root_yaml_raw
+                ? overview.skills_root_yaml_raw
+                : t('overview.skillsNotConfigured'),
+        })}
       </p>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -560,13 +994,13 @@ function OverviewSection({
               <HugeiconsIcon icon={CodeFolderIcon} size={20} />
             </div>
             <div>
-              <CardTitle>Racine du dépôt</CardTitle>
-              <CardDescription>skills_root dans ~/.config/zab/config.yaml</CardDescription>
+              <CardTitle>{t('overview.skillsRoot.title')}</CardTitle>
+              <CardDescription>skills_root · ~/.config/zab/config.yaml</CardDescription>
             </div>
           </CardHeader>
           <CardContent>
             <code className="bg-muted block rounded-md px-3 py-2 font-mono text-xs break-all">
-              {overview.skills_root ?? '— (non configuré)'}
+              {overview.skills_root ?? t('overview.skillsRoot.notConfigured')}
             </code>
           </CardContent>
         </Card>
@@ -577,8 +1011,8 @@ function OverviewSection({
               <HugeiconsIcon icon={Database02Icon} size={20} />
             </div>
             <div>
-              <CardTitle>MCP registry</CardTitle>
-              <CardDescription>Skill source de référence</CardDescription>
+              <CardTitle>{t('overview.mcpRegistry')}</CardTitle>
+              <CardDescription>{t('overview.skillRefSource')}</CardDescription>
             </div>
           </CardHeader>
           <CardContent>
@@ -591,22 +1025,70 @@ function OverviewSection({
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+            <HugeiconsIcon icon={Database02Icon} size={20} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <CardTitle>{t('overview.stateIndex.title')}</CardTitle>
+            <CardDescription>
+              <code className="bg-muted rounded px-1">~/.local/share/zab/state.yaml</code>
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={syncing}
+            onClick={async () => {
+              setSyncing(true)
+              try {
+                await syncState()
+              } finally {
+                setSyncing(false)
+              }
+            }}
+          >
+            {syncing ? `${t('common.refresh')}…` : 'Sync'}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {['skills', 'mcp_servers', 'connectors', 'code_tools', 'memory_sources'].map((key) => (
+              <div key={key} className="rounded-lg border border-zinc-200 px-3 py-2">
+                <p className="text-lg font-semibold">{stateSummary?.counts?.[key] ?? '—'}</p>
+                <p className="text-muted-foreground text-[11px]">{key}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-muted-foreground font-mono text-[11px] break-all">
+            {stateSummary?.path ?? t('overview.stateIndex.notLoaded')} ·{' '}
+            {stateSummary?.last_sync_at ?? t('overview.stateIndex.neverSynced')}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700">
             <HugeiconsIcon icon={CompassIcon} size={20} />
           </div>
           <div>
-            <CardTitle>Démarrage rapide</CardTitle>
-            <CardDescription>Quelques actions courantes</CardDescription>
+            <CardTitle>{t('overview.quickStart.title')}</CardTitle>
+            <CardDescription>{t('overview.quickStart.subtitle')}</CardDescription>
           </div>
         </CardHeader>
         <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <QuickJump label="Projets locaux & config" icon={Folder02Icon} onClick={() => onJump('projects')} />
-          <QuickJump label="Configurer les connecteurs" icon={Plug02Icon} onClick={() => onJump('connectors')} />
-          <QuickJump label="Parcourir les skills" icon={SparklesIcon} onClick={() => onJump('skills')} />
-          <QuickJump label="Lancer un job de test" icon={TestTube02Icon} onClick={() => onJump('tests')} />
-          <QuickJump label="Vérifier la sécurité" icon={LockKeyIcon} onClick={() => onJump('security')} />
           <QuickJump
-            label="Relancer le scan outils"
+            label={t('overview.quickStart.conversations')}
+            icon={MessageMultiple02Icon}
+            onClick={() => onJump('conversations')}
+          />
+          <QuickJump label={t('overview.quickStart.projects')} icon={Folder02Icon} onClick={() => onJump('projects')} />
+          <QuickJump label={t('overview.quickStart.connectors')} icon={Plug02Icon} onClick={() => onJump('connectors')} />
+          <QuickJump label={t('overview.quickStart.skills')} icon={SparklesIcon} onClick={() => onJump('skills')} />
+          <QuickJump label={t('overview.quickStart.tests')} icon={TestTube02Icon} onClick={() => onJump('tests')} />
+          <QuickJump label={t('overview.quickStart.security')} icon={LockKeyIcon} onClick={() => onJump('security')} />
+          <QuickJump
+            label={t('overview.quickStart.rescanTools')}
             icon={Search01Icon}
             disabled={scanRefreshing}
             onClick={async () => {
@@ -618,18 +1100,18 @@ function OverviewSection({
               }
             }}
           />
-          <QuickJump label="Options CLI zab (--help)" icon={HelpSquareIcon} onClick={openCliHelp} />
+          <QuickJump label={t('overview.quickStart.cliHelp')} icon={HelpSquareIcon} onClick={openCliHelp} />
         </CardContent>
       </Card>
 
       <Dialog open={cliOpen} onOpenChange={setCliOpen}>
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Options du CLI zab</DialogTitle>
-            <DialogDescription>Sortie de la commande équivalente à `zab --help`.</DialogDescription>
+            <DialogTitle>{t('overview.cliHelp.title')}</DialogTitle>
+            <DialogDescription>`zab --help`</DialogDescription>
           </DialogHeader>
           <pre className="bg-muted max-h-[min(60vh,520px)] overflow-auto rounded-lg p-3 font-mono text-xs whitespace-pre-wrap">
-            {cliLoading ? 'Chargement…' : cliText}
+            {cliLoading ? t('common.loading') : cliText}
           </pre>
         </DialogContent>
       </Dialog>
@@ -664,6 +1146,97 @@ function QuickJump({
   )
 }
 
+function OrgSkillsCard({
+  org,
+  skills,
+  skillsRepoRoot,
+  skillsRoot,
+  onOpenSkill,
+}: {
+  org: string
+  skills: Overview['orgs'][number]['skills']
+  skillsRepoRoot?: string
+  skillsRoot: string | null
+  onOpenSkill: (path: string) => void
+}) {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = useState(() => skills.length <= 5)
+  const toggle = useCallback(() => setExpanded((e) => !e), [])
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center gap-3 pb-2">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-white">
+          <HugeiconsIcon icon={Folder02Icon} size={22} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <CardTitle className="text-lg">{org}</CardTitle>
+          <CardDescription>{skills.length} skills</CardDescription>
+        </div>
+        <button
+          type="button"
+          onClick={toggle}
+          className="text-muted-foreground hover:bg-muted/80 flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200/80 px-2 py-1.5 text-xs font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+          aria-expanded={expanded}
+          aria-label={expanded ? t('orgs.collapseAria') : t('orgs.expandAria')}
+        >
+          {expanded ? (
+            <>
+              <span className="hidden sm:inline">{t('orgs.collapse')}</span>
+              <ChevronDown className="size-4" aria-hidden />
+            </>
+          ) : (
+            <>
+              <span className="hidden sm:inline">{t('orgs.expand')}</span>
+              <ChevronRight className="size-4" aria-hidden />
+            </>
+          )}
+        </button>
+      </CardHeader>
+      {expanded ? (
+        <CardContent className="pt-0">
+          <ul className="list-none space-y-0.5 pl-0 text-xs">
+            {skills.map((s) => {
+              const vsc = vscodeFileHrefForSkill(s.path, skillsRepoRoot, skillsRoot)
+              return (
+                <li key={s.path} className="min-w-0 list-none">
+                  <div className="flex min-w-0 items-stretch gap-0 rounded-md border border-transparent transition hover:border-zinc-200/80 hover:bg-muted/50">
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+                      onClick={() => onOpenSkill(s.path)}
+                    >
+                      <span className="text-primary block font-mono text-[11px] font-medium">{s.id}</span>
+                      <span className="text-muted-foreground mt-0.5 block truncate font-mono text-[10px]">
+                        {shortenHomeInPath(s.path)}
+                      </span>
+                    </button>
+                    <div className="flex shrink-0 flex-col items-end justify-center gap-0.5 pr-1">
+                      {s.source === 'workspace' ? (
+                        <span className="bg-muted text-muted-foreground rounded px-1 py-0.5 text-[9px]">
+                          {s.project ? s.project : t('orgs.projectTag')}
+                        </span>
+                      ) : null}
+                      {vsc ? (
+                        <a
+                          href={vsc}
+                          className="text-primary px-1 py-0.5 text-[10px] underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          IDE
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </CardContent>
+      ) : null}
+    </Card>
+  )
+}
+
 function OrgsSection({
   overview,
   onOpenSkill,
@@ -673,74 +1246,33 @@ function OrgsSection({
   onOpenSkill: (path: string) => void
   onJump: (id: NavId) => void
 }) {
-  if (!overview) return <p className="text-muted-foreground">Chargement…</p>
+  const { t } = useI18n()
+  if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Organisations</h2>
-        <p className="text-muted-foreground text-sm">{overview.orgs.length} organisations (dépôt + projets locaux fusionnés)</p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('orgs.title')}</h2>
+        <p className="text-muted-foreground text-sm">
+          {t('orgs.subtitleCount', { count: String(overview.orgs.length) })}
+        </p>
       </header>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {overview.orgs.map((o) => (
-          <Card key={o.org}>
-            <CardHeader className="flex flex-row items-center gap-3">
-              <div className="flex size-12 items-center justify-center rounded-xl bg-zinc-900 text-white">
-                <HugeiconsIcon icon={Folder02Icon} size={22} />
-              </div>
-              <div>
-                <CardTitle className="text-lg">{o.org}</CardTitle>
-                <CardDescription>{o.skills.length} skills</CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <ul className="list-none space-y-0.5 pl-0 text-xs">
-                {o.skills.map((s) => {
-                  const vsc = vscodeFileHrefForSkill(s.path, o.skills_repo_root, overview.skills_root)
-                  return (
-                    <li key={s.path} className="min-w-0 list-none">
-                      <div className="flex min-w-0 items-stretch gap-0 rounded-md border border-transparent transition hover:border-zinc-200/80 hover:bg-muted/50">
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
-                          onClick={() => onOpenSkill(s.path)}
-                        >
-                          <span className="text-primary block font-mono text-[11px] font-medium">{s.id}</span>
-                          <span className="text-muted-foreground mt-0.5 block truncate font-mono text-[10px]">
-                            {shortenHomeInPath(s.path)}
-                          </span>
-                        </button>
-                        <div className="flex shrink-0 flex-col items-end justify-center gap-0.5 pr-1">
-                          {s.source === 'workspace' ? (
-                            <span className="bg-muted text-muted-foreground rounded px-1 py-0.5 text-[9px]">
-                              {s.project ? s.project : 'projet'}
-                            </span>
-                          ) : null}
-                          {vsc ? (
-                            <a
-                              href={vsc}
-                              className="text-primary px-1 py-0.5 text-[10px] underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              IDE
-                            </a>
-                          ) : null}
-                        </div>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            </CardContent>
-          </Card>
+          <OrgSkillsCard
+            key={o.org}
+            org={o.org}
+            skills={o.skills}
+            skillsRepoRoot={o.skills_repo_root}
+            skillsRoot={overview.skills_root}
+            onOpenSkill={onOpenSkill}
+          />
         ))}
       </div>
 
       <p className="text-muted-foreground text-sm">
-        Liste des dépôts sous{' '}
-        <code className="bg-muted rounded px-1 py-0.5 font-mono text-[11px]">projects_roots</code> et enregistrement dans{' '}
-        <code className="font-mono text-[11px]">~/.config/zab/config.yaml</code> : onglet{' '}
+        {t('orgs.footer')}{' '}
         <button type="button" className="text-primary font-medium underline" onClick={() => onJump('projects')}>
-          Projets
+          {t('nav.projects')}
         </button>
         .
       </p>
@@ -755,11 +1287,12 @@ function PluginsSection({
   overview: Overview | null
   onJump: (id: NavId) => void
 }) {
-  if (!overview) return <p className="text-muted-foreground">Chargement…</p>
+  const { t } = useI18n()
+  if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Plugins</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('plugins.title')}</h2>
         <p className="text-muted-foreground text-sm">{overview.plugin_bundles.length} bundles</p>
       </header>
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -822,6 +1355,7 @@ function TestsSection({
   jobId: string | null
   lines: string[]
 }) {
+  const { t } = useI18n()
   const presets = [
     { id: 'smoke_mcps', label: 'Smoke MCP', icon: TestTube02Icon, tone: 'bg-emerald-100 text-emerald-700' },
     { id: 'gateway_pytest', label: 'Pytest gateway', icon: TestTube01Icon, tone: 'bg-blue-100 text-blue-700' },
@@ -832,8 +1366,8 @@ function TestsSection({
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Tests & jobs</h2>
-        <p className="text-muted-foreground text-sm">Lancement de scripts du dépôt avec sortie en direct.</p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('tests.title')}</h2>
+        <p className="text-muted-foreground text-sm">{t('tests.subtitle')}</p>
       </header>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
@@ -876,146 +1410,401 @@ function TestsSection({
   )
 }
 
-function SecuritySection({
-  envRows,
-  refreshEnvRows,
-}: {
-  envRows: EnvRow[]
-  refreshEnvRows: () => Promise<void>
-}) {
-  const [envPathDisplay, setEnvPathDisplay] = useState<string | null>(null)
-  const [envDraft, setEnvDraft] = useState('')
-  const [envLoading, setEnvLoading] = useState(true)
-  const [envSaving, setEnvSaving] = useState(false)
+type SecurityEnvFileRow = {
+  path: string
+  path_display: string
+  exists: boolean
+  configured: boolean
+  keys: string[]
+}
 
-  const loadEnvFile = useCallback(async () => {
-    setEnvLoading(true)
+type SecurityEnvFileSource = {
+  kind: 'file'
+  path: string
+  path_display: string
+  key: string
+  line: number | null
+}
+
+type SecurityEnvProcessSource = {
+  kind: 'process'
+  keys: string[]
+}
+
+type SecurityEnvVarRow = {
+  name: string
+  present: boolean
+  in_process: boolean
+  in_file: boolean
+  masked: string
+  sources: (SecurityEnvFileSource | SecurityEnvProcessSource)[]
+}
+
+function SecuritySection({
+  running,
+  runPreset,
+  jobId,
+  jobLines,
+}: {
+  running: boolean
+  runPreset: (p: string, a?: Record<string, unknown>) => void
+  jobId: string | null
+  jobLines: string[]
+}) {
+  const { t } = useI18n()
+  const [overviewLoading, setOverviewLoading] = useState(true)
+  const [envFiles, setEnvFiles] = useState<SecurityEnvFileRow[]>([])
+  const [envVars, setEnvVars] = useState<SecurityEnvVarRow[]>([])
+  const [openingKey, setOpeningKey] = useState<string | null>(null)
+  const [reports, setReports] = useState<SecurityReportRow[]>([])
+
+  const loadReports = useCallback(async () => {
     try {
-      const data = await apiJson<{
-        path_display: string
-        content: string
-      }>('/api/security/env-file')
-      setEnvPathDisplay(data.path_display)
-      setEnvDraft(data.content)
+      const data = await apiJson<{ reports: SecurityReportRow[] }>('/api/security/reports')
+      setReports(data.reports)
+    } catch {
+      setReports([])
+    }
+  }, [])
+
+  const loadOverview = useCallback(async () => {
+    setOverviewLoading(true)
+    try {
+      const data = await apiJson<{ files: SecurityEnvFileRow[]; variables: SecurityEnvVarRow[] }>(
+        '/api/security/env-overview',
+      )
+      setEnvFiles(data.files ?? [])
+      setEnvVars(data.variables ?? [])
     } catch (e) {
+      setEnvFiles([])
+      setEnvVars([])
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
-      setEnvLoading(false)
+      setOverviewLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void loadEnvFile()
-  }, [loadEnvFile])
+    void loadOverview()
+    void loadReports()
+  }, [loadOverview, loadReports])
 
-  const saveEnvFile = async () => {
-    setEnvSaving(true)
+  const openEnvInEditor = async (path: string, opts?: { line?: number | null; key?: string }) => {
+    const token = `${path}:${opts?.key ?? ''}:${opts?.line ?? ''}`
+    setOpeningKey(token)
     try {
-      const res = await apiJson<{ backup: string | null }>('/api/security/env-file', {
-        method: 'PUT',
+      const res = await apiJson<{ opened_with: string; line?: number | null }>('/api/system/open-editor-file', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: envDraft }),
+        body: JSON.stringify({
+          path,
+          line: opts?.line ?? undefined,
+          key: opts?.key ?? undefined,
+        }),
       })
-      toast.success(res.backup ? `Enregistré (copie : ${res.backup})` : 'Enregistré')
-      await refreshEnvRows()
+      const where = res.line ? `ligne ${res.line}` : 'fichier'
+      toast.success(`Ouvert (${res.opened_with}) — ${where}`)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
-      setEnvSaving(false)
+      setOpeningKey(null)
     }
   }
+
+  const configuredFiles = envFiles.filter((f) => f.configured)
+
+  const securityScanPresets = [
+    {
+      id: 'security_osv_zab',
+      label: t('security.osvZab'),
+      hint: t('security.osvZabHint'),
+      icon: Search01Icon,
+      tone: 'bg-sky-100 text-sky-800',
+    },
+    {
+      id: 'security_npm_audit_zab_ui',
+      label: t('security.npmAudit'),
+      hint: t('security.npmAuditHint'),
+      icon: CodeFolderIcon,
+      tone: 'bg-emerald-100 text-emerald-800',
+    },
+    {
+      id: 'security_gitleaks_zab',
+      label: 'Gitleaks — zab',
+      hint: 'Secrets dans l’historique Git du clone zab (binaire gitleaks sur le PATH)',
+      icon: LockKeyIcon,
+      tone: 'bg-rose-100 text-rose-800',
+    },
+    {
+      id: 'security_osv_skills',
+      label: t('security.osvSkills'),
+      hint: t('security.osvSkillsHint'),
+      icon: Search01Icon,
+      tone: 'bg-violet-100 text-violet-800',
+    },
+    {
+      id: 'security_pip_audit_zab',
+      label: 'pip-audit — zab',
+      hint: 'Audit PyPI de l’environnement projet via uv run --with pip-audit pip-audit',
+      icon: CpuIcon,
+      tone: 'bg-amber-100 text-amber-900',
+    },
+  ] as const
 
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Sécurité</h2>
-        <p className="text-muted-foreground text-sm">
-          Variables suivies (processus zab et fichier <code className="bg-muted rounded px-1">.env</code> à la racine
-          skills). Valeurs sensibles : affichage intégral uniquement dans l’éditeur ci‑dessous.
-        </p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('security.title')}</h2>
+        <p className="text-muted-foreground text-sm">{t('security.subtitle')}</p>
       </header>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Fichier .env</CardTitle>
-          <CardDescription>
-            {envPathDisplay ? (
-              <>
-                Chemin : <code className="font-mono text-xs">{envPathDisplay}</code>
-              </>
-            ) : (
-              'Chargement du chemin…'
-            )}
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle>Fichiers .env</CardTitle>
+            <CardDescription>
+              Chemins déclarés dans <code className="bg-muted rounded px-1">security_env_paths</code> (
+              <code className="bg-muted rounded px-1">~/.config/zab/config.yaml</code>).
+            </CardDescription>
+          </div>
+          <Button type="button" variant="outline" size="sm" disabled={overviewLoading} onClick={() => void loadOverview()}>
+            Rafraîchir
+          </Button>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-muted-foreground text-xs">
-            Le contenu est lu et écrit tel quel sur le disque. Une copie horodatée est créée avant remplacement si le
-            fichier existait déjà.
-          </p>
-          {envLoading ? (
+        <CardContent className="space-y-4">
+          {overviewLoading ? (
             <p className="text-muted-foreground text-sm">Chargement…</p>
+          ) : configuredFiles.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              Aucun fichier — ajoutez{' '}
+              <code className="bg-muted rounded px-1">security_env_paths</code> (ex.{' '}
+              <code className="bg-muted rounded px-1">~/projects/skills/.env</code>,{' '}
+              <code className="bg-muted rounded px-1">~/.hermes/.env</code>).
+            </p>
           ) : (
-            <Textarea
-              className="font-mono text-xs leading-relaxed min-h-[220px]"
-              spellCheck={false}
-              value={envDraft}
-              onChange={(e) => setEnvDraft(e.target.value)}
-            />
+            <ul className="space-y-3">
+              {configuredFiles.map((f) => (
+                <li
+                  key={f.path}
+                  className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs font-medium">{f.path_display}</p>
+                      <p className="text-muted-foreground mt-0.5 flex flex-wrap gap-2 text-[11px]">
+                        <span
+                          className={cn(
+                            'inline-flex rounded-full px-2 py-0.5 ring-1',
+                            f.exists
+                              ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
+                              : 'bg-zinc-100 text-zinc-600 ring-zinc-200',
+                          )}
+                        >
+                          {f.exists ? 'présent' : 'absent'}
+                        </span>
+                        {f.configured ? (
+                          <span className="inline-flex rounded-full bg-sky-50 px-2 py-0.5 text-sky-800 ring-1 ring-sky-200">
+                            configuré
+                          </span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={!f.exists || openingKey === f.path}
+                        onClick={() => void openEnvInEditor(f.path)}
+                      >
+                        Ouvrir le fichier
+                      </Button>
+                      <a
+                        href={vscodeFileHref(f.path)}
+                        className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), !f.exists && 'pointer-events-none opacity-50')}
+                        onClick={(e) => !f.exists && e.preventDefault()}
+                      >
+                        VS Code / Cursor
+                      </a>
+                    </div>
+                  </div>
+                  {f.keys.length > 0 ? (
+                    <p className="text-muted-foreground mt-2 text-[11px]">
+                      Clés suivies :{' '}
+                      <span className="font-mono text-foreground">{f.keys.slice(0, 12).join(', ')}</span>
+                      {f.keys.length > 12 ? ` (+${f.keys.length - 12})` : ''}
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground mt-2 text-[11px]">Aucune clé suivie dans ce fichier.</p>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" disabled={envLoading || envSaving} onClick={() => void loadEnvFile()}>
-              Recharger depuis le disque
-            </Button>
-            <Button type="button" disabled={envLoading || envSaving} onClick={() => void saveEnvFile()}>
-              Enregistrer .env
-            </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700">
+            <HugeiconsIcon icon={TestTube02Icon} size={20} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <CardTitle>Scans locaux (CLI)</CardTitle>
+            <CardDescription>
+              Les commandes s’exécutent sur votre machine avec le même PATH que le processus{' '}
+              <code className="bg-muted rounded px-1 text-xs">zab dashboard</code>. Installez les outils manquants
+              (brew, etc.). Les logs de cet onglet utilisent un runner dédié.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {securityScanPresets.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={running}
+                onClick={() => runPreset(p.id)}
+                className="group bg-card hover:border-zinc-300 hover:shadow-sm flex flex-col items-start gap-2 rounded-xl border border-zinc-200 p-4 text-left transition disabled:opacity-50"
+              >
+                <div className={cn('flex size-10 items-center justify-center rounded-xl', p.tone)}>
+                  <HugeiconsIcon icon={p.icon} size={20} strokeWidth={1.7} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold tracking-tight">{p.label}</p>
+                  <p className="text-muted-foreground mt-0.5 text-[11px] leading-snug">{p.hint}</p>
+                </div>
+                <p className="text-muted-foreground inline-flex items-center gap-1 text-[11px]">
+                  <HugeiconsIcon icon={PlayCircleIcon} size={12} />
+                  Lancer le job
+                </p>
+              </button>
+            ))}
+          </div>
+          {jobId ? (
+            <p className="text-muted-foreground text-xs">
+              Job : <code className="bg-muted rounded px-1 font-mono">{jobId}</code>
+            </p>
+          ) : null}
+          <div>
+            <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">Sortie</p>
+            <pre className="max-h-[min(420px,50vh)] overflow-auto rounded-lg bg-zinc-950 p-4 text-[11px] leading-5 whitespace-pre-wrap text-emerald-200">
+              {jobLines.join('\n') || (running ? 'En attente de sortie…' : '— lancez un scan ci-dessus —')}
+            </pre>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-muted-foreground text-[11px] font-medium uppercase">Derniers rapports persistés</p>
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadReports()}>
+                Rafraîchir
+              </Button>
+            </div>
+            {reports.length === 0 ? (
+              <p className="text-muted-foreground text-xs">Aucun rapport sécurité persisté.</p>
+            ) : (
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {reports.slice(0, 6).map((r) => (
+                  <li key={r.key} className="rounded-md border border-zinc-200 p-2 text-xs dark:border-zinc-800">
+                    <p className="font-mono">{r.key}</p>
+                    <p className="text-muted-foreground">{new Date(r.updated_at_utc).toLocaleString()}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardContent className="pt-6">
+        <CardHeader>
+          <CardTitle>Variables suivies — provenance</CardTitle>
+          <CardDescription>
+            D’où vient chaque clé (processus du dashboard ou fichier .env). Le bouton Ouvrir place le curseur sur la
+            ligne de la clé dans l’éditeur.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nom</TableHead>
-                <TableHead>Processus</TableHead>
-                <TableHead>Fichier .env</TableHead>
-                <TableHead>Aperçu masqué</TableHead>
+                <TableHead>Variable</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Aperçu</TableHead>
+                <TableHead className="w-[100px]"> </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {envRows.map((row) => (
-                <TableRow key={row.name}>
-                  <TableCell className="font-mono text-xs">{row.name}</TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ring-1',
-                        row.in_process
-                          ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                          : 'bg-zinc-100 text-zinc-600 ring-zinc-200',
-                      )}
-                    >
-                      {row.in_process ? 'oui' : 'non'}
-                    </span>
+              {overviewLoading ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-muted-foreground text-sm">
+                    Chargement…
                   </TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        'inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ring-1',
-                        row.in_file
-                          ? 'bg-sky-50 text-sky-800 ring-sky-200'
-                          : 'bg-zinc-100 text-zinc-600 ring-zinc-200',
-                      )}
-                    >
-                      {row.in_file ? 'oui' : 'non'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{row.masked || '—'}</TableCell>
                 </TableRow>
-              ))}
+              ) : envVars.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-muted-foreground text-sm">
+                    Aucune variable suivie.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                envVars.map((row) => {
+                  const fileSources = row.sources.filter((s): s is SecurityEnvFileSource => s.kind === 'file')
+                  const proc = row.sources.find((s): s is SecurityEnvProcessSource => s.kind === 'process')
+                  const primaryFile = fileSources[0]
+                  const openToken = primaryFile ? `${primaryFile.path}:${primaryFile.key}:${primaryFile.line ?? ''}` : ''
+                  return (
+                    <TableRow key={row.name}>
+                      <TableCell className="font-mono text-xs">{row.name}</TableCell>
+                      <TableCell className="text-xs">
+                        <ul className="space-y-1.5">
+                          {proc ? (
+                            <li>
+                              <span className="text-muted-foreground">Processus</span>
+                              {proc.keys.length > 0 && proc.keys[0] !== row.name ? (
+                                <span className="font-mono text-[11px]"> ({proc.keys.join(', ')})</span>
+                              ) : null}
+                            </li>
+                          ) : null}
+                          {fileSources.length === 0 && !proc ? (
+                            <li className="text-muted-foreground">—</li>
+                          ) : null}
+                          {fileSources.map((src) => (
+                            <li key={`${src.path}:${src.key}`} className="font-mono text-[11px] leading-snug">
+                              {src.path_display}
+                              <span className="text-muted-foreground font-sans"> → </span>
+                              {src.key}
+                              {src.line ? (
+                                <span className="text-muted-foreground font-sans"> (l.{src.line})</span>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{row.masked || (row.present ? '••••' : '—')}</TableCell>
+                      <TableCell>
+                        {primaryFile ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px]"
+                            disabled={openingKey === openToken}
+                            onClick={() =>
+                              void openEnvInEditor(primaryFile.path, {
+                                line: primaryFile.line,
+                                key: primaryFile.key,
+                              })
+                            }
+                          >
+                            Ouvrir
+                          </Button>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
             </TableBody>
           </Table>
         </CardContent>
@@ -1033,11 +1822,38 @@ function ExportsSection({
   runPreset: (p: string, a?: Record<string, unknown>) => void
   hints: Record<string, unknown> | null
 }) {
+  const { t } = useI18n()
+  const [org, setOrg] = useState('')
+  const [project, setProject] = useState('')
+  const [contextPack, setContextPack] = useState<Record<string, unknown> | null>(null)
+  const [generating, setGenerating] = useState(false)
+
+  const generateContextPack = async () => {
+    setGenerating(true)
+    try {
+      const payload = await apiJson<Record<string, unknown>>('/api/context-pack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          org: org.trim() || null,
+          project: project.trim() || null,
+          limit: 80,
+        }),
+      })
+      setContextPack(payload)
+      toast.success(t('exports.toastGenerated'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Exports</h2>
-        <p className="text-muted-foreground text-sm">Synchronisation des MCP et build des plugins.</p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('exports.title')}</h2>
+        <p className="text-muted-foreground text-sm">{t('exports.subtitle')}</p>
       </header>
       <div className="flex flex-wrap gap-2">
         <Button disabled={running} onClick={() => runPreset('sync_mcps_litellm')}>
@@ -1049,6 +1865,42 @@ function ExportsSection({
           build-plugins
         </Button>
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Context Pack</CardTitle>
+          <CardDescription>Markdown généré depuis l’index local pour Claude.ai, ChatGPT ou un agent web.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <input
+              value={org}
+              onChange={(e) => setOrg(e.target.value)}
+              placeholder={t('exports.optionalOrg')}
+              className="border-input bg-background rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+            />
+            <input
+              value={project}
+              onChange={(e) => setProject(e.target.value)}
+              placeholder={t('exports.optionalProject')}
+              className="border-input bg-background rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+            />
+          </div>
+          <Button type="button" disabled={generating} onClick={() => void generateContextPack()}>
+            <HugeiconsIcon icon={SparklesIcon} size={16} className="mr-1.5" />
+            {generating ? t('common.generating') : t('common.generate')}
+          </Button>
+          {contextPack ? (
+            <div className="space-y-2">
+              <code className="bg-muted block rounded-md px-3 py-2 font-mono text-xs break-all">
+                {String(contextPack.path ?? '')}
+              </code>
+              <pre className="bg-muted max-h-80 overflow-auto rounded-lg p-3 text-xs whitespace-pre-wrap">
+                {String(contextPack.preview ?? '')}
+              </pre>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>Indices</CardTitle>
@@ -1090,17 +1942,45 @@ type MemoryChunkRow = {
   created_at: string | null
 }
 
+type MemorySearchRow = {
+  document_id: string
+  chunk_id: string
+  source: string
+  export_batch_id: string
+  wing: string | null
+  room: string | null
+  path?: string | null
+  chunk_index: number
+  content_excerpt: string
+  created_at: string | null
+}
+
+type MemoryConfigHistoryRow = {
+  key: string
+  title: string
+  kind: string
+  exists: boolean
+  path_display: string
+  updated_at_unix: number | null
+  bytes: number | null
+}
+
 function MemorySection({
+  projects,
+  miningProjectPath,
   running,
   runPreset,
   jobLines,
   jobId,
 }: {
+  projects: OverviewProject[]
+  miningProjectPath: string | null
   running: boolean
   runPreset: (p: string, a?: Record<string, unknown>) => void
   jobLines: string[]
   jobId: string | null
 }) {
+  const { t } = useI18n()
   const [jsonlPath, setJsonlPath] = useState('')
   const [status, setStatus] = useState<MemoryStatusPayload | null>(null)
   const [docOffset, setDocOffset] = useState(0)
@@ -1108,7 +1988,102 @@ function MemorySection({
   const [docsErr, setDocsErr] = useState<string | null>(null)
   const [chunksByDoc, setChunksByDoc] = useState<Record<string, MemoryChunkRow[]>>({})
   const [chunksLoading, setChunksLoading] = useState<string | null>(null)
+  const [memoryQuery, setMemoryQuery] = useState('')
+  const [memoryWingFilter, setMemoryWingFilter] = useState('')
+  const [memorySourceFilter, setMemorySourceFilter] = useState('')
+  const [memorySearchLoading, setMemorySearchLoading] = useState(false)
+  const [memorySearchResults, setMemorySearchResults] = useState<MemorySearchRow[]>([])
+  const [projectScanPath, setProjectScanPath] = useState('')
+  const [projectScanPersist, setProjectScanPersist] = useState(true)
+  const [projectScan, setProjectScan] = useState<Record<string, unknown> | null>(null)
+  const [projectScanLoading, setProjectScanLoading] = useState(false)
+  const [configHistory, setConfigHistory] = useState<MemoryConfigHistoryRow[]>([])
+  const [configHistoryLoading, setConfigHistoryLoading] = useState(false)
+  const [modelsDiscovery, setModelsDiscovery] = useState<Record<string, unknown> | null>(null)
+  const [lastScanMeta, setLastScanMeta] = useState<Record<string, unknown> | null>(null)
   const pageSize = 20
+
+  const sortedProjects = useMemo(
+    () =>
+      [...projects].sort((a, b) =>
+        `${a.org}/${a.name}`.localeCompare(`${b.org}/${b.name}`, undefined, { sensitivity: 'base' }),
+      ),
+    [projects],
+  )
+
+  const [selectedMinePaths, setSelectedMinePaths] = useState<Set<string>>(() => new Set())
+  const [mineScanMode, setMineScanMode] = useState<'projects' | 'convos'>('projects')
+  const [batchMining, setBatchMining] = useState(false)
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; label: string } | null>(
+    null,
+  )
+  const [batchLogLines, setBatchLogLines] = useState<string[]>([])
+
+  const memoryBusy = running || batchMining || miningProjectPath != null
+
+  useEffect(() => {
+    if (!projectScanPath && sortedProjects[0]?.path) {
+      setProjectScanPath(sortedProjects[0].path)
+    }
+  }, [projectScanPath, sortedProjects])
+
+  const toggleMinePath = (path: string) => {
+    setSelectedMinePaths((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const selectAllMine = () => {
+    setSelectedMinePaths(new Set(sortedProjects.map((p) => p.path)))
+  }
+
+  const clearMineSelection = () => {
+    setSelectedMinePaths(new Set())
+  }
+
+  const runBatchMine = async () => {
+    const paths = sortedProjects.filter((p) => selectedMinePaths.has(p.path)).map((p) => p.path)
+    if (paths.length === 0) {
+      toast.message('Aucun projet coché')
+      return
+    }
+    setBatchMining(true)
+    setBatchLogLines([])
+    const accumulated: string[] = []
+    let stoppedEarly = false
+    for (let i = 0; i < paths.length; i++) {
+      const projectPath = paths[i]
+      const proj = sortedProjects.find((p) => p.path === projectPath)
+      const name = proj?.name ?? projectPath
+      setBatchProgress({ current: i + 1, total: paths.length, label: name })
+      try {
+        const r = await startJobAndCollectLines('mempalace_mine', {
+          project_path: projectPath,
+          wing: name,
+          mode: mineScanMode,
+        })
+        accumulated.push(`\n=== ${name} (${projectPath}) ===\n`, ...r.lines)
+        setBatchLogLines([...accumulated])
+        if (!(r.status === 'done' && r.exit_code === 0)) {
+          toast.error(`MemPalace : échec sur « ${name} » (code ${String(r.exit_code)})`)
+          stoppedEarly = true
+          break
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e))
+        stoppedEarly = true
+        break
+      }
+    }
+    setBatchMining(false)
+    setBatchProgress(null)
+    if (!stoppedEarly) {
+      toast.success(`MemPalace : ${paths.length} projet(s) indexé(s)`)
+    }
+  }
 
   const loadStatus = useCallback(async () => {
     try {
@@ -1116,6 +2091,24 @@ function MemorySection({
       setStatus(s)
     } catch {
       setStatus(null)
+    }
+  }, [])
+
+  const loadConfigRecovery = useCallback(async () => {
+    setConfigHistoryLoading(true)
+    try {
+      const [hist, discovery, last] = await Promise.all([
+        apiJson<MemoryConfigHistoryRow[]>('/api/config/history'),
+        apiJson<Record<string, unknown>>('/api/config/models-discovery'),
+        apiJson<Record<string, unknown>>('/api/scan/last'),
+      ])
+      setConfigHistory(hist)
+      setModelsDiscovery(discovery)
+      setLastScanMeta(last)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setConfigHistoryLoading(false)
     }
   }, [])
 
@@ -1145,6 +2138,54 @@ function MemorySection({
     void loadDocuments()
   }, [loadDocuments])
 
+  useEffect(() => {
+    void loadConfigRecovery()
+  }, [loadConfigRecovery])
+
+  const runProjectScan = async () => {
+    if (!projectScanPath.trim()) {
+      toast.message('Choisissez un projet à scanner')
+      return
+    }
+    setProjectScanLoading(true)
+    try {
+      const q = new URLSearchParams()
+      q.set('root', projectScanPath.trim())
+      if (projectScanPersist) q.set('persist', '1')
+      const j = await apiJson<Record<string, unknown>>(`/api/scan?${q.toString()}`)
+      setProjectScan(j)
+      toast.success(projectScanPersist ? 'Scan projet terminé et persisté' : 'Scan projet terminé')
+      await loadConfigRecovery()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProjectScanLoading(false)
+    }
+  }
+
+  const runMemorySearch = async (queryOverride?: string) => {
+    const qText = (queryOverride ?? memoryQuery).trim()
+    if (!qText) {
+      toast.message('Saisissez une requête mémoire')
+      return
+    }
+    setMemorySearchLoading(true)
+    try {
+      const q = new URLSearchParams()
+      q.set('q', qText)
+      q.set('limit', '12')
+      if (memoryWingFilter.trim()) q.set('wing', memoryWingFilter.trim())
+      if (memorySourceFilter.trim()) q.set('source', memorySourceFilter.trim())
+      const payload = await apiJson<{ results: MemorySearchRow[] }>(`/api/memory/search?${q.toString()}`)
+      setMemorySearchResults(payload.results ?? [])
+      toast.success(`${payload.results?.length ?? 0} résultat(s) mémoire`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMemorySearchLoading(false)
+    }
+  }
+
   const openChunks = async (documentId: string) => {
     if (chunksByDoc[documentId]) {
       const next = { ...chunksByDoc }
@@ -1168,9 +2209,9 @@ function MemorySection({
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Mémoire</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('memory.title')}</h2>
         <p className="text-muted-foreground text-sm">
-          MemPalace (local) produit du JSONL ; zab importe dans Postgres via{' '}
+          {t('memory.subtitle')}{' '}
           <code className="bg-muted rounded px-1 text-xs">MEHDI_MEMORY_DATABASE_URL</code>. Sources officielles :{' '}
           <a
             className="text-primary underline"
@@ -1190,35 +2231,347 @@ function MemorySection({
 
       <Card>
         <CardHeader>
-          <CardTitle>MemPalace CLI</CardTitle>
+          <CardTitle>Recherche mémoire</CardTitle>
           <CardDescription>
-            Installation isolée recommandée (<code className="text-xs">uv tool install</code>). N’utilisez que les
-            sources officielles listées ci-dessus.
+            Recherche dans Postgres : conversations Cursor / Claude / Codex / Kimi, plans, règles et skills synchronisés par{' '}
+            <code className="text-xs">zab memory sync-agents</code>.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={running} onClick={() => runPreset('mempalace_install')}>
-              Installer MemPalace (uv tool)
+        <CardContent className="space-y-4">
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_190px_220px_auto]">
+            <input
+              className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm"
+              placeholder="Rechercher une conversation, ex. extension chrome danmdata"
+              value={memoryQuery}
+              onChange={(e) => setMemoryQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void runMemorySearch()
+              }}
+            />
+            <select
+              className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm"
+              value={memorySourceFilter}
+              onChange={(e) => setMemorySourceFilter(e.target.value)}
+            >
+              <option value="">Toutes sources</option>
+              <option value="cursor_agent_transcript">Cursor</option>
+              <option value="claude_code_transcript">Claude Code</option>
+              <option value="codex_transcript">Codex</option>
+              <option value="kimi_transcript">Kimi</option>
+              <option value="agent_context_artifact">Plans / règles / skills</option>
+            </select>
+            <input
+              className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm"
+              placeholder="wing optionnel (danmdata, zab…)"
+              value={memoryWingFilter}
+              onChange={(e) => setMemoryWingFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void runMemorySearch()
+              }}
+            />
+            <Button type="button" disabled={memorySearchLoading || !memoryQuery.trim()} onClick={() => void runMemorySearch()}>
+              <HugeiconsIcon icon={Search01Icon} size={16} className="mr-1.5" />
+              {memorySearchLoading ? 'Recherche…' : 'Chercher'}
             </Button>
           </div>
-          {jobId && jobLines.length > 0 ? (
-            <pre className="bg-muted max-h-40 overflow-auto rounded-lg p-3 text-[11px]">{jobLines.join('\n')}</pre>
+          <div className="flex flex-wrap gap-2">
+            {['extension chrome danmdata', 'composio flowmetrik-wa', 'mempalace postgres', 'gmail', 'codex', 'kimi'].map((q) => (
+              <Button
+                key={q}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => {
+                  setMemoryQuery(q)
+                  void runMemorySearch(q)
+                }}
+              >
+                {q}
+              </Button>
+            ))}
+          </div>
+          {memorySearchResults.length > 0 ? (
+            <div className="space-y-3">
+              <p className="text-muted-foreground text-xs">{memorySearchResults.length} résultat(s). Cliquez sur “Voir la conversation” pour ouvrir les chunks du document.</p>
+              {memorySearchResults.map((r) => (
+                <article key={r.chunk_id} className="rounded-xl border border-zinc-200 p-3 text-xs dark:border-zinc-800">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
+                      {r.source}
+                    </span>
+                    <span className="text-muted-foreground">{r.wing ?? '—'} / {r.room ?? '—'}</span>
+                    <span className="text-muted-foreground">chunk {r.chunk_index}</span>
+                  </div>
+                  {r.path ? <p className="text-muted-foreground mt-1 break-all font-mono text-[10px]">{shortenHomeInPath(r.path)}</p> : null}
+                  <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-[11px] leading-relaxed">
+                    {r.content_excerpt}
+                  </pre>
+                  <button
+                    type="button"
+                    className="text-primary mt-2 text-[11px] font-medium hover:underline"
+                    onClick={() => void openChunks(r.document_id)}
+                  >
+                    {chunksByDoc[r.document_id] ? 'Masquer la conversation' : 'Voir la conversation'}
+                  </button>
+                  {chunksByDoc[r.document_id] ? (
+                    <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-muted/70 p-3 text-[11px] leading-relaxed">
+                      {chunksByDoc[r.document_id].map((c) => `[#${c.chunk_index}] ${c.content_excerpt}`).join('\n\n—\n\n')}
+                    </pre>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          ) : memoryQuery.trim() && !memorySearchLoading ? (
+            <p className="text-muted-foreground text-xs">Aucun résultat pour cette requête.</p>
           ) : null}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-          <div>
-            <CardTitle>État Postgres</CardTitle>
-            <CardDescription>Lecture seule des tables mehdi_memory_* (même DSN que le gateway).</CardDescription>
+      <details className="rounded-xl border border-zinc-200 bg-card dark:border-zinc-800" data-testid="memory-tools-details">
+        <summary className="cursor-pointer select-none px-5 py-4 text-sm font-medium">
+          Outils techniques mémoire
+          <span className="text-muted-foreground ml-2 font-normal">
+            scan projet, config, MemPalace, état Postgres, import JSONL
+          </span>
+        </summary>
+        <div className="space-y-4 border-t border-zinc-200 p-5 dark:border-zinc-800">
+          <Card data-testid="memory-project-scan">
+            <CardHeader>
+              <CardTitle>Scan projet & contexte mémoire</CardTitle>
+              <CardDescription>
+                Lance <code className="text-xs">/api/scan</code> sur un projet précis pour vérifier SKILL.md, outils locaux,
+                Cursor/Cody, MemPalace et la sonde Postgres avant indexation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                <select
+                  className="border-input bg-background min-w-0 rounded-lg border px-3 py-2 text-sm"
+                  value={projectScanPath}
+                  onChange={(e) => setProjectScanPath(e.target.value)}
+                >
+                  {sortedProjects.length === 0 ? <option value="">Aucun projet détecté</option> : null}
+                  {sortedProjects.map((p) => (
+                    <option key={p.path} value={p.path}>
+                      {p.org}/{p.name} — {shortenHomeInPath(p.path)}
+                    </option>
+                  ))}
+                </select>
+                <Button type="button" disabled={projectScanLoading || !projectScanPath.trim()} onClick={() => void runProjectScan()}>
+                  <HugeiconsIcon icon={Search01Icon} size={16} className="mr-1.5" />
+                  {projectScanLoading ? 'Scan…' : 'Scanner'}
+                </Button>
+              </div>
+              <label className="text-muted-foreground flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={projectScanPersist}
+                  onChange={(e) => setProjectScanPersist(e.target.checked)}
+                />
+                Persister le résultat dans <code className="bg-muted rounded px-1">scan-last.yaml</code> et mettre à jour
+                <code className="bg-muted rounded px-1">last_scan_at_utc</code> /{' '}
+                <code className="bg-muted rounded px-1">models_discovery</code>
+              </label>
+              {projectScan ? <MemoryProjectScanSummary scan={projectScan} /> : null}
+            </CardContent>
+          </Card>
+
+          <Card data-testid="memory-config-recovery">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle>Récupération configuration</CardTitle>
+                <CardDescription>Dernier scan persisté, fichiers config courants et découverte modèles enregistrée.</CardDescription>
+              </div>
+              <Button type="button" variant="secondary" size="sm" disabled={configHistoryLoading} onClick={() => void loadConfigRecovery()}>
+                Rafraîchir
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Entrée</TableHead>
+                    <TableHead>État</TableHead>
+                    <TableHead>Modifié</TableHead>
+                    <TableHead>Chemin</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {configHistory.map((row) => (
+                    <TableRow key={row.key}>
+                      <TableCell className="text-xs">
+                        <span className="font-medium">{row.title}</span>
+                        <span className="text-muted-foreground ml-1">({row.kind})</span>
+                      </TableCell>
+                      <TableCell className="text-xs">{row.exists ? `${row.bytes ?? 0} o` : 'absent'}</TableCell>
+                      <TableCell className="text-xs">
+                        {row.updated_at_unix ? new Date(row.updated_at_unix * 1000).toLocaleString() : '—'}
+                      </TableCell>
+                      <TableCell className="max-w-[360px] truncate font-mono text-[11px]">
+                        {shortenHomeInPath(row.path_display)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {configHistory.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-muted-foreground text-xs">
+                        {configHistoryLoading ? 'Chargement…' : 'Aucun historique récupérable.'}
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+              <div className="grid gap-3 lg:grid-cols-2">
+                <details className="text-xs">
+                  <summary className="text-muted-foreground cursor-pointer select-none py-1">Dernier scan persisté</summary>
+                  <pre className="bg-muted mt-2 max-h-56 overflow-auto rounded-lg p-3">
+                    {JSON.stringify(lastScanMeta ?? { present: false }, null, 2)}
+                  </pre>
+                </details>
+                <details className="text-xs">
+                  <summary className="text-muted-foreground cursor-pointer select-none py-1">models_discovery config.yaml</summary>
+                  <pre className="bg-muted mt-2 max-h-56 overflow-auto rounded-lg p-3">
+                    {JSON.stringify(modelsDiscovery ?? {}, null, 2)}
+                  </pre>
+                </details>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Indexer dans MemPalace (local)</CardTitle>
+              <CardDescription>
+                Cochez les dépôts puis lancez l’indexation. En mode <strong className="font-medium">Code &amp; docs</strong>, seuls
+                les fichiers <code className="text-xs">.md</code>, <code className="text-xs">.pdf</code> et{' '}
+                <code className="text-xs">.txt</code> sont ingérés en texte ; les <code className="text-xs">.csv</code> ne donnent
+                qu’un descriptif (en-têtes + volume) ; le reste est ignoré. Cela alimente le palace local (SQLite / Chroma) — pas
+                l’import Postgres.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted-foreground font-medium">Mode :</span>
+            <Button
+              type="button"
+              size="sm"
+              variant={mineScanMode === 'projects' ? 'default' : 'outline'}
+              disabled={memoryBusy}
+              onClick={() => setMineScanMode('projects')}
+            >
+              Code & docs
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mineScanMode === 'convos' ? 'default' : 'outline'}
+              disabled={memoryBusy}
+              onClick={() => setMineScanMode('convos')}
+            >
+              Conversations
+            </Button>
           </div>
-          <Button type="button" variant="secondary" size="sm" onClick={() => void loadStatus().then(() => loadDocuments())}>
-            Rafraîchir
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
+          {sortedProjects.length === 0 ? (
+            <p className="text-muted-foreground text-xs">
+              Aucun projet détecté. Configurez <code className="font-mono">projects_roots</code> dans l’onglet Projets.
+            </p>
+          ) : (
+            <ul className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              {sortedProjects.map((p) => (
+                <li key={p.path} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1 size-4 shrink-0 rounded border-zinc-300"
+                    checked={selectedMinePaths.has(p.path)}
+                    disabled={memoryBusy}
+                    onChange={() => toggleMinePath(p.path)}
+                  />
+                  <label className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 leading-snug">
+                    <button
+                      type="button"
+                      className="text-left font-medium hover:underline"
+                      disabled={memoryBusy}
+                      onClick={() => toggleMinePath(p.path)}
+                    >
+                      {p.name}{' '}
+                      <span className="text-muted-foreground font-normal">({p.org})</span>
+                    </button>
+                    <span className="text-muted-foreground font-mono text-[10px] break-all">
+                      {shortenHomeInPath(p.path)}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={memoryBusy} onClick={selectAllMine}>
+              Tout cocher
+            </Button>
+            <Button type="button" variant="outline" size="sm" disabled={memoryBusy} onClick={clearMineSelection}>
+              Tout décocher
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={memoryBusy || selectedMinePaths.size === 0}
+              onClick={() => void runBatchMine()}
+            >
+              <HugeiconsIcon icon={PlayCircleIcon} size={16} className="mr-1.5" />
+              Lancer l&apos;indexation ({selectedMinePaths.size})
+            </Button>
+          </div>
+          {batchProgress ? (
+            <div className="space-y-1">
+              <div className="text-muted-foreground flex justify-between text-[11px]">
+                <span>
+                  {batchProgress.label} — {batchProgress.current} / {batchProgress.total}
+                </span>
+                <span>{Math.round((100 * batchProgress.current) / batchProgress.total)} %</span>
+              </div>
+              <div className="bg-muted h-2 overflow-hidden rounded-full">
+                <div
+                  className="bg-primary h-2 rounded-full transition-[width] duration-300"
+                  style={{ width: `${(100 * batchProgress.current) / batchProgress.total}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+          {batchLogLines.length > 0 ? (
+            <pre className="bg-muted max-h-48 overflow-auto rounded-lg p-3 text-[11px]">{batchLogLines.join('\n')}</pre>
+          ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>MemPalace CLI</CardTitle>
+              <CardDescription>Installation isolée recommandée (<code className="text-xs">uv tool install</code>).</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" disabled={memoryBusy} onClick={() => runPreset('mempalace_install')}>
+                  Installer MemPalace (uv tool)
+                </Button>
+              </div>
+              {jobId && jobLines.length > 0 ? (
+                <pre className="bg-muted max-h-40 overflow-auto rounded-lg p-3 text-[11px]">{jobLines.join('\n')}</pre>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle>État Postgres</CardTitle>
+                <CardDescription>Lecture seule des tables mehdi_memory_* (même DSN que le gateway).</CardDescription>
+              </div>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void loadStatus().then(() => loadDocuments())}>
+                Rafraîchir
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
           {!status ? (
             <p className="text-muted-foreground">Chargement…</p>
           ) : (
@@ -1248,15 +2601,15 @@ function MemorySection({
               ) : null}
             </ul>
           )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Importer JSONL</CardTitle>
-          <CardDescription>Chemin sous le repo skills ou $HOME ; exécuté dans le dépôt skills configuré.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 pt-0">
+          <Card>
+            <CardHeader>
+              <CardTitle>Importer JSONL</CardTitle>
+              <CardDescription>Chemin sous le repo skills ou $HOME ; exécuté dans le dépôt skills configuré.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
           <input
             className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm"
             placeholder="chemin/vers/export.jsonl"
@@ -1264,14 +2617,16 @@ function MemorySection({
             onChange={(e) => setJsonlPath(e.target.value)}
           />
           <Button
-            disabled={running || !jsonlPath.trim()}
+            disabled={memoryBusy || !jsonlPath.trim()}
             onClick={() => runPreset('memory_import', { jsonl_path: jsonlPath.trim() })}
           >
             <HugeiconsIcon icon={AiBrain02Icon} size={16} className="mr-1.5" />
             Importer
           </Button>
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </div>
+      </details>
 
       <Card>
         <CardHeader>
@@ -1358,6 +2713,67 @@ function MemorySection({
   )
 }
 
+function MemoryProjectScanSummary({ scan }: { scan: Record<string, unknown> }) {
+  const memoryStack = (scan.memory_stack as Record<string, unknown> | undefined) || {}
+  const mempalace = (memoryStack.mempalace as Record<string, unknown> | undefined) || {}
+  const postgres = (memoryStack.postgres_probe as Record<string, unknown> | undefined) || {}
+  const scripts = (memoryStack.skills_scripts as Record<string, unknown> | undefined) || {}
+  const warnings = Array.isArray(scan.warnings) ? (scan.warnings as string[]) : []
+  const workspaceProjects = Array.isArray(scan.workspace_projects) ? scan.workspace_projects.length : 0
+  const skillCount = typeof scan.skill_md_count === 'number' ? scan.skill_md_count : 0
+
+  return (
+    <div className="rounded-lg border border-zinc-200 p-3 text-xs dark:border-zinc-800">
+      <div className="grid gap-2 md:grid-cols-2">
+        <p className="text-muted-foreground">
+          Racine scannée :{' '}
+          <span className="font-mono text-foreground break-all">{shortenHomeInPath(String(scan.scan_root_resolved ?? '—'))}</span>
+        </p>
+        <p>
+          SKILL.md : <span className="font-medium">{skillCount}</span> · projets détectés :{' '}
+          <span className="font-medium">{workspaceProjects}</span>
+        </p>
+        <p>
+          MemPalace :{' '}
+          <span className="font-medium">{mempalace.on_path === true ? 'présent' : 'absent'}</span>
+          {typeof mempalace.version === 'string' && mempalace.version ? (
+            <span className="text-muted-foreground ml-1 font-mono">{mempalace.version}</span>
+          ) : null}
+        </p>
+        <p>
+          DSN mémoire :{' '}
+          <span className="font-medium">
+            {memoryStack.MEHDI_MEMORY_DATABASE_URL_configured === true ? 'configuré' : 'absent'}
+          </span>
+        </p>
+        <p>
+          Import JSONL :{' '}
+          <span className="font-medium">{scripts.import_memory_jsonl_exists === true ? 'script présent' : 'script absent'}</span>
+        </p>
+        <p>
+          Postgres :{' '}
+          <span className="font-mono">
+            {typeof postgres.document_count === 'number' && typeof postgres.chunk_count === 'number'
+              ? `docs ${postgres.document_count}, chunks ${postgres.chunk_count}`
+              : String(postgres.skipped_reason ?? '—')}
+          </span>
+        </p>
+      </div>
+      {warnings.length > 0 ? (
+        <ul className="mt-3 space-y-1 text-amber-700 dark:text-amber-300">
+          {warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      ) : null}
+      <details className="mt-3">
+        <summary className="text-muted-foreground cursor-pointer select-none py-1">JSON scan complet</summary>
+        <pre className="bg-muted mt-2 max-h-72 overflow-auto rounded-lg p-3">{JSON.stringify(scan, null, 2)}</pre>
+      </details>
+    </div>
+  )
+}
+
 function IdeSection({
   toolsLocal,
   scanTools,
@@ -1367,11 +2783,28 @@ function IdeSection({
   scanTools: ScanToolsPayload | null
   probe: (kind: 'litellm' | 'openrouter') => void
 }) {
+  const { t } = useI18n()
+  const [codeTools, setCodeTools] = useState<CodeToolRow[]>([])
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const payload = await apiJson<{ data: CodeToolRow[] }>('/api/code-tools?limit=50')
+        if (!cancelled) setCodeTools(payload.data ?? [])
+      } catch {
+        if (!cancelled) setCodeTools([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">IDE & outils</h2>
-        <p className="text-muted-foreground text-sm">Configuration locale et tests d’endpoints LLM.</p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('ide.title')}</h2>
+        <p className="text-muted-foreground text-sm">{t('ide.subtitle')}</p>
       </header>
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -1396,10 +2829,37 @@ function IdeSection({
 
         <Card>
           <CardHeader>
-            <CardTitle>Outils CLI</CardTitle>
-            <CardDescription>Commandes zab et scripts du dépôt</CardDescription>
+            <CardTitle>{t('ide.codeTools')}</CardTitle>
+            <CardDescription>Agents et IDE détectés par l’index local</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('ide.columns.tool')}</TableHead>
+                  <TableHead>{t('ide.columns.provider')}</TableHead>
+                  <TableHead>{t('ide.columns.state')}</TableHead>
+                  <TableHead>{t('ide.columns.binary')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {codeTools.map((tool) => (
+                  <TableRow key={tool.key}>
+                    <TableCell className="font-medium text-xs">{tool.display_name ?? tool.id}</TableCell>
+                    <TableCell className="font-mono text-xs">{tool.provider ?? '—'}</TableCell>
+                    <TableCell className="text-xs">{tool.installed ? t('memory.installed') : t('memory.absent')}</TableCell>
+                    <TableCell className="font-mono text-[11px] break-all">{tool.binary ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+                {codeTools.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-muted-foreground text-xs">
+                      Aucun outil indexé. Lancez un sync depuis la vue d’ensemble.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
             {!scanTools ? (
               <p className="text-muted-foreground text-sm">Chargement…</p>
             ) : (
@@ -1442,298 +2902,536 @@ function IdeSection({
   )
 }
 
-function ModelsCodySection() {
-  const [scan, setScan] = useState<Record<string, unknown> | null>(null)
-  const [last, setLast] = useState<Record<string, unknown> | null>(null)
-  const [discoveryMeta, setDiscoveryMeta] = useState<{
-    user_config_path?: string
-    models_discovery?: Record<string, unknown>
-    agentpipe_config_path_override?: string
-    codexbar_config_path_override?: string
-  } | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [persist, setPersist] = useState(true)
+type AgentDiscoveryRow = {
+  id: string
+  codexbar_usage_id: string | null
+  cli_path: string | null
+  on_path: boolean
+  cli_source?: string | null
+  sources: string[]
+  agentpipe_type?: string | null
+  coding_models_preview?: string[] | null
+}
 
-  const reloadDiscovery = async () => {
-    try {
-      const d = await apiJson<{
-        user_config_path?: string
-        models_discovery?: Record<string, unknown>
-        agentpipe_config_path_override?: string
-        codexbar_config_path_override?: string
-      }>('/api/config/models-discovery')
-      setDiscoveryMeta(d)
-    } catch {
-      /* ignore */
-    }
+type AgentsDiscoveryPayload = {
+  codexbar_config_path?: string
+  codexbar_present?: boolean
+  codexbar_error?: string
+  agentpipe_path?: string
+  agentpipe_present?: boolean
+  agentpipe_error?: string
+  rows: AgentDiscoveryRow[]
+}
+
+type CodexAgentsApiPayload = {
+  config_path: string
+  present?: boolean
+  agents: Array<{
+    id: string
+    enabled?: boolean
+    cli_path: string | null
+    on_path: boolean
+    cli_source?: string
+  }>
+  error?: string
+}
+
+function isApiNotFoundMessage(msg: string): boolean {
+  const m = msg.toLowerCase()
+  return (
+    m.includes('not found') ||
+    (m.includes('"detail"') && m.includes('not found')) ||
+    m.includes('404')
+  )
+}
+
+function codexAgentsToDiscoveryPayload(legacy: CodexAgentsApiPayload): AgentsDiscoveryPayload {
+  return {
+    codexbar_config_path: legacy.config_path,
+    codexbar_present: legacy.present,
+    codexbar_error: legacy.error,
+    rows: legacy.agents.map((a) => ({
+      id: a.id,
+      codexbar_usage_id: a.id,
+      cli_path: a.cli_path,
+      on_path: a.on_path,
+      cli_source: a.cli_source ?? 'codexbar',
+      sources: ['codexbar'],
+      agentpipe_type: null,
+      coding_models_preview: null,
+    })),
   }
+}
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const j = await apiJson<Record<string, unknown>>('/api/scan/last')
-        if (j.present === true) setLast(j)
-      } catch {
-        /* ignore */
+function pickFirstUsageEntry(apiData: unknown): Record<string, unknown> | null {
+  if (apiData == null) return null
+  if (Array.isArray(apiData)) {
+    for (const item of apiData) {
+      if (item && typeof item === 'object' && 'usage' in item) {
+        return item as Record<string, unknown>
       }
-      await reloadDiscovery()
-    })()
+    }
+    return null
+  }
+  if (typeof apiData === 'object' && apiData !== null && 'usage' in apiData) {
+    return apiData as Record<string, unknown>
+  }
+  return null
+}
+
+function UsageBand({
+  title,
+  window,
+}: {
+  title: string
+  window: Record<string, unknown> | null | undefined
+}) {
+  if (!window || typeof window !== 'object') return null
+  const up = window.usedPercent
+  const pct = typeof up === 'number' ? Math.min(100, Math.max(0, up)) : null
+  const wm = window.windowMinutes
+  const rd = window.resetDescription
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-muted-foreground text-[11px] font-medium">{title}</span>
+        {pct != null ? (
+          <span className="font-mono text-[11px]">{pct}%</span>
+        ) : (
+          <span className="text-muted-foreground text-[11px]">—</span>
+        )}
+      </div>
+      {pct != null ? (
+        <div className="bg-muted h-2 w-full overflow-hidden rounded-full">
+          <div className="bg-primary h-full rounded-full transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      ) : null}
+      <p className="text-muted-foreground text-[10px]">
+        {[typeof wm === 'number' ? `fenêtre ${wm} min` : null, typeof rd === 'string' ? rd : null].filter(Boolean).join(' · ') ||
+          '—'}
+      </p>
+    </div>
+  )
+}
+
+function ProviderUsageCard({
+  agentId,
+  payload,
+  noCodexbar,
+  loading,
+}: {
+  agentId: string
+  payload: Record<string, unknown> | undefined
+  noCodexbar?: boolean
+  loading?: boolean
+}) {
+  if (noCodexbar) {
+    return (
+      <p className="text-muted-foreground text-xs">
+        Agent listé via agentpipe uniquement — pas de provider CodexBar correspondant : pas de quota{' '}
+        <code className="bg-muted rounded px-1">codexbar usage</code>.
+      </p>
+    )
+  }
+  if (!payload && loading) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+        <Loader2 className="size-3.5 animate-spin" />
+        Chargement en cours…
+      </div>
+    )
+  }
+  if (!payload) {
+    return <p className="text-muted-foreground text-xs">Pas encore chargé — clique sur « Rafraîchir la conso ».</p>
+  }
+  if (payload.ok === false) {
+    return (
+      <div className="text-rose-700 text-xs dark:text-rose-400">
+        {String(payload.error ?? payload.stderr_preview ?? 'erreur')}
+        {typeof payload.exit_code === 'number' ? ` (exit ${payload.exit_code})` : ''}
+      </div>
+    )
+  }
+  const raw = payload.data
+  const entry = pickFirstUsageEntry(raw)
+  const usage =
+    entry && typeof entry.usage === 'object' && entry.usage !== null ? (entry.usage as Record<string, unknown>) : null
+  if (!usage) {
+    return <p className="text-muted-foreground text-xs">Données usage vides ou format inattendu.</p>
+  }
+  const email = typeof usage.accountEmail === 'string' ? usage.accountEmail : null
+  const login = typeof usage.loginMethod === 'string' ? usage.loginMethod : null
+  const prim = usage.primary as Record<string, unknown> | undefined
+  const sec = usage.secondary as Record<string, unknown> | undefined
+  return (
+    <div className="space-y-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-mono text-sm font-medium">{agentId}</p>
+          {email ? <p className="text-muted-foreground text-[11px]">{email}</p> : null}
+          {login ? <p className="text-muted-foreground text-[11px]">{login}</p> : null}
+        </div>
+        {loading ? (
+          <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-[10px]">
+            <Loader2 className="size-3 animate-spin" />
+            live
+          </span>
+        ) : null}
+      </div>
+      <UsageBand title="Fenêtre principale" window={prim} />
+      <UsageBand title="Fenêtre secondaire" window={sec} />
+    </div>
+  )
+}
+
+function ModelsCodySection() {
+  const { t } = useI18n()
+  const [discoveryPayload, setDiscoveryPayload] = useState<AgentsDiscoveryPayload | null>(null)
+  const [agentsLoading, setAgentsLoading] = useState(true)
+  const [agentsErr, setAgentsErr] = useState<string | null>(null)
+  const [discoveryNotice, setDiscoveryNotice] = useState<string | null>(null)
+  const [discoveryScanning, setDiscoveryScanning] = useState(false)
+  const [usageByProvider, setUsageByProvider] = useState<Record<string, Record<string, unknown>>>({})
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageLoadingByProvider, setUsageLoadingByProvider] = useState<Record<string, boolean>>({})
+
+  const loadAgentsDiscovery = useCallback(async () => {
+    setAgentsLoading(true)
+    setAgentsErr(null)
+    setDiscoveryNotice(null)
+    try {
+      const j = await apiJson<AgentsDiscoveryPayload>('/api/agents/discovery')
+      setDiscoveryPayload(j)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (isApiNotFoundMessage(msg)) {
+        try {
+          const legacy = await apiJson<CodexAgentsApiPayload>('/api/agents')
+          setDiscoveryPayload(codexAgentsToDiscoveryPayload(legacy))
+          setDiscoveryNotice(
+            'L’API « /api/agents/discovery » est absente (zab à redémarrer ou à mettre à jour). Affichage limité aux agents CodexBar.',
+          )
+          return
+        } catch (e2) {
+          setDiscoveryPayload(null)
+          setAgentsErr(e2 instanceof Error ? e2.message : String(e2))
+          return
+        }
+      }
+      setDiscoveryPayload(null)
+      setAgentsErr(msg)
+    } finally {
+      setAgentsLoading(false)
+    }
   }, [])
 
-  const runScan = async () => {
-    setLoading(true)
+  useEffect(() => {
+    void loadAgentsDiscovery()
+  }, [loadAgentsDiscovery])
+
+  const runWorkspaceDiscovery = async () => {
+    setDiscoveryScanning(true)
     try {
-      const q = persist ? '?persist=1' : ''
-      const j = await apiJson<Record<string, unknown>>(`/api/scan${q}`)
-      setScan(j)
-      toast.success(persist ? 'Scan terminé — scan-last.yaml + models_discovery dans config.yaml' : 'Scan terminé')
-      await reloadDiscovery()
-      try {
-        const again = await apiJson<Record<string, unknown>>('/api/scan/last')
-        if (again.present === true) setLast(again)
-      } catch {
-        /* ignore */
-      }
+      await apiJson<Record<string, unknown>>('/api/scan?persist=true')
+      toast.success('Découverte enregistrée (agentpipe + codexbar dans models_discovery, dernier scan).')
+      await loadAgentsDiscovery()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      setDiscoveryScanning(false)
     }
   }
 
-  const displayPayload =
-    scan ??
-    (last?.present === true && typeof last.scan === 'object' && last.scan !== null
-      ? (last.scan as Record<string, unknown>)
-      : null)
+  const refreshUsage = async () => {
+    const rows = discoveryPayload?.rows ?? []
+    const targets = [
+      ...new Set(rows.filter((r) => r.codexbar_usage_id).map((r) => r.codexbar_usage_id as string)),
+    ]
+    if (!targets.length) {
+      toast.message('Aucun provider CodexBar dans la liste — rien à interroger pour la conso.')
+      return
+    }
+    setUsageLoading(true)
+    setUsageLoadingByProvider((prev) => {
+      const next = { ...prev }
+      for (const providerId of targets) next[providerId] = true
+      return next
+    })
+    try {
+      await Promise.allSettled(
+        targets.map(async (providerId) => {
+          try {
+            const j = await apiJson<Record<string, unknown>>(
+              `/api/codexbar/usage?provider=${encodeURIComponent(providerId)}`,
+            )
+            setUsageByProvider((prev) => ({ ...prev, [providerId]: j }))
+          } catch (e) {
+            setUsageByProvider((prev) => ({
+              ...prev,
+              [providerId]: { ok: false, error: e instanceof Error ? e.message : String(e), provider: providerId },
+            }))
+          } finally {
+            setUsageLoadingByProvider((prev) => ({ ...prev, [providerId]: false }))
+          }
+        }),
+      )
+    } finally {
+      setUsageLoading(false)
+    }
+  }
 
-  const ap = (displayPayload?.agentpipe as Record<string, unknown> | undefined) || {}
-  const cb = (displayPayload?.codexbar as Record<string, unknown> | undefined) || {}
-  const cc = (displayPayload?.cursor_cody as Record<string, unknown> | undefined) || {}
-  const clisBlock = displayPayload?.clis as Record<string, unknown> | undefined
-  const wl = (clisBlock?.watchlist as { name: string; on_path: boolean; which_path?: string | null }[]) || []
-  const ms = (displayPayload?.memory_stack as Record<string, unknown> | undefined) || {}
-  const msMp = (ms.mempalace as Record<string, unknown> | undefined) || {}
-  const msProbe = (ms.postgres_probe as Record<string, unknown> | undefined) || {}
-  const msScripts = (ms.skills_scripts as Record<string, unknown> | undefined) || {}
-
-  const agents = Array.isArray(ap.agents) ? (ap.agents as Record<string, unknown>[]) : []
-  const codingFlat = Array.isArray(ap.coding_models_flat) ? (ap.coding_models_flat as string[]) : []
-  const probe = (cb.cli_probe as Record<string, unknown> | undefined) || {}
+  const rows = discoveryPayload?.rows ?? []
+  const codexbarPath = discoveryPayload?.codexbar_config_path
+  const agentpipePath = discoveryPayload?.agentpipe_path
 
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Modèles & Cursor (agentpipe · CodexBar)</h2>
-        <p className="text-muted-foreground text-sm">
-          Lecture du fichier agentpipe (coding models par agent), du JSON CodexBar et test CLI{' '}
-          <code className="bg-muted rounded px-1 text-xs">codexbar --version</code> +{' '}
-          <code className="bg-muted rounded px-1 text-xs">codexbar config validate</code>. Définissez des chemins
-          absolus avec <code className="bg-muted rounded px-1 text-xs">agentpipe_config_path</code> /{' '}
-          <code className="bg-muted rounded px-1 text-xs">codexbar_config_path</code> dans{' '}
-          <code className="bg-muted rounded px-1 text-xs">~/.config/zab/config.yaml</code>. Pour Cursor/Cody et la liste{' '}
-          <code className="bg-muted rounded px-1 text-xs">cli_watchlist</code>, voir aussi local-tools.yaml.
-        </p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('models.title')}</h2>
+        <p className="text-muted-foreground text-sm">{t('models.subtitle')}</p>
       </header>
 
       <Card>
-        <CardHeader className="flex flex-row items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-sky-100 text-sky-800">
-            <HugeiconsIcon icon={CpuIcon} size={20} />
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-1">
+            <CardTitle>Agents &amp; consommation</CardTitle>
+            <CardDescription className="space-y-1">
+              <span className="font-mono text-[11px] break-words">
+                CodexBar : {codexbarPath ? shortenHomeInPath(codexbarPath) : '—'}
+              </span>
+              <span className="font-mono text-[11px] break-words block">
+                Agentpipe : {agentpipePath ? shortenHomeInPath(agentpipePath) : '—'}
+              </span>
+            </CardDescription>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" disabled={loading} onClick={() => void runScan()}>
-              {loading ? 'Scan…' : 'Lancer le scan'}
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              className="max-sm:flex-1"
+              disabled={discoveryScanning}
+              onClick={() => void runWorkspaceDiscovery()}
+            >
+              {discoveryScanning ? 'Découverte…' : 'Découvrir & enregistrer'}
             </Button>
-            <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs">
-              <input type="checkbox" checked={persist} onChange={(e) => setPersist(e.target.checked)} />
-              Enregistrer après scan (<code className="bg-muted rounded px-1">scan-last.yaml</code>,{' '}
-              <code className="bg-muted rounded px-1">last_scan_at_utc</code> et bloc{' '}
-              <code className="bg-muted rounded px-1">models_discovery</code>)
-            </label>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="max-sm:flex-1"
+              disabled={agentsLoading}
+              onClick={() => void loadAgentsDiscovery()}
+            >
+              {agentsLoading ? 'Chargement…' : 'Recharger la liste'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="max-sm:flex-1"
+              disabled={usageLoading || !rows.some((r) => r.codexbar_usage_id)}
+              onClick={() => void refreshUsage()}
+            >
+              {usageLoading ? 'Rafraîchissement…' : 'Rafraîchir la conso'}
+            </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {!displayPayload ? (
-            <p className="text-muted-foreground text-sm">
-              Aucun jeu de données — lance un scan ou recharge : le dernier{' '}
-              <code className="bg-muted rounded px-1 text-xs">scan-last.yaml</code> sera utilisé s&apos;il existe.
-            </p>
-          ) : (
-            <>
-              <div className="space-y-3">
-                <p className="text-muted-foreground text-[11px] font-medium uppercase">Agentpipe — coding models</p>
-                <p className="text-muted-foreground font-mono text-xs break-all">
-                  Config résolu : {(ap.path as string) || '—'}
-                </p>
-                {discoveryMeta?.agentpipe_config_path_override ? (
-                  <p className="text-muted-foreground text-xs">
-                    Override YAML :{' '}
-                    <code className="bg-muted rounded px-1">{String(discoveryMeta.agentpipe_config_path_override)}</code>
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap gap-1.5">
-                  {codingFlat.length === 0 ? (
-                    <span className="text-muted-foreground text-xs">Aucun modèle détecté dans les blocs agents (clés model / models / …).</span>
+        <CardContent className="space-y-8">
+          <div className="space-y-4">
+            {agentsErr ? <p className="text-destructive text-sm">{agentsErr}</p> : null}
+            {discoveryNotice ? (
+              <p className="text-amber-800 text-sm dark:text-amber-200">{discoveryNotice}</p>
+            ) : null}
+            {discoveryPayload?.codexbar_error && discoveryPayload.codexbar_error !== 'codexbar_config_missing' ? (
+              <p className="text-amber-800 text-sm dark:text-amber-200">CodexBar : {discoveryPayload.codexbar_error}</p>
+            ) : null}
+            {discoveryPayload?.agentpipe_error ? (
+              <p className="text-amber-800 text-sm dark:text-amber-200">Agentpipe : {discoveryPayload.agentpipe_error}</p>
+            ) : null}
+            {!agentsLoading && discoveryPayload?.codexbar_error === 'codexbar_config_missing' ? (
+              <p className="text-muted-foreground text-sm">
+                Fichier CodexBar introuvable. Indique <code className="bg-muted rounded px-1">codexbar_config_path</code> dans la
+                config zab si besoin.
+              </p>
+            ) : null}
+            <div className="w-full overflow-x-auto">
+              <Table className="min-w-[720px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Agent</TableHead>
+                    <TableHead>CLI</TableHead>
+                    <TableHead>Statut</TableHead>
+                    <TableHead>Origines</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-muted-foreground text-xs">
+                        {agentsLoading
+                          ? 'Chargement…'
+                          : 'Aucun agent — lance « Découvrir & enregistrer » ou vérifie agentpipe / CodexBar.'}
+                      </TableCell>
+                    </TableRow>
                   ) : (
-                    codingFlat.map((m) => (
-                      <span key={m} className="bg-muted rounded-full px-2 py-0.5 font-mono text-[11px]">
-                        {m}
-                      </span>
+                    rows.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell className="max-w-[200px]">
+                          <div className="font-mono text-xs">{r.id}</div>
+                          {r.agentpipe_type ? (
+                            <div className="text-muted-foreground mt-0.5 text-[10px]">type agentpipe : {r.agentpipe_type}</div>
+                          ) : null}
+                          {r.coding_models_preview && r.coding_models_preview.length > 0 ? (
+                            <div
+                              className="text-muted-foreground mt-0.5 line-clamp-2 text-[10px]"
+                              title={r.coding_models_preview.join(', ')}
+                            >
+                              modèles : {r.coding_models_preview.join(', ')}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs break-all">
+                          {r.cli_path ? shortenHomeInPath(r.cli_path) : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs">{r.on_path ? 'sur le PATH' : 'hors PATH'}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">
+                          {r.sources.length ? r.sources.join(' + ') : '—'}
+                          {r.cli_source ? (
+                            <span className="text-muted-foreground block text-[10px] opacity-80">CLI : {r.cli_source}</span>
+                          ) : null}
+                        </TableCell>
+                      </TableRow>
                     ))
                   )}
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Modèles</TableHead>
-                      <TableHead>CLI</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {agents.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-muted-foreground text-xs">
-                          Fichier absent ou aucun agent — vérifiez le chemin agentpipe.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      agents.map((row) => {
-                        const cms = Array.isArray(row.coding_models) ? (row.coding_models as string[]) : []
-                        return (
-                          <TableRow key={String(row.id)}>
-                            <TableCell className="font-mono text-xs">{String(row.id ?? '—')}</TableCell>
-                            <TableCell className="font-mono text-xs">{String(row.type ?? '—')}</TableCell>
-                            <TableCell className="text-xs">{cms.length ? cms.join(', ') : '—'}</TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {row.on_path ? String(row.which_path ?? row.probe_binary ?? 'oui') : 'hors PATH'}
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+          <div className="space-y-3 border-t border-border pt-6">
+            <p className="text-muted-foreground text-xs">
+              Consommation : uniquement les agents qui ont aussi une entrée CodexBar activée (même identifiant fusionné par
+              nom).
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              {rows.map((r) => (
+                <ProviderUsageCard
+                  key={r.id}
+                  agentId={r.id}
+                  noCodexbar={!r.codexbar_usage_id}
+                  loading={r.codexbar_usage_id ? Boolean(usageLoadingByProvider[r.codexbar_usage_id]) : false}
+                  payload={r.codexbar_usage_id ? usageByProvider[r.codexbar_usage_id] : undefined}
+                />
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+function HermesSection() {
+  const { t } = useI18n()
+  const { lines: composeLines, jobId: composeJobId, running: composeRunning, runPreset: runComposePreset } = useJobRunner()
 
-              <div className="space-y-3">
-                <p className="text-muted-foreground text-[11px] font-medium uppercase">CodexBar — config &amp; CLI</p>
-                <p className="text-muted-foreground font-mono text-xs break-all">
-                  Config résolu : {(cb.path as string) || '—'}
-                </p>
-                {discoveryMeta?.codexbar_config_path_override ? (
-                  <p className="text-muted-foreground text-xs">
-                    Override YAML :{' '}
-                    <code className="bg-muted rounded px-1">{String(discoveryMeta.codexbar_config_path_override)}</code>
-                  </p>
-                ) : null}
-                <p className="text-muted-foreground text-xs">
-                  Clés JSON :{' '}
-                  {Array.isArray(cb.top_level_keys) && (cb.top_level_keys as string[]).length
-                    ? (cb.top_level_keys as string[]).join(', ')
-                    : '—'}
-                </p>
-                <pre className="bg-muted max-h-72 overflow-auto rounded-lg p-3 text-xs">{JSON.stringify(probe, null, 2)}</pre>
-              </div>
+  const startOpenWebUI = useCallback(() => {
+    runComposePreset('flowmetrik_openwebui_compose_up', { project_path: FLOWMETRIK_OPENWEBUI_PROJECT })
+  }, [runComposePreset])
 
-              <div>
-                <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">Cursor / Cody</p>
-                <pre className="bg-muted max-h-64 overflow-auto rounded-lg p-3 text-xs">{JSON.stringify(cc, null, 2)}</pre>
-              </div>
-              <div>
-                <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">CLI watchlist (which)</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Binaire</TableHead>
-                      <TableHead>PATH</TableHead>
-                      <TableHead>Chemin</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {wl.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={3} className="text-muted-foreground text-xs">
-                          Liste vide — ajoute <code className="bg-muted rounded px-1">cli_watchlist</code> dans le YAML.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      wl.map((row) => (
-                        <TableRow key={row.name}>
-                          <TableCell className="font-mono text-xs">{row.name}</TableCell>
-                          <TableCell>{row.on_path ? 'oui' : 'non'}</TableCell>
-                          <TableCell className="font-mono text-xs break-all">{row.which_path ?? '—'}</TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+  const stopOpenWebUI = useCallback(() => {
+    runComposePreset('flowmetrik_openwebui_compose_down', { project_path: FLOWMETRIK_OPENWEBUI_PROJECT })
+  }, [runComposePreset])
 
-              <div className="space-y-3">
-                <p className="text-muted-foreground text-[11px] font-medium uppercase">
-                  Mémoire MCP (MemPalace → Postgres)
-                </p>
-                <div className="text-muted-foreground grid gap-2 text-xs md:grid-cols-2">
-                  <p>
-                    CLI MemPalace :{' '}
-                    <span className="font-medium text-foreground">
-                      {msMp.on_path === true ? 'sur le PATH' : 'absent'}
-                    </span>
-                    {typeof msMp.version === 'string' && msMp.version ? (
-                      <span className="ml-1 font-mono text-[11px]">({msMp.version})</span>
-                    ) : null}
-                  </p>
-                  <p>
-                    DSN <code className="bg-muted rounded px-1">MEHDI_MEMORY_DATABASE_URL</code> :{' '}
-                    <span className="font-medium text-foreground">
-                      {ms.MEHDI_MEMORY_DATABASE_URL_configured === true ? 'configuré' : 'absent'}
-                    </span>
-                  </p>
-                  <p>
-                    Script import :{' '}
-                    {msScripts.import_memory_jsonl_exists === true ? (
-                      <span className="text-foreground">présent</span>
-                    ) : (
-                      <span className="text-amber-700">manquant (repo skills)</span>
-                    )}
-                  </p>
-                  <p>
-                    Sonde Postgres :{' '}
-                    <span className="font-mono text-[11px]">
-                      {typeof msProbe.document_count === 'number' && typeof msProbe.chunk_count === 'number'
-                        ? `connecté — docs ${msProbe.document_count}, chunks ${msProbe.chunk_count}`
-                        : msProbe.skipped_reason != null && msProbe.skipped_reason !== ''
-                          ? String(msProbe.skipped_reason)
-                          : '—'}
-                    </span>
-                  </p>
-                </div>
-              </div>
-            </>
-          )}
-          {discoveryMeta?.models_discovery ? (
-            <div>
-              <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">
-                Copie dans{' '}
-                <code className="bg-muted rounded px-1">{discoveryMeta.user_config_path ?? '~/.config/zab/config.yaml'}</code>{' '}
-                → models_discovery
+  return (
+    <div className="space-y-6">
+      <header className="space-y-2">
+        <h2 className="text-2xl font-semibold tracking-tight">{t('hermes.title')}</h2>
+        <p className="text-muted-foreground text-sm max-w-3xl">{t('hermes.subtitle')}</p>
+      </header>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="space-y-2">
+            <CardTitle className="flex items-center gap-2">
+              <HugeiconsIcon icon={PlayCircleIcon} size={18} />
+              {t('hermes.openWebui')}
+            </CardTitle>
+            <CardDescription>{t('hermes.openWebuiDesc')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" disabled={composeRunning} onClick={startOpenWebUI}>
+                {t('hermes.composeUp')}
+              </Button>
+              <Button type="button" variant="secondary" disabled={composeRunning} onClick={stopOpenWebUI}>
+                {t('hermes.stopContainers')}
+              </Button>
+              <a
+                className={buttonVariants({ variant: 'default' })}
+                href={HERMES_OPENWEBUI_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t('hermes.openWebuiBtn')}
+              </a>
+              <a
+                className={buttonVariants({ variant: 'secondary' })}
+                href={HERMES_BRIDGE_HEALTH_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t('hermes.verifyBridge')}
+              </a>
+            </div>
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
+              <p className="font-medium">{t('hermes.localShortcuts')}</p>
+              <p className="text-muted-foreground font-mono text-xs break-all">
+                {t('hermes.composeProject')} : {FLOWMETRIK_OPENWEBUI_PROJECT}
               </p>
-              <pre className="bg-muted/60 max-h-56 overflow-auto rounded-lg p-3 text-[11px]">
-                {JSON.stringify(discoveryMeta.models_discovery, null, 2)}
+              <p className="text-muted-foreground font-mono text-xs break-all">
+                Open WebUI : {HERMES_OPENWEBUI_URL}
+              </p>
+              <p className="text-muted-foreground font-mono text-xs break-all">
+                {t('hermes.bridge')} : {HERMES_BRIDGE_HEALTH_URL}
+              </p>
+              {composeJobId ? (
+                <p className="text-muted-foreground mt-2 text-xs">
+                  {t('hermes.lastJob')} <code className="rounded bg-muted px-1 font-mono">{composeJobId}</code>
+                  {composeRunning ? t('hermes.inProgress') : null}
+                </p>
+              ) : null}
+              <pre className="mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-snug whitespace-pre-wrap">
+                {composeLines.join('\n') || (composeRunning ? t('hermes.waitingDocker') : t('common.dash'))}
               </pre>
             </div>
-          ) : null}
-          {last && last.present === true ? (
-            <div>
-              <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">Dernier scan persisté</p>
-              <pre className="bg-muted/60 max-h-48 overflow-auto rounded-lg p-3 text-[11px]">
-                {JSON.stringify(last.saved_at_utc ? { saved_at_utc: last.saved_at_utc } : last, null, 2)}
-              </pre>
-            </div>
-          ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="space-y-2">
+            <CardTitle>{t('hermes.features')}</CardTitle>
+            <CardDescription>{t('hermes.featuresDesc')}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+              <li>{t('hermes.featureSessionProfiles')}</li>
+              <li>{t('hermes.featureContextInjection')}</li>
+              <li>{t('hermes.featureOpenAiProxy')}</li>
+              <li>{t('hermes.featureUseCases')}</li>
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('hermes.runLocalTitle')}</CardTitle>
+          <CardDescription>
+            {t('hermes.runLocalDescFull', { path: FLOWMETRIK_OPENWEBUI_PROJECT })}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <p className="font-mono text-xs rounded-md bg-muted/50 p-3">python -m uvicorn bridge.main:app --host 127.0.0.1 --port 8080</p>
+          <p className="font-mono text-xs rounded-md bg-muted/50 p-3">docker compose up --build</p>
         </CardContent>
       </Card>
     </div>
@@ -1759,22 +3457,12 @@ function SkillEditorPanel({
   open: boolean
   onOpenChange: (v: boolean) => void
 }) {
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => onOpenChange(true)}
-        className="pointer-events-auto fixed right-6 bottom-6 z-40 flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white shadow-lg transition hover:bg-zinc-800"
-      >
-        <HugeiconsIcon icon={PencilEdit02Icon} size={16} />
-        Éditer SKILL
-      </button>
-    )
-  }
+  const { t } = useI18n()
+  if (!open) return null
 
   return (
     <div className="fixed inset-0 z-30 flex items-stretch justify-end bg-black/30">
-      <button className="flex-1" type="button" aria-label="Fermer" onClick={() => onOpenChange(false)} />
+      <button className="flex-1" type="button" aria-label={t('skillEditor.closeAria')} onClick={() => onOpenChange(false)} />
       <div className="bg-background flex h-full w-full max-w-3xl flex-col border-l shadow-2xl">
         <div className="flex items-center justify-between border-b px-5 py-3">
           <div className="flex items-center gap-2">
@@ -1782,8 +3470,8 @@ function SkillEditorPanel({
               <HugeiconsIcon icon={PencilEdit02Icon} size={16} />
             </div>
             <div>
-              <p className="text-sm font-semibold">Éditeur SKILL</p>
-              <p className="text-muted-foreground text-[11px]">orgs/… ou claude-plugins/…</p>
+              <p className="text-sm font-semibold">{t('skillEditor.title')}</p>
+              <p className="text-muted-foreground text-[11px]">{t('skillEditor.pathHint')}</p>
             </div>
           </div>
           <button
@@ -1791,7 +3479,7 @@ function SkillEditorPanel({
             onClick={() => onOpenChange(false)}
             className="text-muted-foreground hover:text-foreground rounded-md px-2 py-1 text-sm"
           >
-            Fermer
+            {t('skillEditor.close')}
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3">
@@ -1801,10 +3489,10 @@ function SkillEditorPanel({
             onChange={(e) => onPathChange(e.target.value)}
           />
           <Button type="button" variant="secondary" onClick={onLoad}>
-            Charger
+            {t('skillEditor.load')}
           </Button>
           <Button type="button" onClick={onSave}>
-            Enregistrer
+            {t('skillEditor.save')}
           </Button>
         </div>
         <Textarea

@@ -30,7 +30,7 @@ def test_default_yaml_loads(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: p
     assert cfg.get("cli_watchlist") == []
     assert cfg.get("tracked_env_extra") == []
     assert cfg.get("skills_roots") == []
-    assert cfg.get("skill_md_paths") == []
+    assert cfg.get("skill_md_paths") in (None, [])
     assert cfg.get("claude_plugin_paths") == []
 
 
@@ -61,4 +61,8 @@ def test_merge_scan_inventory_clears_skills_roots(monkeypatch: pytest.MonkeyPatc
     merge_scan_inventory_into_config([str(md.resolve())], claude_plugin_abs_paths=[])
     cfg = load_user_config()
     assert cfg.get("skills_roots") == []
-    assert str(md.resolve()) in cfg.get("skill_md_paths", [])
+    assert cfg.get("skill_md_paths") in (None, [])
+    from zab.services import skills_registry
+
+    adopted = {str(p) for p in skills_registry.adopted_skill_md_paths_resolved()}
+    assert str(md.resolve()) in adopted

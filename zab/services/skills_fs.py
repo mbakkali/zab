@@ -1,4 +1,4 @@
-"""Lecture / écriture sécurisée des fichiers SKILL (repo relatif ou chemins absolus listés dans skill_md_paths)."""
+"""Lecture / écriture sécurisée des fichiers SKILL (repo relatif ou chemins absolus du registre skills)."""
 
 from __future__ import annotations
 
@@ -40,14 +40,17 @@ def _validate_relative(rel: str, repo_root: Path | None) -> Path:
     parts = candidate.relative_to(root.resolve()).parts
     if len(parts) < 2:
         raise SkillPathError("chemin trop court")
-    if parts[0] not in ("orgs", "claude-plugins"):
+    if parts[0] not in ("orgs", "claude-plugins", "common"):
         raise SkillPathError("autorisé uniquement sous orgs/ ou claude-plugins/")
     if parts[0] == "orgs":
         if len(parts) < 4 or parts[2] != "skills":
             raise SkillPathError("attendu orgs/<org>/skills/.../SKILL.md")
-    else:
+    elif parts[0] == "claude-plugins":
         if len(parts) < 4 or parts[2] != "skills":
             raise SkillPathError("attendu claude-plugins/<id>/skills/.../SKILL.md")
+    else:
+        if len(parts) < 3 or parts[1] != "skills":
+            raise SkillPathError("attendu common/skills/.../SKILL.md")
     if candidate.name != "SKILL.md":
         raise SkillPathError("seul SKILL.md est éditable via cette API")
     return candidate
@@ -55,7 +58,7 @@ def _validate_relative(rel: str, repo_root: Path | None) -> Path:
 
 def resolve_skill_md_path(path: str, *, must_exist: bool) -> Path:
     """
-    - Chemin absolu : doit figurer dans ``skill_md_paths`` (config utilisateur).
+    - Chemin absolu : doit être autorisé par ``skills_registry`` (adoptées / sources indexées) ou sous ``projects_roots``.
     - Chemin relatif : sous l’un des dépôts ``discovery_repo_bases()`` ou ``skills_root()`` en secours.
     """
     raw = path.strip()
@@ -67,13 +70,13 @@ def resolve_skill_md_path(path: str, *, must_exist: bool) -> Path:
         if resolved.name != "SKILL.md":
             raise SkillPathError("seul SKILL.md est éditable via cette API")
         from zab.services.workspace_projects import path_is_under_projects_roots
-        from zab.user_config import skill_md_paths_resolved
+        from zab.services import skills_registry
 
-        allowed = {str(p.resolve()) for p in skill_md_paths_resolved()}
+        allowed = skills_registry.allowed_absolute_skill_paths_for_api()
         if str(resolved) not in allowed and not path_is_under_projects_roots(resolved):
             raise SkillPathError(
-                "chemin absolu non autorisé — ajoutez-le à skill_md_paths "
-                "ou placez-le sous projects_roots (voir ~/.config/zab/config.yaml)"
+                "chemin absolu non autorisé — adoptez la skill dans le registre "
+                "ou placez-le sous projects_roots (voir docs/skills-registry-migration.md)"
             )
         if must_exist:
             if not resolved.is_file():

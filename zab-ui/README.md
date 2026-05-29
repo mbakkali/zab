@@ -71,3 +71,31 @@ export default defineConfig([
   },
 ])
 ```
+
+## Onglet Skills (registre)
+
+- Fichier source : `~/.config/zab/skills-registry.json` (voir `docs/skills-registry-migration.md` à la racine du dépôt zab).
+- Onglets **Adoptées / Candidats / Ignorées / Conflits / Toutes** filtrent l’index API (`GET /api/skills?status=…`).
+- **Mettre à jour Hermes** envoie `POST /api/skills/hermes-update` avec `{ "apply": true }` ; **Copier fragment Hermes** appelle `POST /api/skills/hermes-export` et place le YAML dans le presse-papiers.
+
+## Tests Playwright (dashboard Zab)
+
+Depuis `zab-ui`, après build :
+
+```bash
+npm run build && npx playwright test
+```
+
+Le serveur API + assets statiques est démarré via `scripts/zab-e2e-dashboard.sh` (port `18742` par défaut, surcharge avec `ZAB_E2E_PORT`).
+
+### Cibler une instance déjà déployée (prod / préprod)
+
+Sans lancer le serveur local :
+
+```bash
+PLAYWRIGHT_BASE_URL=https://votre-hote-zab npm run build && npx playwright test
+```
+
+Les scénarios **recherche conversations / détail / filtre provider** nécessitent Postgres configuré (`MEHDI_MEMORY_DATABASE_URL`) et des données synchronisées ; sinon ils sont ignorés (`test.skip`). Pour forcer un terme de recherche : `PLAYWRIGHT_CONVERSATIONS_SEARCH_TERM="..."`.
+
+Dry-run sync long (optionnel) : `PLAYWRIGHT_CONVERSATIONS_JOB=dry-run`.

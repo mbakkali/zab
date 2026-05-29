@@ -111,3 +111,39 @@ def test_add_tracked_env(monkeypatch, tmp_path: Path) -> None:
     cfg = user_config.load_user_config()
     assert cfg.get("tracked_env_extra") == ["CUSTOM_KEY"]
     assert cfg.get("skills_root") == "/tmp/x"
+
+
+def test_add_skill_global_registers_path(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg_file = tmp_path / ".config" / "zab" / "config.yaml"
+    monkeypatch.setattr(user_config, "user_config_path", lambda: cfg_file)
+    repo = tmp_path / "skills"
+    user_config.save_user_config({"skills_sync": {"repo_root": str(repo)}, "skill_md_paths": []})
+
+    from typer.testing import CliRunner
+    from zab.cli import app
+
+    result = CliRunner().invoke(app, ["add", "skill", "global-test", "--global", "--json"])
+
+    assert result.exit_code == 0
+    skill = repo / "common" / "skills" / "global-test" / "SKILL.md"
+    assert skill.is_file()
+    from zab.services import skills_registry
+
+    assert str(skill.resolve()) in {str(p) for p in skills_registry.adopted_skill_md_paths_resolved()}
+
+
+def test_add_skill_project_writes_cursor_skill(monkeypatch, tmp_path: Path) -> None:
+    cfg_file = tmp_path / ".config" / "zab" / "config.yaml"
+    monkeypatch.setattr(user_config, "user_config_path", lambda: cfg_file)
+    project = tmp_path / "projects" / "demo"
+    project.mkdir(parents=True)
+    user_config.save_user_config({"projects_roots": [str(project.parent)]})
+
+    from typer.testing import CliRunner
+    from zab.cli import app
+
+    result = CliRunner().invoke(app, ["add", "skill", "local-helper", "--project", str(project), "--project-scope", "--json"])
+
+    assert result.exit_code == 0
+    assert (project / ".cursor" / "skills" / "local-helper" / "SKILL.md").is_file()

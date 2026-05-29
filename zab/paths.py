@@ -30,11 +30,22 @@ def zab_repo_root() -> Path:
 
 
 def zab_ui_dist_dir() -> Path:
-    """SPA buildée : zab-ui/dist à côté du package (même clone que le dépôt zab)."""
+    """Built SPA: env override, sibling clone path, or packaged wheel data."""
     env = os.environ.get("ZAB_UI_DIST", "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    return zab_repo_root() / "zab-ui" / "dist"
+    sibling = zab_repo_root() / "zab-ui" / "dist"
+    if sibling.is_dir():
+        return sibling
+    try:
+        from importlib.resources import files as pkg_files
+
+        packaged = Path(str(pkg_files("zab") / "ui_dist"))
+        if packaged.is_dir():
+            return packaged
+    except (ImportError, TypeError, FileNotFoundError):
+        pass
+    return sibling
 
 
 def zab_package_dir() -> Path:
@@ -115,9 +126,11 @@ def dashboard_anchor_path() -> Path | None:
     lst = skills_roots_resolved_from_config()
     if lst:
         return lst[0]
-    from zab.user_config import claude_plugin_paths_resolved, skill_md_paths_resolved
+    from zab.user_config import claude_plugin_paths_resolved
 
-    sm = skill_md_paths_resolved()
+    from zab.services import skills_registry
+
+    sm = skills_registry.adopted_skill_md_paths_resolved()
     if sm:
         from zab.services.inventory_config import infer_mcp_repo_base_from_skill_md
 
@@ -137,9 +150,9 @@ def primary_repo_base_for_mcp_files() -> Path | None:
     if lst:
         return lst[0]
     from zab.services.inventory_config import infer_mcp_repo_base_from_skill_md
-    from zab.user_config import skill_md_paths_resolved
+    from zab.services import skills_registry
 
-    for md in skill_md_paths_resolved():
+    for md in skills_registry.adopted_skill_md_paths_resolved():
         b = infer_mcp_repo_base_from_skill_md(md)
         if b is not None:
             return b
@@ -191,8 +204,14 @@ def user_home() -> Path:
     return Path.home().resolve()
 
 
+def agent_context_root() -> Path:
+    """Optional local directory for agent OAuth/context caches."""
+    return Path.home() / ".zab-agent-context"
+
+
 def mehdi_context_root() -> Path:
-    return Path.home() / ".mehdi-context"
+    """Legacy alias for agent_context_root()."""
+    return agent_context_root()
 
 
 def agentpipe_config_path() -> Path:

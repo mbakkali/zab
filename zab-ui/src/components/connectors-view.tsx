@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   CloudServerIcon,
   CodeFolderIcon,
   Copy01Icon,
   Plug02Icon,
+  RefreshIcon,
   Search01Icon,
   Tick02Icon,
 } from '@hugeicons/core-free-icons'
+import { AlertTriangle, CheckCircle2, Loader2, XCircle } from 'lucide-react'
 import { connectorMeta, kindMeta } from '@/lib/connector-meta'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/use-i18n'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -22,7 +25,8 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 
-const EDITABLE_CONFIG_KEYS = new Set(['local_tools_actual', 'user_zab_config'])
+const USER_CONFIG_KEY = 'user_zab_config'
+const USER_CONFIG_PATH = '~/.config/zab/config.yaml'
 
 type ConnectorSummary = {
   id: string
@@ -60,6 +64,230 @@ type ConnectorDetailType = {
   forms: ConnectorForm[]
 }
 
+type CheckStatus = 'ok' | 'warn' | 'fail' | 'pending' | 'running'
+
+type CheckItem = {
+  id: string
+  form_id: string
+  label: string
+  status: CheckStatus
+  message: string
+  detail?: Record<string, unknown>
+}
+
+type CheckDescriptor = {
+  id: string
+  form_id: string
+  label: string
+}
+
+type ConnectorCheckPayload = {
+  slug: string
+  display_name: string
+  checks: CheckItem[]
+  total: number
+  ok: number
+  warn: number
+  fail: number
+}
+
+type GlobalRegistryEntry = {
+  slug: string
+  display_name: string
+  form_count: number
+}
+
+type GlobalSummary = {
+  connectors_total: number
+  total: number
+  ok: number
+  warn: number
+  fail: number
+}
+
+type OriginFilter = 'all' | 'local-mcp' | 'composio'
+
+type McpSyncStatusApi = {
+  generated_at_utc?: string
+  sources?: {
+    cursor_user?: { path: string; exists: boolean }
+    claude_desktop_user?: { path: string; exists: boolean }
+  }
+  sources_scanned_counts?: Record<string, number>
+  counts?: {
+    servers_total?: number
+    slugs_unique?: number
+    stdio?: number
+    http?: number
+    conflict_slugs?: number
+    orphan_registry?: number
+  }
+  conflict_slugs?: string[]
+  explain_zero_local_mcp?: string
+  mcps_packages_hints?: Array<{
+    package_count: number
+    mcps_dir: string
+    skills_repo_root: string
+    package_names: string[]
+  }>
+}
+
+function McpSyncPanel({
+  onScanComplete,
+  onOpenGlobalCheck,
+  disableGlobalCheck,
+}: {
+  onScanComplete: () => void | Promise<void>
+  onOpenGlobalCheck: () => void
+  disableGlobalCheck: boolean
+}) {
+  const { t } = useI18n()
+  const [status, setStatus] = useState<McpSyncStatusApi | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setError(null)
+    try {
+      const r = await fetch('/api/mcps/sync-status')
+      if (!r.ok) throw new Error(await r.text())
+      setStatus((await r.json()) as McpSyncStatusApi)
+    } catch (e) {
+      setStatus(null)
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const scan = async () => {
+    setBusy(true)
+    try {
+      const r = await fetch('/api/mcps/scan', { method: 'POST' })
+      const raw = await r.text()
+      if (!r.ok) throw new Error(raw.slice(0, 400))
+      await load()
+      await onScanComplete()
+      toast.success(t('connectors.mcpSync.toastScan'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const refreshIndex = async () => {
+    setBusy(true)
+    try {
+      const r = await fetch('/api/sync', { method: 'POST' })
+      if (!r.ok) throw new Error(await r.text())
+      toast.success(t('connectors.mcpSync.toastIndex'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const c = status?.counts
+  const cur = status?.sources?.cursor_user
+  const cl = status?.sources?.claude_desktop_user
+
+  return (
+    <Card data-testid="mcp-sync-panel">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{t('connectors.mcpSync.title')}</CardTitle>
+        <CardDescription>{t('connectors.mcpSync.description')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {error ? (
+          <p className="text-destructive text-xs whitespace-pre-wrap" role="alert">
+            {error}
+          </p>
+        ) : null}
+        {status ? (
+          <div className="text-muted-foreground grid gap-2 sm:grid-cols-2">
+            <div>
+              <span className="font-medium text-foreground">{t('connectors.mcpSync.sources')}</span>
+              <ul className="mt-1 list-inside list-disc text-xs">
+                <li>
+                  Cursor user : {cur?.exists ? t('connectors.mcpSync.present') : t('connectors.mcpSync.absent')}
+                  {cur?.path ? ` — ${cur.path}` : ''}
+                </li>
+                <li>
+                  Claude Desktop : {cl?.exists ? t('connectors.mcpSync.present') : t('connectors.mcpSync.absent')}
+                  {cl?.path ? ` — ${cl.path}` : ''}
+                </li>
+              </ul>
+            </div>
+            <div>
+              <span className="font-medium text-foreground">{t('connectors.mcpSync.counters')}</span>
+              <ul className="mt-1 list-inside list-disc text-xs">
+                <li>
+                  {t('connectors.mcpSync.serversDetected')} : {c?.servers_total ?? 0}
+                </li>
+                <li>
+                  {t('connectors.mcpSync.uniqueSlugs')} : {c?.slugs_unique ?? 0}
+                </li>
+                <li>
+                  stdio / http : {c?.stdio ?? 0} / {c?.http ?? 0}
+                </li>
+                <li>
+                  {t('connectors.mcpSync.conflicts')} : {c?.conflict_slugs ?? 0}
+                </li>
+              </ul>
+            </div>
+            {status.sources_scanned_counts && Object.keys(status.sources_scanned_counts).length > 0 ? (
+              <div className="sm:col-span-2">
+                <span className="font-medium text-foreground">{t('connectors.mcpSync.byOrigin')}</span>
+                <p className="text-xs">
+                  {Object.entries(status.sources_scanned_counts)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(' · ')}
+                </p>
+              </div>
+            ) : null}
+            {status.conflict_slugs && status.conflict_slugs.length > 0 ? (
+              <div className="sm:col-span-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+                {t('connectors.mcpSync.conflictsList')} : {status.conflict_slugs.join(', ')}
+              </div>
+            ) : null}
+            {status.explain_zero_local_mcp ? (
+              <div className="text-muted-foreground sm:col-span-2 text-xs">{status.explain_zero_local_mcp}</div>
+            ) : null}
+          </div>
+        ) : !error ? (
+          <p className="text-muted-foreground text-xs">{t('connectors.mcpSync.loadingStatus')}</p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void load()}>
+            <HugeiconsIcon icon={RefreshIcon} size={16} className="mr-1.5" />
+            {t('connectors.mcpSync.refreshStatus')}
+          </Button>
+          <Button type="button" size="sm" variant="default" disabled={busy} onClick={() => void scan()}>
+            {busy ? (
+              <>
+                <Loader2 className="mr-1.5 size-4 animate-spin" />
+                {t('connectors.mcpSync.scanning')}
+              </>
+            ) : (
+              t('connectors.mcpSync.scan')
+            )}
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void refreshIndex()}>
+            {t('connectors.mcpSync.refreshIndex')}
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={busy || disableGlobalCheck} onClick={onOpenGlobalCheck}>
+            {t('connectors.checkAll')}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 type ConfigFileSummary = {
   key: string
   title: string
@@ -69,28 +297,67 @@ type ConfigFileSummary = {
   hint?: string | null
 }
 
-/** Même jeu de clés que `GET /api/config/files`, pour garder une liste même si la route backend est obsolète. */
-const CONFIG_FILE_ROWS_FALLBACK: ConfigFileSummary[] = [
-  {
-    key: 'user_zab_config',
-    title: '~/.config/zab/config.yaml',
-    syntax: 'yaml',
-    exists: false,
-    path_display: '~/.config/zab/config.yaml',
-    hint: 'skills_root, local_tools_path, cli_watchlist',
-  },
-  {
-    key: 'local_tools_actual',
-    title: 'local-tools.yaml',
-    syntax: 'yaml',
-    exists: false,
-    path_display: 'local-tools.yaml',
-    hint: 'Défaut ~/.config/zab/local-tools.yaml ou local_tools_path dans config',
-  },
-]
+const CONFIG_FILE_ROW_FALLBACK: ConfigFileSummary = {
+  key: USER_CONFIG_KEY,
+  title: USER_CONFIG_PATH,
+  syntax: 'yaml',
+  exists: false,
+  path_display: USER_CONFIG_PATH,
+  hint: 'skills_roots, cli_watchlist, local_tools_path, …',
+}
 
 function fallbackRowMeta(key: string): ConfigFileSummary | undefined {
-  return CONFIG_FILE_ROWS_FALLBACK.find((r) => r.key === key)
+  return key === USER_CONFIG_KEY ? CONFIG_FILE_ROW_FALLBACK : undefined
+}
+
+function isComposioConnector(row: ConnectorSummary): boolean {
+  return row.tags.includes('composio') || row.kind_badges.includes('composio')
+}
+
+function isLocalMcpConnector(row: ConnectorSummary): boolean {
+  return (
+    row.kind_badges.includes('mcp') &&
+    row.transport_badges.includes('stdio') &&
+    !isComposioConnector(row)
+  )
+}
+
+function connectorOriginLabel(row: ConnectorSummary): { label: string; tone: string } | null {
+  if (isComposioConnector(row)) {
+    return {
+      label: 'Composio',
+      tone: 'bg-fuchsia-50 text-fuchsia-700 ring-1 ring-fuchsia-200',
+    }
+  }
+  if (isLocalMcpConnector(row)) {
+    return {
+      label: 'MCP local',
+      tone: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+    }
+  }
+  if (row.kind_badges.includes('mcp') && row.transport_badges.some((t) => t === 'http' || t === 'sse')) {
+    return {
+      label: 'MCP distant',
+      tone: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200',
+    }
+  }
+  return null
+}
+
+function CheckStatusIcon({ status }: { status: CheckStatus }) {
+  if (status === 'ok') return <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+  if (status === 'warn') return <AlertTriangle className="size-4 shrink-0 text-amber-500" />
+  if (status === 'fail') return <XCircle className="size-4 shrink-0 text-red-600" />
+  if (status === 'running') return <Loader2 className="size-4 shrink-0 animate-spin text-zinc-500" />
+  return <span className="inline-block size-4 shrink-0 rounded-full border border-zinc-300" />
+}
+
+function checkStatusLabel(status: CheckStatus): string {
+  if (status === 'ok') return 'OK'
+  if (status === 'warn') return 'À surveiller'
+  if (status === 'fail') return 'KO'
+  if (status === 'running') return 'En cours…'
+  return 'En attente'
 }
 
 /** Détecte l’erreur « backend sans routes agrégateur / config». */
@@ -112,8 +379,11 @@ function staleConnectorsMessage(httpStatus: number, rawDetail: string): string {
 }
 
 export function ConnectorsView() {
+  const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [activeKind, setActiveKind] = useState<string>('all')
+  const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [activeOrigin, setActiveOrigin] = useState<OriginFilter>('all')
   const [list, setList] = useState<ConnectorSummary[]>([])
   const [pagination, setPagination] = useState<ConnectorsApiList['pagination'] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -121,13 +391,15 @@ export function ConnectorsView() {
   const [detailSlug, setDetailSlug] = useState<string | null>(null)
   const [detail, setDetail] = useState<ConnectorDetailType | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [globalCheckOpen, setGlobalCheckOpen] = useState(false)
 
   const loadList = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
     try {
       const q = encodeURIComponent(query.trim())
-      const r = await fetch(`/api/connectors?limit=200&q=${q}`)
+      const tagParam = activeTag ? `&tag=${encodeURIComponent(activeTag)}` : ''
+      const r = await fetch(`/api/connectors?limit=200&q=${q}${tagParam}`)
       const text = await r.text()
       if (!r.ok) {
         setPagination(null)
@@ -156,7 +428,7 @@ export function ConnectorsView() {
     } finally {
       setLoading(false)
     }
-  }, [query])
+  }, [query, activeTag])
 
   useEffect(() => {
     const t = window.setTimeout(() => void loadList(), 280)
@@ -204,10 +476,20 @@ export function ConnectorsView() {
 
   const filtered = useMemo(() => {
     return list.filter((row) => {
-      if (activeKind === 'all') return true
-      return row.kind_badges.some((k) => k.toLowerCase() === activeKind.toLowerCase())
+      if (activeKind !== 'all' && !row.kind_badges.some((k) => k.toLowerCase() === activeKind.toLowerCase())) {
+        return false
+      }
+      if (activeOrigin === 'local-mcp' && !isLocalMcpConnector(row)) return false
+      if (activeOrigin === 'composio' && !isComposioConnector(row)) return false
+      return true
     })
-  }, [list, activeKind])
+  }, [list, activeKind, activeOrigin])
+
+  const originStats = useMemo(() => {
+    const localMcp = list.filter(isLocalMcpConnector).length
+    const composio = list.filter(isComposioConnector).length
+    return { localMcp, composio }
+  }, [list])
 
   const stats = useMemo(() => {
     const total = filtered.length
@@ -220,12 +502,38 @@ export function ConnectorsView() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-1">
-        <h2 className="text-2xl font-semibold tracking-tight">Connecteurs</h2>
-        <p className="text-muted-foreground text-sm" data-testid="connectors-subtitle">
-          {stats.enabled} actifs · {stats.forms} forme(s) · {stats.total} connecteur(s) logique(s)
-        </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-2xl font-semibold tracking-tight">{t('connectors.title')}</h2>
+          <p className="text-muted-foreground text-sm" data-testid="connectors-subtitle">
+            {t('connectors.subtitleActive', {
+              active: String(stats.enabled),
+              forms: String(stats.forms),
+              total: String(stats.total),
+              mcp: String(originStats.localMcp),
+            })}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          data-testid="connectors-check-all-btn"
+          onClick={() => setGlobalCheckOpen(true)}
+          disabled={loading || list.length === 0}
+        >
+          <HugeiconsIcon icon={RefreshIcon} size={16} className="mr-1.5" />
+          {t('connectors.checkAll')}
+        </Button>
       </header>
+
+      <McpSyncPanel
+        onScanComplete={async () => {
+          await loadList()
+        }}
+        onOpenGlobalCheck={() => setGlobalCheckOpen(true)}
+        disableGlobalCheck={loading || list.length === 0}
+      />
 
       {backendNeedsRestartForAggregators && loadError ? (
         <div
@@ -247,24 +555,44 @@ export function ConnectorsView() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher un connecteur…"
-            aria-label="Rechercher un connecteur"
+            placeholder={t('connectors.searchPlaceholder')}
+            aria-label={t('connectors.searchAria')}
             className="border-input bg-background w-full rounded-lg border py-2 pr-3 pl-9 text-sm outline-none transition focus:ring-2 focus:ring-zinc-300"
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
           <KindChip active={activeKind === 'all'} onClick={() => setActiveKind('all')}>
-            Tous · {list.length}
+            {t('connectors.filter.all')} · {list.length}
           </KindChip>
           {kindOptions.map((k) => (
             <KindChip key={k} active={activeKind === k} onClick={() => setActiveKind(k)}>
               {k.toUpperCase()}
             </KindChip>
           ))}
+          <KindChip
+            active={activeOrigin === 'local-mcp'}
+            onClick={() => {
+              const enable = activeOrigin !== 'local-mcp'
+              setActiveOrigin(enable ? 'local-mcp' : 'all')
+              if (enable) setActiveTag(null)
+            }}
+          >
+            {t('connectors.filter.mcpLocal')} · {originStats.localMcp}
+          </KindChip>
+          <KindChip
+            active={activeOrigin === 'composio'}
+            onClick={() => {
+              const enable = activeOrigin !== 'composio'
+              setActiveOrigin(enable ? 'composio' : 'all')
+              setActiveTag(enable ? 'composio' : null)
+            }}
+          >
+            Composio · {originStats.composio}
+          </KindChip>
         </div>
       </div>
 
-      {loading && <p className="text-muted-foreground text-sm">Chargement…</p>}
+      {loading && <p className="text-muted-foreground text-sm">{t('common.loading')}</p>}
       {loadError && !backendNeedsRestartForAggregators && (
         <div className="text-destructive space-y-2 rounded-xl border border-red-200 bg-red-50/80 px-4 py-3 text-sm whitespace-pre-wrap">
           <p role="alert" data-testid="connectors-load-error">
@@ -274,7 +602,8 @@ export function ConnectorsView() {
       )}
       {pagination && (
         <p className="text-muted-foreground text-xs">
-          Page {pagination.page}/{pagination.total_pages} · {pagination.total} résultat(s)
+          {t('common.pageOf', { page: String(pagination.page), total: String(pagination.total_pages) })} ·{' '}
+          {t('common.results', { count: String(pagination.total) })}
         </p>
       )}
 
@@ -289,10 +618,10 @@ export function ConnectorsView() {
 
       {filtered.length === 0 && !loading && (
         <div className="text-muted-foreground rounded-xl border border-dashed py-16 text-center text-sm space-y-1">
-          <p>Aucun connecteur ne correspond.</p>
+          <p>{t('connectors.empty')}</p>
           {backendNeedsRestartForAggregators ? (
             <p className="text-xs opacity-90">
-              Ou le tableau est vide après redémarrage du serveur : attends le chargement complet.
+              {t('connectors.emptyRestartHint')}
             </p>
           ) : null}
         </div>
@@ -302,6 +631,7 @@ export function ConnectorsView() {
         open={Boolean(detailSlug)}
         loading={detailLoading}
         detail={detail}
+        slug={detailSlug}
         onOpenChange={(o) => {
           if (!o) setDetailSlug(null)
         }}
@@ -321,13 +651,18 @@ export function ConnectorsView() {
           }
         }}
       />
+
+      <ConnectorsGlobalCheckDialog
+        open={globalCheckOpen}
+        onOpenChange={setGlobalCheckOpen}
+      />
     </div>
   )
 }
 
 export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStale?: boolean }) {
   const [rows, setRows] = useState<ConfigFileSummary[]>([])
-  const [chosen, setChosen] = useState<string>('user_zab_config')
+  const [chosen] = useState<string>(USER_CONFIG_KEY)
   const [content, setContent] = useState<string>('')
   const [draft, setDraft] = useState('')
   const [meta, setMeta] = useState<{
@@ -358,18 +693,16 @@ export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStal
           } else {
             setBanner(`Impossible de lister les configs (${r.status}).`)
           }
-          setRows(CONFIG_FILE_ROWS_FALLBACK.slice())
-          setChosen(CONFIG_FILE_ROWS_FALLBACK[0]?.key ?? 'user_zab_config')
+          setRows([CONFIG_FILE_ROW_FALLBACK])
         } else {
           const list = JSON.parse(t) as ConfigFileSummary[]
-          setRows(list)
-          const first = list.find((x) => x.exists) ?? list[0]
-          setChosen(first?.key ?? 'user_zab_config')
+          const row =
+            list.find((x) => x.key === USER_CONFIG_KEY) ?? list[0] ?? CONFIG_FILE_ROW_FALLBACK
+          setRows([row])
         }
       } catch {
         setBanner('Erreur réseau lors du chargement des chemins config.')
-        setRows(CONFIG_FILE_ROWS_FALLBACK.slice())
-        setChosen('user_zab_config')
+        setRows([CONFIG_FILE_ROW_FALLBACK])
       } finally {
         setBusy(false)
       }
@@ -430,7 +763,7 @@ export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStal
         })
         setContent(
           !j.exists
-            ? `# Fichier absent sur ce poste :\n${j.path_display}\n\nTu peux copier depuis zab/local-tools.example.yaml puis adapter.`
+            ? `# Fichier absent sur ce poste :\n${j.path_display}\n\nCréez-le avec « zab config --open » ou depuis le dashboard Configuration.`
             : j.content || (j.error ? `# ${j.error}` : ''),
         )
       } catch {
@@ -439,7 +772,7 @@ export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStal
     })()
   }, [chosen, aggregatorStale, reloadNonce])
 
-  const editable = EDITABLE_CONFIG_KEYS.has(chosen)
+  const editable = chosen === USER_CONFIG_KEY
 
   const saveYaml = async () => {
     setSaving(true)
@@ -465,8 +798,7 @@ export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStal
       <CardHeader className="border-b border-zinc-100 pb-4">
         <CardTitle>Configuration zab</CardTitle>
         <CardDescription>
-          <code className="text-xs">config.yaml</code> et <code className="text-xs">local-tools.yaml</code> sont éditables
-          ici ; le modèle <code className="text-xs">local-tools.example.yaml</code> reste lecture seule. Ajoutez des binaires dans{' '}
+          Édition de <code className="text-xs">{USER_CONFIG_PATH}</code>. Ajoutez des binaires dans{' '}
           <code className="text-xs">cli_watchlist</code> pour le scan <code className="text-xs">which</code>.
         </CardDescription>
       </CardHeader>
@@ -475,22 +807,11 @@ export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStal
           <p className="text-muted-foreground text-xs">Chargement des chemins…</p>
         ) : (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <label className="text-muted-foreground text-xs font-medium whitespace-nowrap" htmlFor="config-file-select">
-              Fichier
-            </label>
-            <select
-              id="config-file-select"
-              value={chosen}
-              onChange={(e) => setChosen(e.target.value)}
-              className="border-input bg-background w-full max-w-md rounded-lg border px-3 py-2 text-xs sm:flex-1"
-            >
-              {rows.map((row) => (
-                <option key={row.key} value={row.key}>
-                  {row.title}
-                  {!row.exists ? ' (absent)' : ''}
-                </option>
-              ))}
-            </select>
+            <span className="text-muted-foreground text-xs font-medium whitespace-nowrap">Fichier</span>
+            <code className="border-input bg-background break-all rounded-lg border px-3 py-2 font-mono text-xs sm:flex-1">
+              {(rows[0] ?? CONFIG_FILE_ROW_FALLBACK).path_display}
+              {!(rows[0] ?? CONFIG_FILE_ROW_FALLBACK).exists ? ' (absent)' : ''}
+            </code>
             <Button
               type="button"
               variant="outline"
@@ -596,9 +917,11 @@ function KindChip({
 }
 
 function ConnectorCard({ row, onDetail }: { row: ConnectorSummary; onDetail: () => void }) {
+  const { t } = useI18n()
   const meta = connectorMeta(row.display_name || row.id)
   const primaryTransport = row.transport_badges[0] || row.kind_badges[0] || ''
   const k = kindMeta(primaryTransport || 'stdio')
+  const origin = connectorOriginLabel(row)
 
   return (
     <div className="group bg-card hover:border-zinc-300 hover:shadow-sm relative flex flex-col gap-4 rounded-xl border border-zinc-200 p-5 transition">
@@ -621,6 +944,11 @@ function ConnectorCard({ row, onDetail }: { row: ConnectorSummary; onDetail: () 
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {origin ? (
+          <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold', origin.tone)}>
+            {origin.label}
+          </span>
+        ) : null}
         {row.kind_badges.map((kb) => (
           <span
             key={kb}
@@ -640,9 +968,17 @@ function ConnectorCard({ row, onDetail }: { row: ConnectorSummary; onDetail: () 
         </span>
         {row.form_count > 1 && (
           <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200">
-            {row.form_count} formes
+            {row.form_count} {row.kind_badges.includes('composio') && row.kind_badges.length === 1 ? 'comptes' : 'formes'}
           </span>
         )}
+        {(row.tags ?? []).map((t) => (
+          <span
+            key={t}
+            className="inline-flex rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-medium text-fuchsia-700 ring-1 ring-fuchsia-200 capitalize"
+          >
+            {t}
+          </span>
+        ))}
       </div>
 
       {row.preview_target && (
@@ -674,24 +1010,25 @@ function ConnectorCard({ row, onDetail }: { row: ConnectorSummary; onDetail: () 
         data-testid="connector-view-btn"
         onClick={onDetail}
       >
-        Voir
+        {t('common.view')}
       </Button>
     </div>
   )
 }
 
 function SummaryStatus({ enabled }: { enabled: boolean }) {
+  const { t } = useI18n()
   if (enabled) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
         <HugeiconsIcon icon={Tick02Icon} size={12} strokeWidth={2} />
-        actif
+        {t('connectors.status.active')}
       </span>
     )
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-medium text-zinc-600 ring-1 ring-zinc-200">
-      désactivé
+      {t('connectors.status.disabled')}
     </span>
   )
 }
@@ -700,12 +1037,14 @@ function ConnectorDetailDialog({
   open,
   loading,
   detail,
+  slug,
   onOpenChange,
   onTest,
 }: {
   open: boolean
   loading: boolean
   detail: ConnectorDetailType | null
+  slug: string | null
   onOpenChange: (open: boolean) => void
   onTest?: (formId: string) => void
 }) {
@@ -723,6 +1062,7 @@ function ConnectorDetailDialog({
               <DialogTitle>{detail.display_name}</DialogTitle>
               <DialogDescription className="font-mono text-xs">{detail.id}</DialogDescription>
             </DialogHeader>
+            {slug && open ? <ConnectorCheckPanel slug={slug} /> : null}
             <div className="space-y-4 pt-2" data-testid="connector-forms-list">
               {detail.forms.map((f) => (
                 <div key={f.id} className="space-y-2 rounded-lg border border-zinc-100 bg-zinc-50/80 p-3">
@@ -730,14 +1070,22 @@ function ConnectorDetailDialog({
                     <span className="bg-background rounded-full px-2 py-0.5 ring-1">{f.kind}</span>
                     <span className="bg-background rounded-full px-2 py-0.5 ring-1">{f.transport_kind}</span>
                     <span className={f.enabled ? 'text-emerald-700' : 'text-zinc-500'}>{f.enabled ? 'activé' : 'désactivé'}</span>
-                    <span className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
-                      f.transport_kind === 'stdio'
-                        ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
-                        : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
-                    )}>
-                      {f.transport_kind === 'stdio' ? 'Local' : 'Remote'}
-                    </span>
+                    {f.kind === 'composio' ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-medium text-fuchsia-700 ring-1 ring-fuchsia-200">
+                        Composio
+                      </span>
+                    ) : (
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                          f.transport_kind === 'stdio'
+                            ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+                            : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200',
+                        )}
+                      >
+                        {f.transport_kind === 'stdio' ? 'MCP local' : 'MCP distant'}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <p className="text-muted-foreground text-[11px] font-medium uppercase">Cible</p>
@@ -779,6 +1127,44 @@ function ConnectorDetailDialog({
                           </li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+                  {f.kind === 'composio' && f.meta && (
+                    <div className="space-y-1 text-xs" data-testid="connector-composio-meta">
+                      <p>
+                        <span className="text-muted-foreground">Toolkit : </span>
+                        <span className="font-mono">{String(f.meta.toolkit_slug ?? '—')}</span>
+                      </p>
+                      {(f.meta.account_email || f.meta.account_label) ? (
+                        <p>
+                          <span className="text-muted-foreground">Compte : </span>
+                          <span className="font-mono">{String(f.meta.account_email ?? f.meta.account_label)}</span>
+                        </p>
+                      ) : null}
+                      {f.meta.user_id ? (
+                        <p>
+                          <span className="text-muted-foreground">User ID : </span>
+                          <span className="font-mono">{String(f.meta.user_id)}</span>
+                        </p>
+                      ) : null}
+                      <p>
+                        <span className="text-muted-foreground">Auth : </span>
+                        <span className="font-mono">{String(f.meta.auth_scheme ?? '—')}</span>
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Account ID : </span>
+                        <span className="font-mono">{String(f.meta.connected_account_id ?? '—')}</span>
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Statut : </span>
+                        <span className="font-mono">{String(f.meta.status ?? '—')}</span>
+                      </p>
+                      {f.meta.mcp_url ? (
+                        <p>
+                          <span className="text-muted-foreground">MCP : </span>
+                          <span className="font-mono break-all">{String(f.meta.mcp_url)}</span>
+                        </p>
+                      ) : null}
                     </div>
                   )}
                   {f.kind === 'api' && f.meta && (
@@ -829,6 +1215,325 @@ function SourceOpenRow({ path }: { path?: string }) {
       >
         Copier chemin absolu
       </button>
+    </div>
+  )
+}
+
+function ConnectorsGlobalCheckDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [registry, setRegistry] = useState<GlobalRegistryEntry[]>([])
+  const [results, setResults] = useState<Record<string, ConnectorCheckPayload>>({})
+  const [summary, setSummary] = useState<GlobalSummary | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const doneRef = useRef(false)
+  const esRef = useRef<EventSource | null>(null)
+
+  const stopStream = useCallback(() => {
+    esRef.current?.close()
+    esRef.current = null
+  }, [])
+
+  const runCheck = useCallback(() => {
+    stopStream()
+    setLoading(true)
+    setError(null)
+    setSummary(null)
+    setRegistry([])
+    setResults({})
+    doneRef.current = false
+
+    const es = new EventSource('/api/connectors-check/stream')
+    esRef.current = es
+
+    es.addEventListener('registry', (ev) => {
+      try {
+        setRegistry(JSON.parse(ev.data) as GlobalRegistryEntry[])
+      } catch {
+        /* ignore */
+      }
+    })
+
+    es.addEventListener('connector', (ev) => {
+      try {
+        const payload = JSON.parse(ev.data) as ConnectorCheckPayload
+        setResults((prev) => ({ ...prev, [payload.slug]: payload }))
+      } catch {
+        /* ignore */
+      }
+    })
+
+    const finish = (s?: GlobalSummary) => {
+      if (doneRef.current) return
+      doneRef.current = true
+      stopStream()
+      setLoading(false)
+      if (s) {
+        setSummary(s)
+        toast.success(`Vérification terminée : ${s.ok} OK · ${s.warn} à surveiller · ${s.fail} KO`)
+      }
+    }
+
+    es.addEventListener('done', (ev) => {
+      try {
+        finish(JSON.parse(ev.data) as GlobalSummary)
+      } catch {
+        finish()
+      }
+    })
+
+    es.onerror = () => {
+      if (!doneRef.current) {
+        setError('Flux de vérification interrompu')
+        finish()
+      }
+    }
+  }, [stopStream])
+
+  useEffect(() => {
+    if (open) runCheck()
+    else stopStream()
+    return () => stopStream()
+  }, [open, runCheck, stopStream])
+
+  const doneCount = Object.keys(results).length
+  const totalCount = registry.length
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[min(90vh,720px)] w-full max-w-2xl overflow-y-auto" data-testid="connectors-global-check-dialog">
+        <DialogHeader>
+          <DialogTitle>Vérification globale</DialogTitle>
+          <DialogDescription>
+            Checks read-only sur MCP locaux, proxies API et comptes Composio.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-muted-foreground text-xs">
+            {loading
+              ? `${doneCount}/${totalCount || '…'} connecteur(s) vérifié(s)`
+              : summary
+                ? `${summary.connectors_total} connecteur(s) · ${summary.ok} OK · ${summary.warn} à surveiller · ${summary.fail} KO`
+                : 'Prêt'}
+          </p>
+          <Button type="button" size="sm" variant="outline" disabled={loading} onClick={runCheck} data-testid="connectors-global-check-rerun">
+            {loading ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <HugeiconsIcon icon={RefreshIcon} size={14} className="mr-1.5" />}
+            Relancer
+          </Button>
+        </div>
+
+        {error ? <p className="text-destructive text-xs">{error}</p> : null}
+
+        <div className="space-y-2">
+          {(registry.length > 0 ? registry : Object.values(results).map((r) => ({
+            slug: r.slug,
+            display_name: r.display_name,
+            form_count: r.checks.length,
+          }))).map((entry) => {
+            const payload = results[entry.slug]
+            const pending = loading && !payload
+            const fail = payload?.fail ?? 0
+            const warn = payload?.warn ?? 0
+            const ok = payload?.ok ?? 0
+            const status: CheckStatus = pending ? 'running' : fail > 0 ? 'fail' : warn > 0 ? 'warn' : payload ? 'ok' : 'pending'
+            return (
+              <div
+                key={entry.slug}
+                className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2"
+                data-testid={`connector-global-check-${entry.slug}`}
+              >
+                <div className="flex items-start gap-2">
+                  <CheckStatusIcon status={status} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="text-sm font-medium">{entry.display_name}</p>
+                      <span className="font-mono text-[11px] text-zinc-500">{entry.slug}</span>
+                      {payload ? (
+                        <span className="text-[11px] text-zinc-600">
+                          {ok} OK · {warn} à surveiller · {fail} KO
+                        </span>
+                      ) : pending ? (
+                        <span className="text-[11px] text-zinc-500">Vérification…</span>
+                      ) : null}
+                    </div>
+                    {payload && payload.checks.length > 0 ? (
+                      <ul className="mt-2 space-y-1">
+                        {payload.checks.map((chk) => (
+                          <li key={chk.id} className="flex items-start gap-2 text-[11px]">
+                            <CheckStatusIcon status={chk.status} />
+                            <span className="min-w-0 flex-1">
+                              <span className="font-medium">{chk.label}</span>
+                              {chk.message ? <span className="text-muted-foreground"> — {chk.message}</span> : null}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ConnectorCheckPanel({ slug }: { slug: string }) {
+  const [checks, setChecks] = useState<Record<string, CheckItem>>({})
+  const [summary, setSummary] = useState<Omit<ConnectorCheckPayload, 'checks'> | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const doneRef = useRef(false)
+  const esRef = useRef<EventSource | null>(null)
+
+  const stopStream = useCallback(() => {
+    esRef.current?.close()
+    esRef.current = null
+  }, [])
+
+  const runCheck = useCallback(() => {
+    stopStream()
+    setLoading(true)
+    setError(null)
+    setSummary(null)
+    setChecks({})
+    doneRef.current = false
+
+    const es = new EventSource(`/api/connectors/${encodeURIComponent(slug)}/check/stream`)
+    esRef.current = es
+
+    es.addEventListener('registry', (ev) => {
+      try {
+        const data = JSON.parse(ev.data) as { checks?: CheckDescriptor[] }
+        const init: Record<string, CheckItem> = {}
+        for (const d of data.checks ?? []) {
+          init[d.id] = { ...d, status: 'pending', message: '' }
+        }
+        setChecks(init)
+      } catch {
+        /* ignore */
+      }
+    })
+
+    es.addEventListener('check', (ev) => {
+      try {
+        const chk = JSON.parse(ev.data) as CheckItem
+        setChecks((prev) => {
+          const next = { ...prev }
+          for (const id of Object.keys(next)) {
+            if (next[id].status === 'pending') {
+              next[id] = { ...next[id], status: 'running' }
+              break
+            }
+          }
+          next[chk.id] = { ...chk }
+          return next
+        })
+      } catch {
+        /* ignore */
+      }
+    })
+
+    es.addEventListener('error', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as { error?: string }
+        if (data.error) setError(`Connecteur inconnu : ${slug}`)
+      } catch {
+        /* ignore */
+      }
+    })
+
+    const finish = (s?: Omit<ConnectorCheckPayload, 'checks'>) => {
+      if (doneRef.current) return
+      doneRef.current = true
+      stopStream()
+      setLoading(false)
+      if (s) setSummary(s)
+    }
+
+    es.addEventListener('done', (ev) => {
+      try {
+        finish(JSON.parse(ev.data) as Omit<ConnectorCheckPayload, 'checks'>)
+      } catch {
+        finish()
+      }
+    })
+
+    es.onerror = () => {
+      if (!doneRef.current) {
+        setError('Flux de vérification interrompu')
+        finish()
+      }
+    }
+  }, [slug, stopStream])
+
+  useEffect(() => {
+    runCheck()
+    return () => stopStream()
+  }, [runCheck, stopStream])
+
+  const checkList = useMemo(() => Object.values(checks), [checks])
+
+  return (
+    <div
+      className="space-y-3 rounded-lg border border-zinc-200 bg-white p-3"
+      data-testid="connector-check-panel"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">Vérification</p>
+          <p className="text-muted-foreground text-[11px]">
+            {summary
+              ? `${summary.ok} OK · ${summary.warn} à surveiller · ${summary.fail} KO`
+              : loading
+                ? 'Checks en cours…'
+                : 'Aucun check'}
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={loading}
+          onClick={runCheck}
+          data-testid="connector-check-rerun"
+        >
+          {loading ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <HugeiconsIcon icon={RefreshIcon} size={14} className="mr-1.5" />}
+          Relancer
+        </Button>
+      </div>
+
+      {error ? <p className="text-destructive text-xs">{error}</p> : null}
+
+      {checkList.length > 0 ? (
+        <ul className="space-y-2">
+          {checkList.map((chk) => (
+            <li key={chk.id} className="flex items-start gap-2 rounded-md bg-zinc-50 px-2 py-1.5 text-xs">
+              <CheckStatusIcon status={chk.status} />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">{chk.label}</p>
+                <p className="text-muted-foreground">
+                  {checkStatusLabel(chk.status)}
+                  {chk.message ? ` — ${chk.message}` : ''}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : loading ? (
+        <p className="text-muted-foreground flex items-center gap-2 text-xs">
+          <Loader2 className="size-3.5 animate-spin" />
+          Préparation des checks…
+        </p>
+      ) : null}
     </div>
   )
 }

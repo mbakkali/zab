@@ -39,42 +39,64 @@ test.describe('zab dashboard', () => {
   test('page SPA affiche zab', async ({ page }) => {
     await page.goto('/')
     await expect(page.locator('aside').getByText('zab', { exact: true }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Overview$/i })).toBeVisible()
+  })
+
+  test('language switcher EN par défaut puis FR', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: /^Overview$/i })).toBeVisible()
+    await page.getByRole('button', { name: 'FR', exact: true }).click()
     await expect(page.getByRole('button', { name: /Vue d\u2019ensemble/i })).toBeVisible()
+    await page.getByRole('button', { name: 'EN', exact: true }).click()
+    await expect(page.getByRole('button', { name: /^Overview$/i })).toBeVisible()
   })
 
   test('navigation sidebar depuis #orgs', async ({ page }) => {
     await page.goto('/#orgs')
-    await expect(page.getByRole('heading', { name: 'Organisations' })).toBeVisible()
-    await page.getByRole('button', { name: /Vue d\u2019ensemble/i }).click()
-    await expect(page.getByRole('heading', { name: 'Vue d\u2019ensemble' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Organizations' })).toBeVisible()
+    await page.getByRole('button', { name: /^Overview$/i }).click()
+    await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
   })
 
   test('navigation sidebar depuis #projects', async ({ page }) => {
     await page.goto('/#projects')
-    await expect(page.getByRole('heading', { name: 'Projets' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
   })
 
   test('navigation sidebar depuis #tasks_inbox', async ({ page }) => {
     await page.goto('/#tasks_inbox')
-    await expect(page.getByRole('heading', { name: 'Tâches (multi-outils)' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible()
+  })
+
+  test('navigation sidebar depuis #conversations', async ({ page }) => {
+    await page.goto('/#conversations')
+    await expect(page.getByRole('heading', { name: 'Conversations' })).toBeVisible()
+  })
+
+  test('onglet Mémoire — scan projet et récupération config', async ({ page }) => {
+    await page.goto('/#memory')
+    await expect(page.getByRole('heading', { name: 'Memory' })).toBeVisible()
+    await page.getByTestId('memory-tools-details').locator(':scope > summary').click()
+    await expect(page.locator('[data-testid="memory-project-scan"]')).toBeVisible()
+    await expect(page.locator('[data-testid="memory-config-recovery"]')).toBeVisible()
   })
 
   test('menu burger visible sur vue étroite', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/')
-    await expect(page.getByRole('button', { name: /menu de navigation/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /open navigation menu/i })).toBeVisible()
   })
 
   test('onglet Connecteurs — grille et détail', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'Connecteurs' }).click()
+    await page.getByRole('button', { name: 'Connectors' }).click()
     await expect(page.locator('[data-testid="connectors-subtitle"]')).toBeVisible()
     const grid = page.locator('[data-testid="connectors-grid"]')
     await expect(grid).toBeVisible()
-    const cards = grid.getByRole('button', { name: 'Voir' })
+    const cards = grid.getByRole('button', { name: 'View' })
     const count = await cards.count()
     if (count === 0) {
-      await expect(page.getByText('Aucun connecteur ne correspond.')).toBeVisible()
+      await expect(page.getByText('No connectors match.')).toBeVisible()
       return
     }
     await cards.first().click()

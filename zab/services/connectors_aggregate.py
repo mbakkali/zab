@@ -9,7 +9,9 @@ from typing import Any
 import yaml
 
 from zab.paths import dashboard_local_tools_config_path
-from zab.services.discovery import list_mcp_configs
+from zab.services.composio_connectors import composio_forms
+from zab.services.mcp_registry import is_slug_ignored
+from zab.services.mcp_sources import list_mcp_servers_flat
 
 
 def normalize_connector_slug(name: str) -> str:
@@ -76,53 +78,62 @@ def _api_forms_from_proxies() -> list[tuple[str, dict[str, Any]]]:
     return out
 
 
+_SOURCE_LABEL_BY_KIND: dict[str, str] = {
+    "skills_repo_cursor": "configs/cursor-mcp.json",
+    "skills_repo_desktop": "configs/claude-desktop-mcp.json",
+    "cursor_user": "~/.cursor/mcp.json",
+    "claude_desktop_user": "claude_desktop_config.json",
+}
+
+
 def _build_connectors_raw() -> list[dict[str, Any]]:
     by_slug: dict[str, dict[str, Any]] = {}
-    blocks = list_mcp_configs()
-    source_keys_display = {"cursor_mcp": "configs/cursor-mcp.json", "claude_desktop_mcp": "configs/claude-desktop-mcp.json"}
 
-    for block_key, block in blocks.items():
-        servers = block.get("servers") or []
-        src_label = source_keys_display.get(block_key, str(block_key))
-        for s in servers:
-            if not isinstance(s, dict):
-                continue
-            name = str(s.get("name", "")).strip()
-            if not name:
-                continue
-            slug = normalize_connector_slug(name)
-            entry = by_slug.setdefault(
-                slug,
-                {
-                    "id": slug,
-                    "display_name": _display_name(slug, name),
-                    "tags": [],  # rempli plus tard depuis state ; vide en v1
-                    "forms": [],
-                },
-            )
-            tk = str(s.get("kind", "stdio"))
-            form_id = f"mcp-{block_key}-{re.sub(r'[^a-z0-9_-]+', '-', name.lower())}"
-            cf = str(s.get("config_path") or "")
-            meta: dict[str, Any] = {
-                "transport": tk,
-                "command": s.get("transport_command"),
-                "args": s.get("transport_args") or [],
-                "env_vars": s.get("env_var_names") or [],
+    for s in list_mcp_servers_flat():
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("name", "")).strip()
+        if not name:
+            continue
+        slug = normalize_connector_slug(name)
+        if is_slug_ignored(slug):
+            continue
+        sk = str(s.get("source_kind") or "")
+        src_label = _SOURCE_LABEL_BY_KIND.get(sk, sk or "mcp")
+        entry = by_slug.setdefault(
+            slug,
+            {
+                "id": slug,
+                "display_name": _display_name(slug, name),
+                "tags": [],
+                "forms": [],
+            },
+        )
+        tk = str(s.get("kind", "stdio"))
+        safe_sk = re.sub(r"[^a-z0-9_-]+", "-", sk.lower()) or "mcp"
+        form_id = f"mcp-{safe_sk}-{re.sub(r'[^a-z0-9_-]+', '-', name.lower())}"
+        cf = str(s.get("config_path") or "")
+        meta: dict[str, Any] = {
+            "transport": tk,
+            "command": s.get("transport_command"),
+            "args": s.get("transport_args") or [],
+            "env_vars": s.get("env_var_names") or [],
+            "mcp_source_kind": sk or None,
+        }
+        entry["forms"].append(
+            {
+                "id": form_id.strip("-")[:120],
+                "kind": "mcp",
+                "transport_kind": tk if tk in ("stdio", "http", "sse") else tk,
+                "enabled": bool(s.get("enabled", True)),
+                "target": str(s.get("target") or ""),
+                "note": str(s.get("note") or "") or None,
+                "source_label": src_label,
+                "config_path": cf if cf else None,
+                "source_ref": f"{src_label}#{name}",
+                "meta": meta,
             }
-            entry["forms"].append(
-                {
-                    "id": form_id.strip("-")[:120],
-                    "kind": "mcp",
-                    "transport_kind": tk if tk in ("stdio", "http", "sse") else tk,
-                    "enabled": bool(s.get("enabled", True)),
-                    "target": str(s.get("target") or ""),
-                    "note": str(s.get("note") or "") or None,
-                    "source_label": src_label,
-                    "config_path": cf if cf else None,
-                    "source_ref": f"{src_label}#{name}",
-                    "meta": meta,
-                }
-            )
+        )
 
     for slug, form in _api_forms_from_proxies():
         entry = by_slug.setdefault(
@@ -136,14 +147,32 @@ def _build_connectors_raw() -> list[dict[str, Any]]:
         )
         entry["forms"].append(form)
 
+    for slug, form in composio_forms():
+        meta = form.get("meta") or {}
+        toolkit_name = str(meta.get("toolkit_name") or slug)
+        entry = by_slug.setdefault(
+            slug,
+            {
+                "id": slug,
+                "display_name": _display_name(slug, toolkit_name),
+                "tags": [],
+                "forms": [],
+            },
+        )
+        if "composio" not in entry["tags"]:
+            entry["tags"].append("composio")
+        entry["forms"].append(form)
+
     return sorted(by_slug.values(), key=lambda x: str(x["display_name"]).lower())
 
 
 
 def clear_connectors_cache() -> None:
-    """Placeholder si cache réintroduit plus tard."""
+    """Invalide les caches mémoire des sources live (Composio TTL)."""
 
-    pass
+    from zab.services.composio_connectors import clear_forms_cache
+
+    clear_forms_cache()
 
 
 def list_connectors(

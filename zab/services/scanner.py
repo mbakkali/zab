@@ -202,10 +202,17 @@ _AGENT_TYPE_TO_BIN_HINT: dict[str, str] = {
     "claude-code": "claude",
     "cursor": "cursor",
     "gemini": "gemini",
+    "google-gemini": "gemini",
+    "vertex": "gemini",
+    "vertexai": "gemini",
     "kimi": "kimi",
     "qwen": "qwen",
     "factory": "factory",
     "continue": "continue",
+    "continue-dev": "continue",
+    "continue.dev": "continue",
+    "continue_dev": "continue",
+    "continuedev": "continue",
     "codex": "codex",
 }
 

@@ -3,7 +3,31 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
-zab/local-tools.yaml
 *.egg-info/
 dist/
 build/
+
+# Local secrets and operator config
+flowmetrik-openwebui/.env
+zab/local-tools.yaml
+.env
+.env.*
+!.env.example
+
+# Runtime databases and personal session dumps
+**/state.db
+**/webui.db
+exampleconf.txt
+flowmetrik-openwebui/hermes-state/
+flowmetrik-openwebui/owui-data/
+
+# IDE / agent plans (may contain secrets or personal paths)
+.cursor/
+.hermes/
+
+# E2E screenshots with real project data
+zab-ui/.screenshots/*.png
+
+# Node
+node_modules/
+zab-ui/dist/

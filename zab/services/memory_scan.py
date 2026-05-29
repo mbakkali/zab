@@ -12,18 +12,26 @@ from dotenv import dotenv_values
 
 
 def resolve_mehdi_memory_database_url(skills_repo: Path | None) -> str | None:
-    """DSN depuis l'environnement puis, si repo fourni, depuis ``<skills>/.env`` (sans exposer la valeur au scan)."""
-    u = os.environ.get("MEHDI_MEMORY_DATABASE_URL", "").strip()
-    if u:
-        return u
+    """DSN depuis l'environnement puis depuis ``.env`` autour de l'ancre skills.
+
+    Accepts ``ZAB_MEMORY_DATABASE_URL`` (preferred) and legacy ``MEHDI_MEMORY_DATABASE_URL``.
+    """
+    for var in ("ZAB_MEMORY_DATABASE_URL", "MEHDI_MEMORY_DATABASE_URL"):
+        u = os.environ.get(var, "").strip()
+        if u:
+            return u
     if skills_repo is None:
         return None
-    env_file = skills_repo / ".env"
-    if env_file.is_file():
+    anchors = [skills_repo, *skills_repo.parents]
+    for anchor in anchors:
+        env_file = anchor / ".env"
+        if not env_file.is_file():
+            continue
         vals = dotenv_values(env_file)
-        raw = vals.get("MEHDI_MEMORY_DATABASE_URL")
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
+        for key in ("ZAB_MEMORY_DATABASE_URL", "MEHDI_MEMORY_DATABASE_URL"):
+            raw = vals.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
     return None
 
 

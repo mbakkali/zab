@@ -6,6 +6,8 @@ from __future__ import annotations
 CONNECTOR_VARS: tuple[str, ...] = (
     "QONTO_API_KEY",
     "QONTO_ORGANIZATION_SLUG",
+    "QONTO_ID",
+    "QONTO_SECRET_KEY",
     "PENNYLANE_API_KEY",
     "EVOLUTION_API_URL",
     "EVOLUTION_API_KEY",
@@ -17,6 +19,9 @@ CONNECTOR_VARS: tuple[str, ...] = (
     "MCP_USE_GCLOUD_ID_TOKEN",
     "FMETRIK_SKILLS_ROOT",
     "MCP_TRANSPORT",
+    "COMPOSIO_MCP",
+    "COMPOSIO_X_CONSUMER_API_KEY",
+    "COMPOSIO_API_KEY",
 )
 
 # Google / contexte agent
@@ -42,3 +47,17 @@ PM_VARS: tuple[str, ...] = (
 )
 
 ALL_TRACKED: tuple[str, ...] = tuple(dict.fromkeys(CONNECTOR_VARS + GOOGLE_VARS + LLM_VARS + PM_VARS))
+
+SECRET_ALIASES: dict[str, tuple[str, ...]] = {
+    # Legacy bridge naming used by flowmetrik-cowork/compta/bridge.
+    "QONTO_API_KEY": ("QONTO_SECRET_KEY",),
+    "QONTO_ORGANIZATION_SLUG": ("QONTO_ID",),
+}
+
+SECRET_GROUPS: dict[str, tuple[str, ...]] = {
+    "connectors": CONNECTOR_VARS,
+    "project_management": PM_VARS,
+    "google": GOOGLE_VARS,
+    "memory": ("MEHDI_MEMORY_DATABASE_URL",),
+    "llm": LLM_VARS,
+}

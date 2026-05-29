@@ -17,6 +17,7 @@ import yaml
 from zab.system_open import open_os_path
 from zab.paths import (
     config_dir,
+    configs_dir,
     data_dir,
     mehdi_context_root,
     resolve_skills_root,
@@ -28,17 +29,13 @@ from zab.paths import (
     zab_repo_root,
     zab_ui_dist_dir,
 )
-from zab.user_config import load_user_config, merge_scan_inventory_into_config, merge_skills_roots_into_config, user_config_path
-from zab.services.scan_persist import persist_workspace_scan
-from zab.services.inventory_config import collect_plugin_roots_from_skill_paths
-from zab.services.skills_roots_infer import (
-    claude_plugin_paths_from_proposal,
-    infer_skills_repo_roots,
-    load_proposed_roots,
-    persist_proposed_roots,
-    roots_from_proposal,
-    skill_md_paths_from_proposal,
+from zab.user_config import (
+    load_user_config,
+    skills_sync_settings,
+    user_config_path,
 )
+from zab.services.scan_persist import persist_workspace_scan
+from zab.services import skills_registry
 from zab.services.cli_add import (
     McpTarget,
     add_api_proxy,
@@ -47,16 +44,214 @@ from zab.services.cli_add import (
     add_tracked_env,
     parse_args_option,
     parse_env_flags,
+    resolve_mcp_json_path,
 )
 from zab.services.memory_scan import resolve_mehdi_memory_database_url
+from zab.services import mempalace_mcp_snippet as mempalace_mcp_snippet
 from zab.services.scanner import resolve_optional_scan_root, workspace_scan
 from zab.services.pm_env_sync import sync_pm_tokens_to_user_dotenv
+from zab.services.feature_catalog import agent_guide, agent_guide_markdown, catalog
+from zab.services.state_index import build_context_pack, get_section_item, list_section, state_summary, sync_state
+from zab.services import agent_context, composio_connectors as composio_svc
+from zab.services.hermes_config import update_external_dirs
+from zab.services.skill_ai_router import choose_skill_placement
+from zab.services.skills_git_sync import commit_and_push, ensure_remote_origin, ensure_repo_initialized
+from zab.services.skills_scaffold import SkillScaffoldError, create_global_skill, create_project_skill, create_skill
+from zab.services import skills_broadcast
 
 app = typer.Typer(no_args_is_help=True, help="CLI zab — dashboard, scan workspace et jobs du dépôt skills.")
 add_app = typer.Typer(help="Ajouter MCP (skills/configs), CLI watchlist, proxy API ou variable suivie (Sécurité).")
 app.add_typer(add_app, name="add")
 pm_env_app = typer.Typer(help="Jetons gestion de projet (GitLab / Linear / Notion) depuis les .env locaux.")
 app.add_typer(pm_env_app, name="pm-env")
+projects_app = typer.Typer(help="Projets locaux sous projects_roots (skills + métadonnées Git).")
+app.add_typer(projects_app, name="projects")
+mempalace_app = typer.Typer(help="MemPalace : diagnostic MCP (mempalace-mcp) et configs skills/*.json.")
+app.add_typer(mempalace_app, name="mempalace")
+memory_app = typer.Typer(help="Mémoire Postgres : sync conversations/artefacts agents et lecture.")
+app.add_typer(memory_app, name="memory")
+conversations_app = typer.Typer(help="Conversations multi-provider : sync vers Postgres / MemPalace.")
+app.add_typer(conversations_app, name="conversations")
+agent_app = typer.Typer(help="Contrat agent : bootstrap, recherche et handoff projet.")
+app.add_typer(agent_app, name="agent")
+security_app = typer.Typer(help="Statut sécurité local sans secrets bruts.")
+app.add_typer(security_app, name="security")
+mcp_app = typer.Typer(help="Serveur MCP stdio read-only pour exposer zab aux agents.")
+app.add_typer(mcp_app, name="mcp")
+composio_app = typer.Typer(
+    help="Composio : lister les connections et exécuter des tools via la CLI / API Composio.",
+    no_args_is_help=True,
+)
+app.add_typer(composio_app, name="composio")
+skill_app = typer.Typer(help="Créer, synchroniser et exposer des Agent Skills.", no_args_is_help=True)
+app.add_typer(skill_app, name="skill")
+ws_app = typer.Typer(help="Cloud Workstation : sync bidirectionnelle env/CLIs.", no_args_is_help=True)
+ws_sync_app = typer.Typer(help="Sync Mac ↔ GCS ↔ Workstation par profils.", no_args_is_help=True)
+ws_app.add_typer(ws_sync_app, name="sync")
+app.add_typer(ws_app, name="ws")
+
+tasks_app = typer.Typer(help="Gestion des tâches unifiée (GitLab, Linear, Notion, GitHub).", no_args_is_help=True)
+app.add_typer(tasks_app, name="tasks")
+
+@tasks_app.command(name="sync")
+def tasks_sync() -> None:
+    """Synchronise la boîte de réception des tâches et met en cache local."""
+    from zab.services.tasks_inbox import sync_tasks_inbox
+    import typer
+    from rich.console import Console
+
+    console = Console()
+    console.print("[yellow]Synchronisation des tâches en cours...[/yellow]")
+    data = sync_tasks_inbox()
+    console.print(f"[green]✔ Synchro terminée.[/green] {data.get('total_count', 0)} tâches trouvées parmi {len(data.get('sources', []))} sources.")
+
+@tasks_app.command(name="list")
+def tasks_list() -> None:
+    """Liste les tâches depuis le cache local (unifié)."""
+    from zab.services.tasks_inbox import fetch_tasks_inbox
+    from rich.console import Console
+    from rich.table import Table
+
+    data = fetch_tasks_inbox()
+    console = Console()
+
+    total = data.get('total_count', 0)
+    table = Table(title=f"Tâches Unifiées (Total: {total})", header_style="bold blue")
+    table.add_column("Source", style="cyan", no_wrap=True)
+    table.add_column("ID", style="magenta")
+    table.add_column("Titre")
+    table.add_column("Statut", style="yellow")
+    table.add_column("Dernière MàJ", style="dim")
+
+    for t in data.get("all_tasks", []):
+        table.add_row(
+            t.get("source_label", ""),
+            t.get("identifier", ""),
+            t.get("title", "")[:80] + ("..." if len(t.get("title", "")) > 80 else ""),
+            t.get("state", ""),
+            t.get("updated_at", "")[:16].replace("T", " "),
+        )
+
+    console.print(table)
+
+
+channels_app = typer.Typer(help="Gestion des canaux de communication (emails, WhatsApp, Slack, Telegram).", no_args_is_help=True)
+app.add_typer(channels_app, name="channels")
+
+@channels_app.command(name="sync")
+def channels_sync() -> None:
+    """Synchronise tous les canaux de communication et génère les actions du cockpit."""
+    from zab.services.communication_channels import sync_communication_channels
+    from rich.console import Console
+
+    console = Console()
+    console.print("[yellow]Synchronisation des canaux de communication en cours...[/yellow]")
+    data = sync_communication_channels()
+    
+    # Calculer le nombre total de messages d'actions et non lus
+    actions_count = data.get("total_actions_count", 0)
+    unread_emails = 0
+    for c in data.get("channels", []):
+        if c.get("type") == "email":
+            unread_emails += c.get("sync_summary", {}).get("unread_count", 0)
+            
+    console.print(f"[green]✔ Synchro terminée.[/green] {len(data.get('channels', []))} canaux synchronisés.")
+    console.print(f"👉 Mails non lus : [bold cyan]{unread_emails}[/bold cyan] | Actions prioritaires détectées : [bold magenta]{actions_count}[/bold magenta]")
+
+@channels_app.command(name="list")
+def channels_list() -> None:
+    """Liste les canaux de communication et leur état actuel de synchronisation."""
+    from zab.services.communication_channels import fetch_channels_cache
+    from rich.console import Console
+    from rich.table import Table
+
+    data = fetch_channels_cache()
+    console = Console()
+
+    table = Table(title="Canaux de Communication", header_style="bold green")
+    table.add_column("Canal (Label)", style="cyan", no_wrap=True)
+    table.add_column("Type", style="magenta")
+    table.add_column("Connecteur", style="blue")
+    table.add_column("Organisation", style="yellow")
+    table.add_column("Statut", style="green")
+    table.add_column("Synchro / Non lus", style="bold white")
+
+    for c in data.get("channels", []):
+        summary_text = ""
+        st = c.get("type")
+        if st == "email":
+            sum_info = c.get("sync_summary", {})
+            unread = sum_info.get("unread_count", 0)
+            today = sum_info.get("received_today", 0)
+            week = sum_info.get("received_this_week", 0)
+            summary_text = f"Non lus: {unread} | Reçus ce jour: {today} | Semaine: {week}"
+        else:
+            unread = c.get("sync_summary", {}).get("unread_count", 0)
+            summary_text = f"Messages non lus: {unread}"
+            
+        table.add_row(
+            c.get("label", ""),
+            c.get("type", ""),
+            c.get("connector", ""),
+            c.get("org", "personal"),
+            "✔ OK" if c.get("status") == "ok" else f"❌ {c.get('reason', 'Erreur')}",
+            summary_text
+        )
+
+    console.print(table)
+
+@channels_app.command(name="add")
+def channels_add(
+    label: str = typer.Argument(..., help="Nom d'affichage du canal"),
+    type_chan: str = typer.Option(..., "--type", "-t", help="Type de canal (email, whatsapp, slack, telegram)"),
+    connector: str = typer.Option(..., "--connector", "-c", help="Connecteur (gmail, outlook, evolution-api, slack, telegram)"),
+    email: str = typer.Option(None, "--email", "-e", help="Adresse e-mail optionnelle"),
+    org: str = typer.Option(None, "--org", "-o", help="Organisation associée (slug)"),
+) -> None:
+    """Ajoute un nouveau canal de communication à la configuration."""
+    from zab.services.communication_channels import add_channel_config, sync_communication_channels
+    from rich.console import Console
+
+    console = Console()
+    console.print(f"[yellow]Ajout du canal [bold]{label}[/bold]...[/yellow]")
+    
+    new_chan = add_channel_config(
+        label=label,
+        channel_type=type_chan,
+        connector=connector,
+        email_address=email,
+        org=org
+    )
+    
+    # Synchroniser immédiatement pour mettre à jour le cache
+    sync_communication_channels()
+    
+    console.print(f"[green]✔ Canal ajouté avec succès ! ID attribué : [bold]{new_chan['id']}[/bold][/green]")
+
+
+@channels_app.command(name="setup")
+def channels_setup() -> None:
+    """Wizard interactif : crée un canal (email/Slack/WhatsApp), écrit config.yaml et teste la connexion."""
+    from zab.services.channels_setup import run_channel_setup_wizard
+
+    run_channel_setup_wizard()
+
+
+_INVENTORY_SECTIONS: dict[str, str] = {
+    "skills": "skills",
+    "connectors": "connectors",
+    "code-tools": "code_tools",
+    "code_tools": "code_tools",
+    "models": "models",
+    "memory": "memory_sources",
+    "memory-sources": "memory_sources",
+    "knowledge": "knowledge_sources",
+    "security": "security",
+    "policies": "policies",
+    "subscriptions": "subscriptions",
+    "projects": "projects",
+    "orgs": "orgs",
+}
 
 
 def _tilde_path(path: Path) -> str:
@@ -92,36 +287,45 @@ def _pretty_user_yaml(cfg: dict[str, Any]) -> str:
     return yaml.safe_dump(clean, allow_unicode=True, sort_keys=False).rstrip()
 
 
+def _resolve_inventory_section(raw: str) -> str:
+    key = raw.strip().lower()
+    section = _INVENTORY_SECTIONS.get(key)
+    if not section:
+        choices = ", ".join(sorted(_INVENTORY_SECTIONS))
+        raise ValueError(f"section inconnue: {raw!r}. Choix: {choices}")
+    return section
+
+
 @app.command("config")
 def config_cmd(
     *,
     open_user_config: bool = typer.Option(False, "--open", "-o", help="Ouvrir ~/.config/zab/config.yaml"),
-    open_tools: bool = typer.Option(False, "--open-tools", help="Ouvrir le fichier local-tools.yaml effectif"),
+    open_tools: bool = typer.Option(
+        False,
+        "--open-tools",
+        help="(déprécié) Ouvre ~/.config/zab/config.yaml — même effet que --open",
+        hidden=True,
+    ),
     paths_only: bool = typer.Option(False, "--paths", "-p", help="Afficher uniquement les chemins (une paire clé=chem par ligne)"),
 ) -> None:
     """Affiche la configuration résolue (chemins, variables, contenu de config.yaml)."""
     sr_path, sr_rule = resolve_skills_root()
     cfg_path = user_config_path()
     cfg_raw = load_user_config()
-    lt_path, lt_origin = _local_tools_origin()
     dd = data_dir()
 
     if paths_only:
         typer.echo(f"skills_root={sr_path}")
         typer.echo(f"skills_root_source={sr_rule}")
         typer.echo(f"config_yaml={cfg_path.resolve()}")
-        typer.echo(f"local_tools_yaml={lt_path.resolve()}")
         typer.echo(f"config_dir={config_dir().resolve()}")
         typer.echo(f"data_dir={dd.resolve()}")
         typer.echo(f"zab_repo={zab_repo_root().resolve()}")
         return
 
-    if open_user_config:
+    if open_user_config or open_tools:
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         _open_path(cfg_path)
-    if open_tools:
-        lt_path.parent.mkdir(parents=True, exist_ok=True)
-        _open_path(lt_path)
 
     typer.echo(typer.style(" ╭────────────────────────────────────────────────────╮", fg=typer.colors.WHITE))
     typer.echo(typer.style(" │", fg=typer.colors.WHITE) + "  zab — configuration                               " + typer.style("│", fg=typer.colors.WHITE))
@@ -129,7 +333,7 @@ def config_cmd(
     typer.echo("")
 
     if open_user_config or open_tools:
-        typer.echo(typer.style("  (fichiers ouverts dans l’application par défaut)", fg=typer.colors.GREEN))
+        typer.echo(typer.style("  (config.yaml ouvert dans l’application par défaut)", fg=typer.colors.GREEN))
         typer.echo("")
 
     typer.echo(typer.style("  Racine skills (effectif)", bold=True))
@@ -140,15 +344,14 @@ def config_cmd(
     dash_sr = skills_root_from_config_file_only()
     if dash_sr is not None:
         typer.echo(f"    ancrage : {_tilde_path(dash_sr)}")
-        typer.echo(typer.style("    ← skill_md_paths / skills_roots / plugins (premier chemin résolu)", dim=True))
+        typer.echo(typer.style("    ← skills-registry (adoptées) / skills_roots / plugins (premier chemin résolu)", dim=True))
     else:
         typer.echo(
             typer.style(
-                "    Définissez skill_md_paths dans config.yaml (zab scan --propose-config puis --apply-config).",
+                "    Définissez skills_roots ou adoptez des skills (skills-registry.json) — voir docs/skills-registry-migration.md.",
                 dim=True,
             )
         )
-    typer.echo(f"    local-tools UI : {_tilde_path(dashboard_local_tools_config_path())}")
     typer.echo("")
 
     typer.echo(typer.style("  Variables d'environnement", bold=True))
@@ -160,19 +363,13 @@ def config_cmd(
             typer.echo(typer.style(f"    {name} (non défini)", dim=True))
     typer.echo("")
 
-    typer.echo(typer.style("  Fichiers", bold=True))
+    typer.echo(typer.style("  Fichier de configuration", bold=True))
     cfg_exists = cfg_path.is_file()
     typer.echo(
         f"    {'●' if cfg_exists else '○'} "
         f"{typer.style('config.yaml', fg=typer.colors.CYAN)}  {_tilde_path(cfg_path)}"
         + ("" if cfg_exists else typer.style("  (absent)", dim=True))
     )
-    lt_exists = lt_path.is_file()
-    typer.echo(
-        f"    {'●' if lt_exists else '○'} "
-        f"{typer.style('local-tools.yaml', fg=typer.colors.CYAN)}  {_tilde_path(lt_path)}"
-    )
-    typer.echo(typer.style(f"       origine : {lt_origin}", dim=True))
     typer.echo(
         f"    ● {typer.style('répertoire données', fg=typer.colors.CYAN)}  {_tilde_path(dd)}"
     )
@@ -193,31 +390,29 @@ def config_cmd(
         typer.echo("")
 
     typer.echo(typer.style("  Édition", bold=True))
-    typer.echo(f"    {typer.style('zab config --open', fg=typer.colors.GREEN)}        → config.yaml")
-    typer.echo(f"    {typer.style('zab config --open-tools', fg=typer.colors.GREEN)} → local-tools.yaml")
+    typer.echo(f"    {typer.style('zab config --open', fg=typer.colors.GREEN)} → {_tilde_path(cfg_path)}")
     typer.echo(typer.style(f"    ou ouvrez directement : {_tilde_path(cfg_path)}", dim=True))
 
 
 @app.command()
 def doctor() -> None:
-    """Vérifie uv, node, chemins du repo."""
+    """Check toolchain and optional zab configuration."""
     root = skills_root()
     typer.echo(f"SKILLS_ROOT = {root}")
-    checks: list[tuple[str, object, str]] = [
-        ("orgs", root / "orgs", "dir"),
-        ("mcps/flowmetrik-gateway", root / "mcps" / "flowmetrik-gateway", "dir"),
-        ("configs/cursor-mcp.json", root / "configs" / "cursor-mcp.json", "file"),
-        ("~/.mehdi-context", mehdi_context_root(), "dir"),
+    checks: list[tuple[str, object, str, bool]] = [
+        ("orgs", root / "orgs", "dir", False),
+        ("configs/cursor-mcp.json", root / "configs" / "cursor-mcp.json", "file", False),
     ]
-    for name, path, kind in checks:
+    for name, path, kind, required in checks:
         p = Path(path)
         ok = p.is_dir() if kind == "dir" else p.is_file()
-        typer.echo(f"  [{'OK' if ok else '!!'}] {name}: {p}")
+        mark = "OK" if ok else ("!!" if required else "--")
+        typer.echo(f"  [{mark}] {name}: {p}")
     for bin_name in ("uv", "node", "npm"):
         loc = shutil.which(bin_name)
         typer.echo(f"  [{'OK' if loc else '!!'}] {bin_name}: {loc or 'absent'}")
     mp = shutil.which("mempalace")
-    typer.echo(f"  [{'OK' if mp else '!!'}] mempalace: {mp or 'absent'}")
+    typer.echo(f"  [{'OK' if mp else '--'}] mempalace (optional): {mp or 'absent'}")
     if mp:
         try:
             proc = subprocess.run([mp, "--version"], capture_output=True, text=True, timeout=5)
@@ -226,9 +421,24 @@ def doctor() -> None:
                 typer.echo(typer.style(f"      {ver[0][:120]}", dim=True))
         except (OSError, subprocess.TimeoutExpired):
             pass
-    anchor = skills_root_from_config_file_only()
-    dsn_ok = bool(resolve_mehdi_memory_database_url(anchor))
-    typer.echo(f"  [{'OK' if dsn_ok else '!!'}] MEHDI_MEMORY_DATABASE_URL (env ou skills/.env): {'présent' if dsn_ok else 'absent'}")
+    mp_mcp = shutil.which("mempalace-mcp")
+    typer.echo(f"  [{'OK' if mp_mcp else '--'}] mempalace-mcp (optional): {mp_mcp or 'absent'}")
+    if mp_mcp:
+        try:
+            proc = subprocess.run([mp_mcp, "-h"], capture_output=True, text=True, timeout=5)
+            ver = (proc.stdout or proc.stderr or "").strip().splitlines()
+            if ver:
+                typer.echo(typer.style(f"      {ver[0][:120]}", dim=True))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    dsn_ok = bool(
+        resolve_mehdi_memory_database_url(skills_root_from_config_file_only())
+        or resolve_mehdi_memory_database_url(root)
+    )
+    typer.echo(
+        f"  [{'OK' if dsn_ok else '--'}] ZAB_MEMORY_DATABASE_URL / MEHDI_MEMORY_DATABASE_URL: "
+        f"{'present' if dsn_ok else 'absent (optional)'}"
+    )
 
 
 @app.command("dashboard")
@@ -260,6 +470,40 @@ def dashboard_cmd(
         reload=reload,
     )
 
+@app.command("gateway")
+def gateway_cmd(
+    host: str = typer.Option("127.0.0.1", help="Bind API"),
+    port: int = typer.Option(8742, help="Port API"),
+) -> None:
+    """Démarre le serveur FastAPI en mode background/gateway (sans UI navigateur)."""
+    typer.echo(f"Démarrage de Zab Gateway sur http://{host}:{port}...")
+    uvicorn.run(
+        "zab.api.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=False,
+    )
+
+
+@app.command("dashboard-dev")
+def dashboard_dev_cmd(
+    host: str = typer.Option("127.0.0.1", help="Bind API (identique à `zab dashboard`)"),
+    port: int = typer.Option(8750, help="Port API en mode dev (défaut 8750 ; `zab dashboard` reste sur 8742)"),
+    ui_port: int = typer.Option(5280, help="Port Vite (zab-ui)"),
+) -> None:
+    """Lance l’API en --reload et Vite (zab-ui) avec proxy /api dans le même terminal."""
+    script = zab_repo_root() / "scripts" / "zab-dashboard-dev.sh"
+    if not script.is_file():
+        typer.echo(f"Script introuvable : {script}", err=True)
+        raise typer.Exit(1)
+    env = os.environ.copy()
+    env["ZAB_DASHBOARD_HOST"] = host
+    env["ZAB_DASHBOARD_PORT"] = str(port)
+    env["ZAB_UI_DEV_PORT"] = str(ui_port)
+    proc = subprocess.run(["bash", str(script)], cwd=str(zab_repo_root()), env=env)
+    raise typer.Exit(proc.returncode)
+
 
 @app.command("run")
 def run_cmd(
@@ -278,6 +522,420 @@ def run_cmd(
     raise typer.Exit(1)
 
 
+@app.command("sync")
+def sync_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Affiche le résumé JSON"),
+) -> None:
+    """Reconstruit l'index YAML régénérable de l'univers zab."""
+    path, state = sync_state()
+    summary = state_summary(state)
+    if json_out:
+        typer.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+    counts = summary["counts"]
+    typer.echo(typer.style("Index zab synchronisé", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  Fichier : {path}")
+    typer.echo(f"  Version : {summary.get('version')}")
+    typer.echo(f"  Orgs    : {counts['orgs']}")
+    typer.echo(f"  Projets : {counts['projects']}")
+    typer.echo(f"  Skills  : {counts['skills']}")
+    typer.echo(f"  Connecteurs : {counts['connectors']}")
+    typer.echo(f"  Mémoire : {counts['memory_sources']}")
+
+
+@app.command("context-pack")
+def context_pack_cmd(
+    *,
+    org: str | None = typer.Option(None, "--org", help="Filtrer sur une organisation"),
+    project: str | None = typer.Option(None, "--project", help="Filtrer sur un projet ou chemin"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Filtrer sur une requête simple"),
+    include: list[str] | None = typer.Option(None, "--include", help="Section à inclure (répétable)"),
+    limit: int = typer.Option(80, "--limit", min=1, max=300, help="Nombre maximal de skills"),
+    stdout: bool = typer.Option(False, "--stdout", help="Écrire le Markdown complet sur stdout"),
+    json_out: bool = typer.Option(False, "--json", help="Affiche le résumé JSON"),
+) -> None:
+    """Génère un pack Markdown local pour coller du contexte dans un agent web."""
+    path, text = build_context_pack(org=org, project=project, query=query, include=include, limit=limit)
+    payload = {
+        "path": str(path),
+        "bytes": len(text.encode("utf-8")),
+        "org": org,
+        "project": project,
+        "query": query,
+        "include": include or ["skills", "connectors", "code_tools", "memory_sources"],
+        "limit": limit,
+    }
+    if stdout:
+        typer.echo(text.rstrip())
+        return
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Context Pack généré", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  Fichier : {path}")
+    typer.echo(f"  Taille  : {payload['bytes']} bytes")
+
+
+@app.command("features")
+def features_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Liste toutes les fonctionnalités zab et leurs commandes/API principales."""
+    payload = catalog()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("zab — fonctionnalités", bold=True))
+    typer.echo(typer.style(payload["positioning"], dim=True))
+    typer.echo("")
+    for item in payload["features"]:
+        typer.echo(typer.style(f"{item['id']} [{item['category']}]", fg=typer.colors.CYAN, bold=True))
+        typer.echo(f"  {item['summary']}")
+        cli = item.get("cli") or []
+        if cli:
+            typer.echo("  CLI : " + " · ".join(str(x) for x in cli[:4]))
+        api = item.get("api") or []
+        if api:
+            typer.echo("  API : " + " · ".join(str(x) for x in api[:4]))
+        typer.echo("")
+
+
+@app.command("agent-guide")
+def agent_guide_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Explique comment Claude Code, Codex ou un agent peut utiliser zab."""
+    if json_out:
+        typer.echo(json.dumps(agent_guide(), ensure_ascii=False, indent=2))
+        return
+    typer.echo(agent_guide_markdown().rstrip())
+
+
+@app.command("inventory")
+def inventory_cmd(
+    section: str = typer.Argument(..., help="skills|connectors|code-tools|models|projects|orgs|memory"),
+    *,
+    q: str = typer.Option("", "--q", help="Recherche simple"),
+    tag: str | None = typer.Option(None, "--tag", help="Filtrer par tag quand disponible"),
+    installed: bool | None = typer.Option(None, "--installed/--any-installed", help="Filtrer code-tools installés"),
+    limit: int = typer.Option(50, "--limit", min=1, max=200),
+    page: int = typer.Option(1, "--page", min=1),
+    refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant de lire l'inventaire"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Liste une section de l'index local-first."""
+    try:
+        state_section = _resolve_inventory_section(section)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    if refresh:
+        sync_state()
+    payload = list_section(state_section, page=page, limit=limit, q=q, tag=tag, installed=installed)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Inventaire: {section}", bold=True))
+    typer.echo(
+        f"page {payload['pagination']['page']} · total {payload['pagination']['total']} · limit {payload['pagination']['limit']}"
+    )
+    for row in payload.get("data") or []:
+        name = row.get("display_name") or row.get("id") or row.get("key")
+        extra = row.get("path") or row.get("provider") or row.get("org") or ""
+        typer.echo(f"  · {name}  {typer.style(str(extra), dim=True)}")
+
+
+@app.command("inspect")
+def inspect_cmd(
+    section: str = typer.Argument(..., help="skills|connectors|code-tools|models|projects|orgs|memory"),
+    key: str = typer.Argument(..., help="Identifiant dans l'index"),
+    *,
+    refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant l'inspection"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Affiche le détail d'un élément de l'index."""
+    try:
+        state_section = _resolve_inventory_section(section)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    if refresh:
+        sync_state()
+    row = get_section_item(state_section, key)
+    if not row:
+        typer.echo(f"élément introuvable: {section}/{key}", err=True)
+        raise typer.Exit(1)
+    if json_out:
+        typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
+        return
+    typer.echo(yaml.safe_dump(row, allow_unicode=True, sort_keys=False).rstrip())
+    if state_section == "connectors":
+        tags = row.get("tags") or []
+        forms = row.get("forms") or []
+        if "composio" in tags or any(str(f.get("kind", "")).lower() == "composio" for f in forms):
+            slug_for_hint = str(row.get("id") or key)
+            typer.echo("")
+            typer.echo(typer.style("→ Connecteur Composio détecté", fg="magenta"))
+            typer.echo(f"  zab composio hint {slug_for_hint}")
+            typer.echo(f"  zab composio connections --toolkit {slug_for_hint} --active")
+
+
+@app.command("search")
+def search_cmd(
+    query: str = typer.Argument("", help="Requête à chercher dans l'index zab"),
+    *,
+    section: list[str] | None = typer.Option(None, "--section", help="Section à chercher (répétable)"),
+    limit: int = typer.Option(20, "--limit", min=1, max=100),
+    refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant la recherche"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Recherche dans skills, projets, connecteurs, modèles, mémoire et politiques."""
+    payload = agent_context.search(query, limit=limit, sections=section, refresh=refresh)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Recherche zab: {query or '(tout)'}", bold=True))
+    typer.echo(f"total {payload['total']} · limit {payload['limit']}")
+    for row in payload.get("data") or []:
+        name = row.get("display_name") or row.get("id") or row.get("name") or row.get("key")
+        extra = row.get("path") or row.get("provider") or row.get("org") or ""
+        typer.echo(f"  · [{row.get('section')}] {name}  {typer.style(str(extra), dim=True)}")
+
+
+@skill_app.command("new")
+def skill_new_cmd(
+    name: str = typer.Argument(..., help="Slug de la skill ([a-z0-9-])"),
+    *,
+    org: str | None = typer.Option(None, "--org", help="Organisation logique (défaut: common)"),
+    description: str = typer.Option("", "--description", "-d", help="Description courte pour le frontmatter"),
+    force: bool = typer.Option(False, "--force", "-f", help="Remplacer un SKILL.md existant"),
+    sync: bool = typer.Option(False, "--sync", help="Créer un commit local après création"),
+    push: bool = typer.Option(False, "--push", help="Pousser vers origin après commit"),
+    hermes_update: bool = typer.Option(False, "--hermes-update", help="Mettre à jour ~/.hermes/config.yaml après création"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Scaffold un nouveau SKILL.md global dans le dépôt de skills configuré."""
+
+    try:
+        result = create_skill(name, org=org, description=description, force=force)
+        settings = skills_sync_settings()
+        sync_result = None
+        if sync or (settings.get("auto_sync") and not push):
+            sync_result = commit_and_push(
+                result["repo_root"],
+                f"skill: add {result['org']}/{result['id']}",
+                paths=[result["path"]],
+                push=push,
+            )
+        elif push:
+            ensure_remote_origin(result["repo_root"], str(settings["git_remote"]))
+            sync_result = commit_and_push(
+                result["repo_root"],
+                f"skill: add {result['org']}/{result['id']}",
+                paths=[result["path"]],
+                push=True,
+            )
+        hermes_result = None
+        if hermes_update or settings.get("auto_hermes_update"):
+            hermes_result = update_external_dirs(repo_root=result["repo_root"], apply=True)
+    except (SkillScaffoldError, ValueError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    payload = {
+        "skill": result,
+        "git": sync_result.__dict__ if sync_result is not None else None,
+        "hermes": hermes_result.__dict__ if hermes_result is not None else None,
+    }
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Skill créée", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  path : {result['path']}")
+    if sync_result:
+        typer.echo(f"  git  : committed={sync_result.committed} pushed={sync_result.pushed}")
+        if sync_result.error:
+            typer.echo(typer.style(f"         warning: {sync_result.error}", fg=typer.colors.YELLOW))
+    if hermes_result:
+        typer.echo(f"  hermes: changed={hermes_result.changed} config={hermes_result.config_path}")
+
+
+@skill_app.command("new-global")
+def skill_new_global_cmd(
+    name: str = typer.Argument(..., help="Slug de la skill globale ([a-z0-9-])"),
+    *,
+    org: str | None = typer.Option(None, "--org", help="Organisation logique (défaut: common)"),
+    description: str = typer.Option("", "--description", "-d", help="Description courte pour le frontmatter"),
+    force: bool = typer.Option(False, "--force", "-f", help="Remplacer un SKILL.md existant"),
+    sync: bool = typer.Option(False, "--sync", help="Créer un commit local après création"),
+    push: bool = typer.Option(False, "--push", help="Pousser vers origin après commit"),
+    hermes_update: bool = typer.Option(False, "--hermes-update", help="Mettre à jour ~/.hermes/config.yaml après création"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Alias explicite de `skill new` pour créer une skill globale, pas projet."""
+
+    try:
+        result = create_global_skill(name, org=org, description=description, force=force)
+        settings = skills_sync_settings()
+        sync_result = None
+        if sync or (settings.get("auto_sync") and not push):
+            sync_result = commit_and_push(
+                result["repo_root"],
+                f"skill: add {result['org']}/{result['id']}",
+                paths=[result["path"]],
+                push=push,
+            )
+        elif push:
+            ensure_remote_origin(result["repo_root"], str(settings["git_remote"]))
+            sync_result = commit_and_push(
+                result["repo_root"],
+                f"skill: add {result['org']}/{result['id']}",
+                paths=[result["path"]],
+                push=True,
+            )
+        hermes_result = None
+        if hermes_update or settings.get("auto_hermes_update"):
+            hermes_result = update_external_dirs(repo_root=result["repo_root"], apply=True)
+    except (SkillScaffoldError, ValueError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    payload = {
+        "skill": result,
+        "git": sync_result.__dict__ if sync_result is not None else None,
+        "hermes": hermes_result.__dict__ if hermes_result is not None else None,
+    }
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Skill globale créée", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  path : {result['path']}")
+    if sync_result:
+        typer.echo(f"  git  : committed={sync_result.committed} pushed={sync_result.pushed}")
+        if sync_result.error:
+            typer.echo(typer.style(f"         warning: {sync_result.error}", fg=typer.colors.YELLOW))
+    if hermes_result:
+        typer.echo(f"  hermes: changed={hermes_result.changed} config={hermes_result.config_path}")
+
+
+@skill_app.command("list")
+def skill_list_cmd(
+    *,
+    org: str | None = typer.Option(None, "--org", help="Filtrer par organisation"),
+    project: str | None = typer.Option(None, "--project", help="Filtrer par projet/source"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Filtrer par texte"),
+    limit: int = typer.Option(200, "--limit", min=1, max=500),
+    refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant de lire"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Liste les skills sous forme de manifeste agent-compatible."""
+
+    payload = agent_context.skills_manifest(org=org, project=project, query=query, limit=limit, refresh=refresh)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Skills disponibles: {payload['total']}", bold=True))
+    for row in payload.get("skills") or []:
+        typer.echo(f"  · {row.get('key')}  {typer.style(str(row.get('path') or ''), dim=True)}")
+
+
+@skill_app.command("sync")
+def skill_sync_cmd(
+    *,
+    push: bool = typer.Option(False, "--push", help="Pousser vers origin après commit"),
+    message: str = typer.Option("skill: sync", "--message", "-m", help="Message de commit"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Commit local explicite du dépôt de skills, push seulement avec --push."""
+
+    settings = skills_sync_settings()
+    ensure_repo_initialized(str(settings["repo_root"]))
+    if push:
+        ensure_remote_origin(str(settings["repo_root"]), str(settings["git_remote"]))
+    result = commit_and_push(str(settings["repo_root"]), message, push=push)
+    if json_out:
+        typer.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"repo={result.repo_root} committed={result.committed} pushed={result.pushed}")
+    if result.error:
+        typer.echo(typer.style(result.error, fg=typer.colors.YELLOW))
+
+
+@skill_app.command("hermes-update")
+def skill_hermes_update_cmd(
+    *,
+    apply: bool = typer.Option(False, "--apply", help="Écrit la config Hermes (sinon dry-run)"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Met à jour `skills.external_dirs` dans la config Hermes."""
+
+    result = update_external_dirs(apply=apply)
+    if json_out:
+        typer.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+        return
+    mode = "apply" if apply else "dry-run"
+    typer.echo(typer.style(f"Hermes skills.external_dirs ({mode})", bold=True))
+    typer.echo(f"  config  : {result.config_path}")
+    typer.echo(f"  changed : {result.changed}")
+    for path in result.external_dirs:
+        typer.echo(f"  · {path}")
+
+
+@skill_app.command("broadcast")
+def skill_broadcast_cmd(
+    *,
+    apply: bool = typer.Option(False, "--apply", help="Écrit les changements (sinon dry-run)"),
+    targets: str = typer.Option(
+        "claude,kimi",
+        "--targets",
+        help="Cibles séparées par virgule. Supportées : claude, kimi.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Diffuse l'inventaire de skills (Hermes + external_dirs) vers d'autres CLIs."""
+
+    parsed_targets = [t.strip() for t in targets.split(",") if t.strip()]
+    valid = {"claude", "kimi"}
+    unknown = [t for t in parsed_targets if t not in valid]
+    if unknown:
+        typer.echo(
+            typer.style(
+                f"Cibles inconnues: {', '.join(unknown)}. Valides : {', '.join(sorted(valid))}.",
+                fg=typer.colors.RED,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    result = skills_broadcast.broadcast(targets=parsed_targets, dry_run=not apply)
+    if json_out:
+        typer.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+        return
+
+    mode = "apply" if apply else "dry-run"
+    typer.echo(typer.style(f"Skills broadcast ({mode})", bold=True))
+    typer.echo(f"  roots ({len(result.roots)}):")
+    for r in result.roots:
+        typer.echo(f"    · {r}")
+    typer.echo(f"  skills découverts : {result.skill_count}")
+    for tname, tres in result.targets.items():
+        typer.echo(typer.style(f"  → {tname}", bold=True))
+        if tname == "claude":
+            typer.echo(f"      dir            : {tres['skills_dir']}")
+            typer.echo(f"      créés          : {len(tres['created'])}")
+            typer.echo(f"      mis à jour     : {len(tres['updated'])}")
+            typer.echo(f"      supprimés      : {len(tres['removed'])}")
+            typer.echo(f"      skip existant  : {len(tres['skipped_existing'])}")
+            typer.echo(f"      total managés  : {tres['total_managed']}/{tres['total_desired']}")
+        elif tname == "kimi":
+            typer.echo(f"      config         : {tres['config_path']}")
+            typer.echo(f"      changed        : {tres['changed']}")
+            typer.echo(f"      extra_skill_dirs ({len(tres['extra_skill_dirs'])}):")
+            for p in tres["extra_skill_dirs"]:
+                typer.echo(f"        · {p}")
+
+
 @app.command()
 def scan(
     *,
@@ -286,29 +944,14 @@ def scan(
     dir_path: str | None = typer.Option(
         None,
         "--dir",
-        help="Dossier quelconque à scanner (SKILL.md + déduction des racines avec --propose-config)",
+        help="Dossier quelconque à scanner (SKILL.md + CLIs + Agentpipe/Codexbar)",
     ),
     persist: bool = typer.Option(False, "--persist", help="Enregistrer le rapport dans ~/.local/share/zab/scan-last.yaml"),
-    propose_config: bool = typer.Option(
-        False,
-        "--propose-config",
-        help="Enregistrer la proposition (skill_md_paths + claude_plugin_paths + métadonnées) dans ~/.local/share/zab/scan-proposed-skills-roots.yaml",
-    ),
-    apply_config: bool = typer.Option(
-        False,
-        "--apply-config",
-        help="Écrire l’inventaire (skill_md_paths, claude_plugin_paths) depuis la dernière proposition dans ~/.config/zab/config.yaml",
-    ),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Sans confirmation interactive (avec --apply-config)"),
 ) -> None:
-    """Scan SKILL.md, CLIs, Agentpipe/Codexbar ; optionnellement enregistrer l’inventaire dans config.yaml."""
+    """Scan SKILL.md, CLIs, Agentpipe/Codexbar ; rafraîchit skills-registry.json (sauf --json)."""
     allow_any = bool(dir_path and str(dir_path).strip())
     scan_root_opt = Path(dir_path).expanduser() if allow_any else resolve_optional_scan_root(root)
     report = workspace_scan(scan_root_opt, allow_any_path=allow_any)
-
-    roots_this_run: list[str] = []
-    inventory_skill_abs: list[str] = []
-    inventory_plugin_abs: list[str] | None = None
 
     if json_out:
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
@@ -359,19 +1002,16 @@ def scan(
         + (f"\n  binaire codexbar: {cb_cli}" if cb_cli else "\n  binaire codexbar: (absent du PATH)")
     )
 
-    if not (persist or propose_config or apply_config):
+    if not persist:
         typer.echo("")
         typer.echo(
             typer.style(
-                "ℹ Ce scan n’écrit pas dans ~/.config/zab/config.yaml (comportement volontaire).",
+                "ℹ Ce scan n’écrit pas config.yaml. Lancez « zab sync » pour régénérer state.yaml.",
                 fg=typer.colors.CYAN,
             )
         )
-        typer.echo(typer.style("  Enregistrer la proposition (chemins SKILL.md + plugins) : ", dim=True) + typer.style("zab scan --propose-config", fg=typer.colors.GREEN))
-        typer.echo(typer.style("  Écrire dans config.yaml : ", dim=True) + typer.style("zab scan --apply-config", fg=typer.colors.GREEN))
         typer.echo(
-            typer.style("  Ou en une fois (avec confirmation) : ", dim=True)
-            + typer.style("zab scan --propose-config --apply-config", fg=typer.colors.GREEN)
+            typer.style("  Persistez le rapport : ", dim=True) + typer.style("zab scan --persist", fg=typer.colors.GREEN)
         )
         typer.echo(
             typer.style(
@@ -384,95 +1024,125 @@ def scan(
         p_saved = persist_workspace_scan(report)
         typer.echo(typer.style(f"\nScan persisté : {p_saved}", fg=typer.colors.GREEN))
 
-    if propose_config:
-        rels = [str(x.get("path", "")) for x in skills if isinstance(x, dict) and x.get("path")]
-        scan_base = Path(report["scan_root_resolved"])
-        roots_paths = infer_skills_repo_roots(scan_base, rels)
-        if not roots_paths:
-            roots_paths = [scan_base.resolve()]
-        roots_this_run = [str(r.resolve()) for r in roots_paths]
-        inventory_skill_abs = []
-        for rel in rels:
-            try:
-                full = (scan_base / rel).resolve()
-                if full.is_file():
-                    inventory_skill_abs.append(str(full))
-            except OSError:
-                continue
-        inventory_skill_abs = sorted(set(inventory_skill_abs))
-        inventory_plugin_abs = [
-            str(p) for p in collect_plugin_roots_from_skill_paths([Path(s) for s in inventory_skill_abs])
-        ]
-        prop_file = persist_proposed_roots(
-            scan_root=scan_base,
-            roots=roots_paths,
-            skill_md_abs_paths=inventory_skill_abs,
-            claude_plugin_abs_paths=inventory_plugin_abs,
-            skill_md_count=int(report.get("skill_md_count") or 0),
-            skill_samples=rels,
+    try:
+        info = skills_registry.refresh_registry_from_disk()
+        typer.echo(
+            typer.style(
+                f"\nRegistre skills : {info.get('skills_count', 0)} entrée(s) — {info.get('registry_path', '')}",
+                dim=True,
+            )
         )
-        typer.echo(typer.style(f"\nProposition enregistrée : {prop_file}", fg=typer.colors.CYAN))
-        typer.echo(f"SKILL.md détectés : {len(inventory_skill_abs)} · Plugins Claude : {len(inventory_plugin_abs)}")
-        typer.echo(typer.style("(aperçu racines dépôt — non écrites si vous appliquez l’inventaire)", dim=True))
-        for r in roots_paths[:12]:
-            typer.echo(f"  · {r}")
-        if len(roots_paths) > 12:
-            typer.echo(typer.style(f"  … {len(roots_paths) - 12} autres", dim=True))
+    except Exception as exc:
+        typer.echo(typer.style(f"refresh skills-registry: {exc}", fg=typer.colors.YELLOW), err=True)
 
-    if apply_config:
-        doc = load_proposed_roots()
-        skills_use = list(inventory_skill_abs)
-        plugins_use: list[str] | None = inventory_plugin_abs if inventory_plugin_abs is not None else None
-        if not skills_use and doc:
-            skills_use = skill_md_paths_from_proposal(doc)
-            if plugins_use is None:
-                pl = claude_plugin_paths_from_proposal(doc)
-                plugins_use = pl if pl else None
 
-        if skills_use:
-            if not yes:
-                typer.echo("\nÉcriture dans ~/.config/zab/config.yaml :")
-                typer.echo(f"  · skill_md_paths : {len(skills_use)} entrée(s)")
-                n_pl = "déduit des SKILL.md" if plugins_use is None else str(len(plugins_use))
-                typer.echo(f"  · claude_plugin_paths : {n_pl}")
-                if not typer.confirm("Remplacer l’inventaire et vider skills_roots ?", default=False):
-                    raise typer.Exit(0)
-            cfg_path, summary = merge_scan_inventory_into_config(skills_use, claude_plugin_abs_paths=plugins_use)
-            typer.echo(typer.style(f"\nConfig mise à jour : {cfg_path}", fg=typer.colors.GREEN))
-            typer.echo(f"skill_md_paths ({len(summary['skill_md_paths'])}) dont aperçu :")
-            for m in summary["skill_md_paths"][:15]:
-                typer.echo(f"  · {m}")
-            if len(summary["skill_md_paths"]) > 15:
-                typer.echo(typer.style(f"  … {len(summary['skill_md_paths']) - 15} autres", dim=True))
-            typer.echo(f"claude_plugin_paths ({len(summary['claude_plugin_paths'])}) :")
-            for m in summary["claude_plugin_paths"][:15]:
-                typer.echo(f"  · {m}")
-            if len(summary["claude_plugin_paths"]) > 15:
-                typer.echo(typer.style(f"  … {len(summary['claude_plugin_paths']) - 15} autres", dim=True))
-        else:
-            to_merge = list(roots_this_run)
-            if not to_merge and doc:
-                to_merge = roots_from_proposal(doc) if doc else []
-            if not to_merge:
-                typer.echo(
-                    typer.style(
-                        "\nAucun inventaire à appliquer — lancez : zab scan --propose-config (évent. --dir CHEMIN)",
-                        fg=typer.colors.RED,
-                    ),
-                    err=True,
-                )
-                raise typer.Exit(1)
-            if not yes:
-                typer.echo("\nAncienne proposition (sans liste SKILL.md) — fusion dans skills_roots :")
-                for pth in to_merge:
-                    typer.echo(f"  · {pth}")
-                if not typer.confirm("Écrire dans config.yaml ?", default=False):
-                    raise typer.Exit(0)
-            cfg_path, merged = merge_skills_roots_into_config(to_merge)
-            typer.echo(typer.style(f"\nConfig mise à jour : {cfg_path}", fg=typer.colors.GREEN))
-            typer.echo(f"skills_roots ({len(merged)} entrée(s)) :")
-            for m in merged:
-                typer.echo(f"  · {m}")
+@skill_app.command("adopt")
+def skill_adopt_cmd(
+    key: str = typer.Argument(..., help="Clé registre (ex. flowmetrik:ma-skill)"),
+    *,
+    canonical: str | None = typer.Option(None, "--canonical", help="Chemin SKILL.md canonique (optionnel)"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Marque une skill comme adoptée dans skills-registry.json."""
+    out = skills_registry.adopt_registry_key(key, canonical_path=canonical)
+    if json_out:
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    if not out.get("ok"):
+        typer.echo(typer.style(str(out.get("error")), fg=typer.colors.RED), err=True)
+        raise typer.Exit(1)
+    typer.echo(typer.style("OK", fg=typer.colors.GREEN))
+
+
+@skill_app.command("unadopt")
+def skill_unadopt_cmd(
+    key: str = typer.Argument(..., help="Clé registre"),
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    out = skills_registry.unadopt_registry_key(key)
+    if json_out:
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    if not out.get("ok"):
+        typer.echo(typer.style(str(out.get("error")), fg=typer.colors.RED), err=True)
+        raise typer.Exit(1)
+    typer.echo(typer.style("OK", fg=typer.colors.GREEN))
+
+
+@skill_app.command("ignore")
+def skill_ignore_cmd(
+    key: str = typer.Argument(..., help="Clé registre"),
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    out = skills_registry.ignore_registry_key(key)
+    if json_out:
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    if not out.get("ok"):
+        typer.echo(typer.style(str(out.get("error")), fg=typer.colors.RED), err=True)
+        raise typer.Exit(1)
+    typer.echo(typer.style("OK", fg=typer.colors.GREEN))
+
+
+@skill_app.command("unignore")
+def skill_unignore_cmd(
+    key: str = typer.Argument(..., help="Clé registre"),
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    out = skills_registry.unignore_registry_key(key)
+    if json_out:
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    if not out.get("ok"):
+        typer.echo(typer.style(str(out.get("error")), fg=typer.colors.RED), err=True)
+        raise typer.Exit(1)
+    typer.echo(typer.style("OK", fg=typer.colors.GREEN))
+
+
+@skill_app.command("resolve-conflict")
+def skill_resolve_conflict_cmd(
+    key: str = typer.Argument(..., help="Clé registre"),
+    keep: str = typer.Option(..., "--keep", help="Chemin absolu du SKILL.md à conserver"),
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    out = skills_registry.resolve_conflict_keep_path(key, keep)
+    if json_out:
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    if not out.get("ok"):
+        typer.echo(typer.style(str(out.get("error")), fg=typer.colors.RED), err=True)
+        raise typer.Exit(1)
+    typer.echo(typer.style("OK", fg=typer.colors.GREEN))
+
+
+@skill_app.command("registry-show")
+def skill_registry_show_cmd(
+    *,
+    status: str | None = typer.Option(None, "--status", help="Filtrer par statut registre"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    rows = skills_registry.query_registry(status=status)
+    if json_out:
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    for r in rows:
+        typer.echo(f"{r.get('key')} [{r.get('status')}] {r.get('canonical_path') or ''}")
+
+
+@skill_app.command("hermes-export")
+def skill_hermes_export_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON (fragment YAML en champ text)"),
+) -> None:
+    text = skills_registry.hermes_export_yaml_fragment()
+    if json_out:
+        typer.echo(json.dumps({"yaml": text}, ensure_ascii=False, indent=2))
+        return
+    typer.echo(text)
 
 
 def _parse_mcp_target(raw: str) -> McpTarget:
@@ -512,6 +1182,260 @@ def add_mcp_cmd(
         typer.echo(str(e), err=True)
         raise typer.Exit(code=1) from e
     typer.echo(f"Écrit : {path}")
+
+
+@mempalace_app.command("doctor")
+def mempalace_doctor_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Vérifie mempalace et mempalace-mcp sur le PATH ; chemins des JSON MCP du dépôt skills."""
+    payload = mempalace_mcp_snippet.doctor_payload(skills_configs_dir=configs_dir())
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("MemPalace (CLI + MCP)", bold=True))
+    typer.echo("")
+    mp = payload["mempalace"]
+    typer.echo(f"  [{'OK' if mp['on_path'] else '!!'}] mempalace: {mp.get('which') or 'absent'}")
+    if mp.get("version_line"):
+        typer.echo(typer.style(f"      {mp['version_line']}", dim=True))
+    mcp = payload["mempalace_mcp"]
+    typer.echo(f"  [{'OK' if mcp['on_path'] else '!!'}] mempalace-mcp: {mcp.get('which') or 'absent'}")
+    if mcp.get("help_head"):
+        typer.echo(typer.style(f"      {mcp['help_head']}", dim=True))
+    paths = payload.get("mcp_config_paths") or {}
+    if paths:
+        typer.echo("")
+        typer.echo(typer.style("  Fichiers MCP (dépôt skills, fusion sous mcpServers)", dim=True))
+        typer.echo(f"    cursor          : {paths.get('cursor', '')}")
+        typer.echo(f"    claude_desktop  : {paths.get('claude_desktop', '')}")
+    typer.echo("")
+    typer.echo(
+        typer.style(
+            "  Claude Code (hors JSON Cursor) : exécutez `mempalace mcp` pour la ligne `claude mcp add …`.",
+            dim=True,
+        )
+    )
+
+
+@mempalace_app.command("mcp-json")
+def mempalace_mcp_json_cmd(
+    *,
+    palace: str | None = typer.Option(None, "--palace", help="Répertoire palace explicite"),
+    server_name: str = typer.Option("mempalace", "--name", "-n", help="Clé dans mcpServers"),
+    target: str = typer.Option(
+        "cursor",
+        "--target",
+        "-t",
+        help="cursor ou desktop — indique le fichier JSON cible (rappel après le JSON)",
+    ),
+    paths_only: bool = typer.Option(False, "--paths", "-p", help="Afficher uniquement les chemins des JSON MCP skills"),
+) -> None:
+    """Affiche un document JSON { \"mcpServers\": { … } } pour fusion manuelle ou revue."""
+    if paths_only:
+        try:
+            mt = _parse_mcp_target(target)
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from e
+        typer.echo(str(resolve_mcp_json_path(mt)))
+        return
+    try:
+        text = mempalace_mcp_snippet.format_mcp_servers_json(server_name=server_name, palace=palace)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    typer.echo(text, nl=False)
+    try:
+        mt = _parse_mcp_target(target)
+        hint_path = resolve_mcp_json_path(mt)
+        typer.echo(typer.style(f"# Fusionner sous « mcpServers » dans : {hint_path}", dim=True))
+    except ValueError:
+        pass
+
+
+@mempalace_app.command("mcp-install")
+def mempalace_mcp_install_cmd(
+    *,
+    target: str = typer.Option("cursor", "--target", "-t", help="cursor ou desktop (claude-desktop-mcp.json)"),
+    name: str = typer.Option("mempalace", "--name", "-n", help="Clé dans mcpServers"),
+    palace: str | None = typer.Option(None, "--palace", help="Répertoire palace explicite"),
+    force: bool = typer.Option(False, "--force", "-f", help="Remplacer une entrée existante"),
+) -> None:
+    """Enregistre mempalace-mcp dans configs/cursor-mcp.json ou claude-desktop-mcp.json du dépôt skills."""
+    try:
+        mcp_target = _parse_mcp_target(target)
+        block = mempalace_mcp_snippet.build_mcp_server_entry(palace=palace)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    try:
+        path = add_mcp_server(
+            target=mcp_target,
+            name=name,
+            url=None,
+            command=block["command"],
+            args=block.get("args"),
+            env_pairs=None,
+            force=force,
+        )
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"Écrit : {path}")
+
+
+@memory_app.command("sync-agents")
+def memory_sync_agents_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Collecte et compte sans écrire dans Postgres"),
+    append: bool = typer.Option(False, "--append", help="Ne supprime pas les anciens documents agents avant import"),
+    batch_id: str = typer.Option("agent-conversations-local", "--batch-id", help="export_batch_id écrit en base"),
+) -> None:
+    """Synchronise Cursor/Claude/Codex/Kimi/Hermes/Gemini CLI (conversations + plans/rules/skills) vers Postgres."""
+    from zab.services.agent_memory_import import sync_agent_memory_to_postgres
+
+    try:
+        summary = sync_agent_memory_to_postgres(
+            replace=not append,
+            batch_id=batch_id,
+            dry_run=dry_run,
+        )
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    if json_out:
+        typer.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Mémoire agents synchronisée", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  Batch       : {summary['batch_id']}")
+    typer.echo(f"  Dry-run     : {summary['dry_run']}")
+    typer.echo(f"  Replace     : {summary['replace']}")
+    typer.echo(f"  Collectés   : {summary['documents_collected']} docs / {summary['chunks_collected']} chunks")
+    typer.echo(f"  Supprimés   : {summary['deleted_previous_documents']}")
+    typer.echo(f"  Insérés     : {summary['inserted_documents']} docs / {summary['inserted_chunks']} chunks")
+    typer.echo("  Sources     :")
+    for source, n in sorted(summary["source_counts"].items()):
+        typer.echo(f"    - {source}: {n}")
+
+
+@conversations_app.command("sync")
+def conversations_sync_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON (résumé final)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Compte sans écrire en base"),
+    append: bool = typer.Option(False, "--append", help="Ne pas supprimer les documents des providers ciblés avant import"),
+    with_mempalace: bool = typer.Option(False, "--with-mempalace", help="Lancer MemPalace conversations après Postgres"),
+    workspace_storage_cursor: bool = typer.Option(
+        False,
+        "--workspace-storage-cursor",
+        help="Non supporté (refusé)",
+    ),
+    providers: str = typer.Option(
+        "",
+        "--providers",
+        help="Liste virgule : cursor,claude,codex,kimi,hermes,gemini",
+    ),
+    batch_id: str = typer.Option("agent-conversations-local", "--batch-id"),
+) -> None:
+    """Synchronise les conversations locales (Cursor, Claude, Codex, Kimi, Hermes, Gemini CLI) vers Postgres."""
+    from zab.services.conversation_sync import run_sync
+
+    prov_list = [p.strip() for p in providers.split(",") if p.strip()] or None
+    try:
+        summary = run_sync(
+            dry_run=dry_run,
+            append=append,
+            with_mempalace=with_mempalace,
+            workspace_storage_cursor=workspace_storage_cursor,
+            providers=prov_list,
+            batch_id=batch_id,
+        )
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from e
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    except Exception as e:  # noqa: BLE001
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    if json_out:
+        typer.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Synchronisation conversations terminée", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  Dry-run     : {summary.get('dry_run')}")
+    typer.echo(f"  Collectés   : {summary.get('documents_collected')} docs / {summary.get('chunks_collected')} chunks")
+    typer.echo(f"  Insérés     : {summary.get('inserted_documents')} docs / {summary.get('inserted_chunks')} chunks")
+
+
+@memory_app.command("search")
+def memory_search_cmd(
+    query: str = typer.Argument(..., help="Texte à chercher dans la mémoire Postgres"),
+    *,
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50, help="Nombre de chunks retournés"),
+    source: str | None = typer.Option(None, "--source", help="Filtrer sur une source exacte"),
+    wing: str | None = typer.Option(None, "--wing", help="Filtrer sur un wing (match partiel)"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Recherche dans la mémoire Postgres (conversations Cursor/Claude/Codex/Kimi, artefacts agents)."""
+    from zab.services.memory_db import fetch_status, search_memory
+
+    results = search_memory(query, limit=limit, source=source, wing=wing)
+    status = fetch_status() if not results else None
+    if json_out:
+        typer.echo(
+            json.dumps({"query": query, "results": results, "status": status}, ensure_ascii=False, indent=2)
+        )
+        return
+    if not results:
+        if status and not status.get("connected"):
+            typer.echo(status.get("error") or "Mémoire Postgres indisponible.", err=True)
+            raise typer.Exit(1)
+        typer.echo("Aucun résultat.")
+        return
+    typer.echo(typer.style(f"Résultats mémoire pour « {query} »", bold=True))
+    for i, r in enumerate(results, 1):
+        typer.echo("")
+        typer.echo(
+            typer.style(f"[{i}] {r['source']}  {r.get('wing') or '—'} / {r.get('room') or '—'}", fg=typer.colors.CYAN)
+        )
+        typer.echo(typer.style(f"    document_id={r['document_id']} chunk={r['chunk_index']}", dim=True))
+        if r.get("path"):
+            typer.echo(typer.style(f"    path={r['path']}", dim=True))
+        excerpt = str(r.get("content_excerpt") or "").replace("\n", " ")
+        typer.echo(f"    {excerpt[:1000]}")
+
+
+@memory_app.command("show")
+def memory_show_cmd(
+    document_id: str = typer.Argument(..., help="UUID du document mémoire"),
+    *,
+    chunk_limit: int = typer.Option(20, "--chunks", min=1, max=500, help="Nombre de chunks à afficher"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Affiche un document mémoire et ses chunks."""
+    from zab.services.memory_db import fetch_document_detail
+
+    doc = fetch_document_detail(document_id, chunk_limit=chunk_limit)
+    if doc is None:
+        typer.echo("Document introuvable.", err=True)
+        raise typer.Exit(1)
+    if json_out:
+        typer.echo(json.dumps({"document": doc}, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Document mémoire {doc['id']}", bold=True))
+    typer.echo(f"  source : {doc['source']}")
+    typer.echo(f"  wing   : {doc.get('wing') or '—'}")
+    typer.echo(f"  room   : {doc.get('room') or '—'}")
+    typer.echo(f"  path   : {doc.get('path') or '—'}")
+    typer.echo("")
+    for chunk in doc.get("chunks") or []:
+        typer.echo(typer.style(f"--- chunk {chunk['chunk_index']} ---", fg=typer.colors.CYAN))
+        typer.echo(str(chunk.get("content") or "").rstrip())
+        typer.echo("")
 
 
 @add_app.command("cli")
@@ -568,6 +1492,79 @@ def add_env_cmd(
     typer.echo(f"Écrit tracked_env_extra dans : {path}")
 
 
+@add_app.command("skill")
+def add_skill_cmd(
+    name: str = typer.Argument(..., help="Slug de la skill à créer"),
+    *,
+    description: str = typer.Option("", "--description", "-d", help="Description courte"),
+    project: str | None = typer.Option(None, "--project", help="Chemin du projet si skill locale"),
+    org: str | None = typer.Option(None, "--org", help="Organisation pour skill globale"),
+    global_scope: bool = typer.Option(False, "--global", help="Forcer placement global"),
+    project_scope: bool = typer.Option(False, "--project-scope", help="Forcer placement projet"),
+    ai_route: bool = typer.Option(False, "--ai-route", help="Laisser une IA locale choisir global vs projet"),
+    sync_github: bool = typer.Option(False, "--sync-github", help="Commit/push si la skill est globale"),
+    force: bool = typer.Option(False, "--force", "-f", help="Remplacer un SKILL.md existant"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Crée une skill en choisissant explicitement ou via IA entre projet et global."""
+
+    if global_scope and project_scope:
+        typer.echo("--global et --project-scope sont incompatibles", err=True)
+        raise typer.Exit(1)
+    try:
+        if global_scope:
+            placement = choose_skill_placement(name, description, org=org, use_ai=False)
+            placement.scope = "global"
+            placement.org = org or placement.org or "common"
+        elif project_scope:
+            if not project:
+                typer.echo("--project est requis avec --project-scope", err=True)
+                raise typer.Exit(1)
+            placement = choose_skill_placement(name, description, project_path=project, org=org, use_ai=False)
+            placement.scope = "project"
+        else:
+            placement = choose_skill_placement(name, description, project_path=project, org=org, use_ai=ai_route)
+
+        if placement.scope == "project":
+            if not placement.project_path:
+                typer.echo("Aucun projet cible pour une skill projet", err=True)
+                raise typer.Exit(1)
+            result = create_project_skill(name, project_path=placement.project_path, description=description, force=force)
+            git_result = None
+            register_path = None
+        else:
+            result = create_global_skill(name, org=placement.org, description=description, force=force)
+            register_path = skills_registry.register_mirror_skill_path(result["path"])
+            git_result = None
+            if sync_github:
+                settings = skills_sync_settings()
+                ensure_remote_origin(result["repo_root"], str(settings["git_remote"]))
+                git_result = commit_and_push(
+                    result["repo_root"],
+                    f"skill: add {result['org']}/{result['id']}",
+                    paths=[result["path"]],
+                    push=True,
+                )
+        sync_state()
+    except (SkillScaffoldError, ValueError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    payload = {
+        "skill": result,
+        "placement": placement.__dict__,
+        "registered_config": str(register_path) if register_path else None,
+        "git": git_result.__dict__ if git_result else None,
+    }
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Skill {placement.scope} créée", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  path : {result['path']}")
+    typer.echo(f"  reason: {placement.reason}")
+    if git_result:
+        typer.echo(f"  git  : committed={git_result.committed} pushed={git_result.pushed}")
+
+
 @pm_env_app.command("sync")
 def pm_env_sync_cmd(
     force: bool = typer.Option(
@@ -592,6 +1589,705 @@ def pm_env_sync_cmd(
             )
         )
     typer.echo(typer.style("  Redémarrez le dashboard pour recharger le fichier si besoin.", dim=True))
+
+
+@projects_app.command("list")
+def projects_list_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON (champs git_repo, git_branch, remote_host, origin_https, …)"),
+) -> None:
+    """Liste les projets découverts (même source que l’onglet « Projets » du dashboard)."""
+    from zab.services.workspace_projects import discover_projects
+
+    rows = discover_projects()
+    if json_out:
+        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        typer.echo(
+            "Aucun projet avec SKILL.md — vérifiez projects_roots dans ~/.config/zab/config.yaml "
+            "puis `zab projects list` à nouveau.",
+        )
+        return
+    typer.echo(typer.style("Projets (projects_roots)", bold=True))
+    typer.echo("")
+    for r in rows:
+        path_s = str(r.get("path") or "")
+        name = str(r.get("name") or "")
+        org = str(r.get("org") or "")
+        parent = r.get("workspace_parent")
+        skills_n = len(r.get("skills") or [])
+        git_ok = bool(r.get("git_repo"))
+        branch = r.get("git_branch") or "—"
+        remote = r.get("remote_host") or "—"
+        origin = r.get("origin_https") or ""
+        head = f"  {typer.style(name, fg=typer.colors.CYAN, bold=True)}  ({org})"
+        if parent:
+            head += f"  sous {parent}"
+        typer.echo(head)
+        try:
+            shown_path = _tilde_path(Path(path_s))
+        except (OSError, ValueError):
+            shown_path = path_s
+        typer.echo(f"    chemin       : {shown_path}")
+        typer.echo(f"    skills       : {skills_n}")
+        git_label = typer.style("oui", fg=typer.colors.GREEN) if git_ok else typer.style("non", dim=True)
+        typer.echo(f"    dépôt git    : {git_label}   branche: {branch}   remote: {remote}")
+        if origin:
+            typer.echo(typer.style(f"    origin (web) : {origin}", dim=True))
+        typer.echo("")
+
+
+@agent_app.command("bootstrap")
+def agent_bootstrap_cmd(
+    *,
+    refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant de produire le bootstrap"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Point d'entrée recommandé pour Claude Code, Codex ou un autre agent."""
+    payload = agent_context.agent_bootstrap(refresh=refresh)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    counts = payload["state"]["counts"]
+    typer.echo(typer.style("zab agent bootstrap", bold=True))
+    typer.echo(f"  state : {payload['paths']['state_yaml']}")
+    typer.echo(f"  skills: {counts.get('skills', 0)} · projects: {counts.get('projects', 0)} · connectors: {counts.get('connectors', 0)}")
+    typer.echo("  next  : zab search <query> --json")
+
+
+@agent_app.command("skills")
+def agent_skills_cmd(
+    *,
+    org: str | None = typer.Option(None, "--org", help="Filtrer par organisation"),
+    project: str | None = typer.Option(None, "--project", help="Filtrer par projet/source"),
+    query: str | None = typer.Option(None, "--query", "-q", help="Filtrer par texte"),
+    limit: int = typer.Option(200, "--limit", min=1, max=500),
+    refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant de produire le manifeste"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Manifeste compact des skills disponibles pour un agent IA."""
+
+    payload = agent_context.skills_manifest(org=org, project=project, query=query, limit=limit, refresh=refresh)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"zab skills manifest ({payload['total']})", bold=True))
+    typer.echo("  inspect: zab inspect skills <key> --json")
+    for row in payload.get("skills") or []:
+        typer.echo(f"  · {row.get('key')} [{row.get('org')}] {row.get('description') or ''}")
+
+
+@agent_app.command("handoff")
+def agent_handoff_cmd(
+    project: str = typer.Option(..., "--project", "-p", help="Nom ou chemin de projet"),
+    *,
+    limit: int = typer.Option(80, "--limit", min=1, max=300),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Compose un contexte projet prêt à donner à un agent."""
+    payload = agent_context.project_handoff(project, limit=limit)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not payload.get("found"):
+        typer.echo(f"Projet introuvable: {project}", err=True)
+        raise typer.Exit(1)
+    p = payload["project"]
+    typer.echo(typer.style(f"Handoff projet: {p.get('name')}", bold=True))
+    typer.echo(f"  chemin : {p.get('path')}")
+    typer.echo(f"  org    : {p.get('org')}")
+    typer.echo(f"  pack   : {payload['context_pack']['path']}")
+
+
+@security_app.command("status")
+def security_status_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Affiche le statut sécurité local sans secrets bruts."""
+    payload = agent_context.security_status()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Sécurité zab", bold=True))
+    typer.echo(f"  variables suivies : {payload['tracked_env_count']}")
+    typer.echo(f"  présentes         : {len(payload['tracked_env_present'])}")
+    typer.echo(f"  manquantes        : {len(payload['tracked_env_missing'])}")
+    if payload.get("latest_report"):
+        typer.echo(f"  dernier rapport   : {payload['latest_report']['key']}")
+
+
+@mcp_app.command("serve")
+def mcp_serve_cmd() -> None:
+    """Expose les outils read-only zab via MCP stdio."""
+    agent_context.run_mcp_stdio()
+
+
+def _composio_cli_or_die() -> str:
+    from zab.services.composio_connectors import composio_cli_path
+
+    cli = composio_cli_path()
+    if not cli:
+        typer.echo(
+            "composio cli introuvable — installe-la ou place le binaire dans ~/.composio/composio.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    return cli
+
+
+@composio_app.command("connections")
+def composio_connections_cmd(
+    *,
+    toolkit: str | None = typer.Option(None, "--toolkit", help="Filtrer par toolkit slug (gmail, notion, …)"),
+    active: bool = typer.Option(False, "--active", help="N'afficher que les comptes ACTIVE"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON brute"),
+) -> None:
+    """Liste les comptes Composio connectés (via la CLI locale)."""
+    cli = _composio_cli_or_die()
+    proc = subprocess.run([cli, "connections", "list"], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        typer.echo(proc.stderr.strip() or "composio connections list a échoué", err=True)
+        raise typer.Exit(proc.returncode or 1)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"sortie composio non-JSON : {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if toolkit:
+        payload = {toolkit: payload.get(toolkit, [])}
+    if active:
+        payload = {k: [c for c in v if str(c.get("status")) == "ACTIVE"] for k, v in payload.items()}
+        payload = {k: v for k, v in payload.items() if v}
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Connections Composio", bold=True))
+    for slug, entries in sorted(payload.items()):
+        typer.echo(f"  {typer.style(slug, fg='cyan')} ({len(entries)})")
+        for entry in entries:
+            status = str(entry.get("status") or "—")
+            word = str(entry.get("word_id") or "—")
+            alias = entry.get("alias")
+            line = f"    · {status:<10}  {word}"
+            if alias:
+                line += f"  alias={alias}"
+            typer.echo(line)
+
+
+@composio_app.command("whoami")
+def composio_whoami_cmd(
+    toolkit: str = typer.Option("gmail", "--toolkit", help="Toolkit slug (gmail, notion…)"),
+    account: str | None = typer.Option(
+        None,
+        "--account",
+        help="Word_id du compte à identifier. Si omis, identifie tous les comptes actifs du toolkit.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Résout l'identité (email, nom) d'un ou plusieurs comptes Composio."""
+    if account:
+        results = [composio_svc.resolve_account_identity(account, toolkit=toolkit)]
+    else:
+        accounts = composio_svc.fetch_connections_via_cli_enriched(
+            toolkit=toolkit, active_only=True, resolve_identities=True
+        )
+        results = []
+        for acc in accounts:
+            rid = str(acc.get("id") or "").strip()
+            ri = acc.get("resolved_identity")
+            if isinstance(ri, dict):
+                results.append(ri)
+            elif rid:
+                results.append(composio_svc.resolve_account_identity(rid, toolkit=toolkit))
+    if json_out:
+        typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Identités Composio — {toolkit}", bold=True))
+    for r in results:
+        ac = r.get("account") or "unknown"
+        em = r.get("email") or typer.style("inconnu", fg="red")
+        method = r.get("method") or "—"
+        status = "✅" if r.get("successful") else "❌"
+        typer.echo(f"  {status} {typer.style(ac, fg='cyan')} → {em}  ({method})")
+
+
+@composio_app.command("execute")
+def composio_execute_cmd(
+    slug: str = typer.Argument(..., help="Slug du tool (ex. GMAIL_FETCH_EMAILS)"),
+    data: str = typer.Option("{}", "--data", "-d", help="Payload JSON ou @fichier.json"),
+    *,
+    account: str | None = typer.Option(
+        None,
+        "--account",
+        help="Compte Composio à cibler (alias, word_id ou account id) quand plusieurs comptes existent.",
+    ),
+    toolkit: str | None = typer.Option(
+        None,
+        "--toolkit",
+        help="Toolkit slug requis quand --all-accounts est utilisé.",
+    ),
+    all_accounts: bool = typer.Option(
+        False,
+        "--all-accounts",
+        help="Itère sur tous les comptes actifs du toolkit et agrège les résultats.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Valide et prévisualise sans exécuter"),
+    get_schema: bool = typer.Option(False, "--get-schema", help="Affiche le schéma CLI du tool"),
+    required_only: bool = typer.Option(
+        False,
+        "--required-only",
+        help="Avec --get-schema : ne montre que les champs requis (+ premier exemple).",
+    ),
+) -> None:
+    """Passthrough vers `composio execute` (cli locale). Avec --all-accounts, itère sur tous les comptes du toolkit."""
+    cli = _composio_cli_or_die()
+
+    if all_accounts:
+        if not toolkit:
+            typer.echo("--all-accounts nécessite --toolkit <slug>", err=True)
+            raise typer.Exit(2)
+        accounts = composio_svc.fetch_connections_via_cli_enriched(
+            toolkit=toolkit, active_only=True, resolve_identities=False
+        )
+        if not accounts:
+            typer.echo(f"aucun compte actif trouvé pour {toolkit}", err=True)
+            raise typer.Exit(1)
+        results: list[dict[str, Any]] = []
+        for acc in accounts:
+            word_id = str(acc.get("id") or "").strip()
+            if not word_id:
+                continue
+            cmd = [cli, "execute", slug, "-d", data, "--account", word_id]
+            if dry_run:
+                cmd.append("--dry-run")
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            entry: dict[str, Any] = {
+                "account": word_id,
+                "returncode": proc.returncode,
+            }
+            if proc.returncode == 0:
+                try:
+                    entry["data"] = json.loads(proc.stdout)
+                except json.JSONDecodeError:
+                    entry["stdout"] = proc.stdout
+            else:
+                entry["stderr"] = proc.stderr.strip()[:500]
+                entry["stdout"] = proc.stdout.strip()[:500]
+            results.append(entry)
+        typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+
+    cmd = [cli, "execute", slug]
+    if get_schema:
+        cmd.append("--get-schema")
+    else:
+        cmd += ["-d", data]
+        if account:
+            cmd += ["--account", account]
+        if dry_run:
+            cmd.append("--dry-run")
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if get_schema and required_only and proc.returncode == 0:
+        try:
+            schema = json.loads(proc.stdout)
+            props = schema.get("inputSchema", {}).get("properties", {}) or {}
+            required = schema.get("inputSchema", {}).get("required", []) or []
+            distilled = {
+                "slug": schema.get("slug") or slug,
+                "required": [
+                    {
+                        "name": name,
+                        "type": props.get(name, {}).get("type"),
+                        "description": (str(props.get(name, {}).get("description") or "").split(".")[0] or None),
+                        "example": (props.get(name, {}).get("examples") or [None])[0],
+                    }
+                    for name in required
+                ],
+                "optional_count": max(0, len(props) - len(required)),
+            }
+            typer.echo(json.dumps(distilled, ensure_ascii=False, indent=2))
+            return
+        except (json.JSONDecodeError, AttributeError):
+            typer.echo("⚠ schéma non parsable, fallback sur sortie brute :", err=True)
+    if proc.stdout:
+        typer.echo(proc.stdout, nl=False)
+    if proc.stderr:
+        typer.echo(proc.stderr, err=True, nl=False)
+    if proc.returncode != 0:
+        raise typer.Exit(proc.returncode)
+
+
+@composio_app.command("call")
+def composio_call_cmd(
+    slug: str = typer.Argument(..., help="Slug du tool (ex. GMAIL_FETCH_EMAILS)"),
+    data: str = typer.Option("{}", "--data", "-d", help="Payload JSON ou @fichier.json"),
+    *,
+    account: str | None = typer.Option(
+        None,
+        "--account",
+        help="connected_account_id (word_id, ex. gmail_piend-damara). Permet le multi-compte.",
+    ),
+    user_id: str | None = typer.Option(None, "--user-id", help="user_id Composio (optionnel)"),
+) -> None:
+    """Exécute un tool Composio via la REST `/api/v3/tools/execute/<slug>` avec routage multi-compte."""
+    from zab.services.composio_connectors import execute_tool_via_rest
+
+    if data.startswith("@"):
+        try:
+            data_text = Path(data[1:]).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            typer.echo(f"impossible de lire {data}: {exc}", err=True)
+            raise typer.Exit(2) from exc
+    else:
+        data_text = data
+    try:
+        arguments = json.loads(data_text or "{}")
+    except json.JSONDecodeError as exc:
+        typer.echo(f"payload JSON invalide: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    if not isinstance(arguments, dict):
+        typer.echo("payload doit être un objet JSON", err=True)
+        raise typer.Exit(2)
+    result = execute_tool_via_rest(slug, arguments, connected_account_id=account, user_id=user_id)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result.get("successful", True):
+        raise typer.Exit(1)
+
+
+@composio_app.command("search")
+def composio_search_cmd(
+    query: list[str] = typer.Argument(..., help="Requêtes en langage naturel"),
+    *,
+    toolkits: str | None = typer.Option(None, "--toolkits", help="Slugs séparés par virgule"),
+    limit: int = typer.Option(5, "--limit", min=1, max=1000),
+) -> None:
+    """Passthrough vers `composio search`."""
+    cli = _composio_cli_or_die()
+    cmd = [cli, "search", *query, "--limit", str(limit)]
+    if toolkits:
+        cmd += ["--toolkits", toolkits]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.stdout:
+        typer.echo(proc.stdout, nl=False)
+    if proc.stderr:
+        typer.echo(proc.stderr, err=True, nl=False)
+    if proc.returncode != 0:
+        raise typer.Exit(proc.returncode)
+
+
+@composio_app.command("hint")
+def composio_hint_cmd(
+    toolkit: str = typer.Argument(..., help="Slug d'un connecteur (gmail, notion…) tel qu'exposé par zab"),
+) -> None:
+    """Affiche comment exploiter un connecteur Composio (CLI + REST API)."""
+    cli = _composio_cli_or_die()
+    typer.echo(typer.style(f"Connecteur {toolkit} via Composio", bold=True))
+    typer.echo("  CLI :")
+    typer.echo(f"    {cli} connections list                  # comptes liés")
+    typer.echo(f"    {cli} link {toolkit}                    # lier un nouveau compte")
+    typer.echo(f"    {cli} search 'list emails' --toolkits {toolkit} --limit 5")
+    typer.echo(f"    {cli} execute <TOOL_SLUG> -d '{{...}}'")
+    typer.echo("  REST API (base https://backend.composio.dev) :")
+    typer.echo("    curl -H \"x-api-key: $COMPOSIO_API_KEY\" https://backend.composio.dev/api/v3/connected_accounts")
+    typer.echo("    curl -H \"x-api-key: $COMPOSIO_API_KEY\" \\")
+    typer.echo(f"      'https://backend.composio.dev/api/v3/toolkits?slugs={toolkit}'")
+    typer.echo("  zab :")
+    typer.echo(f"    zab composio connections --toolkit {toolkit} --active")
+    typer.echo(f"    zab composio execute <TOOL_SLUG> -d '{{...}}'")
+
+
+# ── Cloud Workstation sync helpers ───────────────────────────────────────────
+
+
+def _ws_profiles_arg(profiles: list[str] | None) -> list[str]:
+    return profiles or ["zab", "dotfiles", "secrets-cli"]
+
+
+@ws_sync_app.command("status")
+def ws_sync_status_cmd(
+    profile: list[str] | None = typer.Option(None, "--profile", "-p", help="Profil à inspecter (répétable). Défaut: tous."),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Statut local/remote des profils de sync Workstation."""
+    from zab.services import workstation_sync as ws
+
+    payload: dict[str, Any] = {"profiles": {}}
+    for prof in _ws_profiles_arg(profile):
+        one = ws.status(prof)
+        payload["machine"] = one.get("machine")
+        payload["bucket"] = one.get("bucket")
+        payload["profiles"].update(one.get("profiles") or {})
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Workstation sync status", bold=True))
+    typer.echo(f"  machine: {payload.get('machine')}")
+    typer.echo(f"  bucket : {payload.get('bucket')}")
+    for prof, row in (payload.get("profiles") or {}).items():
+        changed = row.get("local_changed_since_last_sync") or []
+        remote = "présent" if row.get("remote_archive_sha256") else "absent"
+        typer.echo(f"  · {prof}: local={row.get('local_files')} remote={remote} changed={len(changed)} encrypted={row.get('encrypted')}")
+        if changed:
+            for rel in changed[:8]:
+                typer.echo(typer.style(f"      Δ {rel}", fg=typer.colors.YELLOW))
+            if len(changed) > 8:
+                typer.echo(typer.style(f"      … {len(changed) - 8} autres", dim=True))
+
+
+@ws_sync_app.command("push")
+def ws_sync_push_cmd(
+    profile: list[str] | None = typer.Option(None, "--profile", "-p", help="Profil à pousser (répétable). Défaut: tous."),
+    force: bool = typer.Option(False, "--force", help="Pousser même si remote et local ont divergé."),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Pousse les profils locaux vers le bucket GCS hub."""
+    from zab.services import workstation_sync as ws
+
+    results = [ws.push(prof, force=force) for prof in _ws_profiles_arg(profile)]
+    if json_out:
+        typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+    for res in results:
+        ok = res.get("ok")
+        color = typer.colors.GREEN if ok else typer.colors.RED
+        typer.echo(typer.style(f"{'OK' if ok else 'ERR'} push {res.get('profile')}", fg=color, bold=True))
+        typer.echo(f"  {res.get('message') or res.get('archive_sha256') or res.get('reason')}")
+        if res.get("local_changed"):
+            typer.echo(f"  fichiers locaux modifiés: {len(res['local_changed'])}")
+    if any(not r.get("ok") for r in results):
+        raise typer.Exit(1)
+
+
+@ws_sync_app.command("pull")
+def ws_sync_pull_cmd(
+    profile: list[str] | None = typer.Option(None, "--profile", "-p", help="Profil à tirer (répétable). Défaut: tous."),
+    force: bool = typer.Option(False, "--force", help="Appliquer sans préserver les conflits locaux."),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Tire les profils depuis le bucket GCS hub vers la machine locale."""
+    from zab.services import workstation_sync as ws
+
+    results = [ws.pull(prof, force=force) for prof in _ws_profiles_arg(profile)]
+    if json_out:
+        typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+    for res in results:
+        ok = res.get("ok")
+        color = typer.colors.GREEN if ok else typer.colors.RED
+        typer.echo(typer.style(f"{'OK' if ok else 'ERR'} pull {res.get('profile')}", fg=color, bold=True))
+        typer.echo(f"  {res.get('message') or res.get('archive_sha256') or res.get('reason')}")
+        conflicts = res.get("conflicts") or []
+        if conflicts:
+            typer.echo(typer.style(f"  conflits préservés: {len(conflicts)}", fg=typer.colors.YELLOW))
+            for c in conflicts[:8]:
+                typer.echo(f"    {c}")
+    if any(not r.get("ok") for r in results):
+        raise typer.Exit(1)
+
+
+@ws_app.command("secrets-help")
+def ws_secrets_help_cmd() -> None:
+    """Affiche la procédure d'activation du profil chiffré secrets-cli."""
+    typer.echo(typer.style("Activation de zab ws sync --profile secrets-cli", bold=True))
+    typer.echo("")
+    typer.echo("Le profil secrets-cli est chiffré avant upload GCS. Il ne doit PAS être mis en cron tant que la clé n'est pas posée et testée.")
+    typer.echo("")
+    typer.echo("1) Sur le Mac, créer la clé locale si absente :")
+    typer.echo("   mkdir -p ~/.config/zab")
+    typer.echo("   umask 077")
+    typer.echo("   openssl rand -base64 32 > ~/.config/zab/ws-sync.key")
+    typer.echo("   chmod 600 ~/.config/zab/ws-sync.key")
+    typer.echo("")
+    typer.echo("2) Copier exactement la même clé sur la Workstation :")
+    typer.echo("   mkdir -p /home/user/.config/zab")
+    typer.echo("   # copier ~/.config/zab/ws-sync.key vers /home/user/.config/zab/ws-sync.key")
+    typer.echo("   chmod 600 /home/user/.config/zab/ws-sync.key")
+    typer.echo("")
+    typer.echo("3) Tester explicitement, sans cron :")
+    typer.echo("   zab ws sync push --profile secrets-cli")
+    typer.echo("   zab ws sync status --profile secrets-cli")
+    typer.echo("   zab ws sync pull --profile secrets-cli")
+    typer.echo("")
+    typer.echo("Fichiers couverts : .claude, .gemini, .codex, .config/gh, .config/firebase, .config/supabase, .config/composio, .config/scw, .aws, .ssh/config et clés SSH explicitement listées.")
+
+
+@ws_app.command("cli-status")
+def ws_cli_status_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Compare cli_watchlist avec les binaires présents dans le PATH."""
+    from zab.services import workstation_sync as ws
+
+    payload = ws.cli_status()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Workstation CLI status", bold=True))
+    typer.echo(f"  présents: {payload['ok']}/{payload['total']}")
+    missing = payload.get("missing") or []
+    if missing:
+        typer.echo(typer.style(f"  manquants: {len(missing)}", fg=typer.colors.YELLOW))
+        for name in missing:
+            typer.echo(f"    · {name}")
+    else:
+        typer.echo(typer.style("  tous les CLIs surveillés sont présents", fg=typer.colors.GREEN))
+
+
+@ws_app.command("cli-install-missing")
+def ws_cli_install_missing_cmd(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Afficher les installateurs sans exécuter."),
+    name: list[str] | None = typer.Option(None, "--name", "-n", help="Installer seulement ce CLI (répétable)."),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Installe les CLIs manquants connus depuis cli_watchlist."""
+    from zab.services import workstation_sync as ws
+
+    payload = ws.cli_install_missing(dry_run=dry_run, names=name)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for row in payload.get("results") or []:
+        status = row.get("status")
+        color = typer.colors.GREEN if status in {"installed", "already_present", "dry_run"} else typer.colors.YELLOW
+        typer.echo(typer.style(f"{row.get('name')}: {status}", fg=color))
+        if row.get("command"):
+            typer.echo(typer.style("  " + " ".join(row["command"]), dim=True))
+
+
+# ── Gmail helpers ────────────────────────────────────────────────────────────
+
+gmail_app = typer.Typer(help="Helpers Gmail pour Composio multi-compte.", no_args_is_help=True)
+composio_app.add_typer(gmail_app, name="gmail")
+
+
+@gmail_app.command("accounts")
+def gmail_accounts_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Liste tous les comptes Gmail actifs avec leurs emails résolus."""
+    accounts = composio_svc.fetch_connections_via_cli_enriched(
+        toolkit="gmail", active_only=True, resolve_identities=True
+    )
+    if json_out:
+        typer.echo(json.dumps(accounts, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Comptes Gmail Composio", bold=True))
+    for acc in accounts:
+        wid = str(acc.get("id") or "—")
+        ri = acc.get("resolved_identity") or {}
+        email = ri.get("email") if ri.get("successful") else None
+        status = str(acc.get("status") or "—").upper()
+        label = acc.get("label") or ""
+        line = f"  {status:<10}  {typer.style(wid, fg='cyan')}"
+        if email:
+            line += f"  → {typer.style(email, fg='green')}"
+        elif label:
+            line += f"  alias={label}"
+        typer.echo(line)
+
+
+@gmail_app.command("search")
+def gmail_search_cmd(
+    query: str = typer.Argument(..., help="Query Gmail (ex: from:orange subject:invoice)"),
+    limit: int = typer.Option(5, "--limit", min=1, max=50),
+    account: str | None = typer.Option(None, "--account", help="Compte spécifique, sinon tous"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Recherche Gmail via Composio, sur un compte ou tous."""
+    cli = _composio_cli_or_die()
+    payload = json.dumps({"query": query, "max_results": limit, "include_payload": False})
+    if account:
+        targets = [account]
+    else:
+        accounts = composio_svc.fetch_connections_via_cli_enriched(
+            toolkit="gmail", active_only=True, resolve_identities=False
+        )
+        targets = [str(a.get("id") or "").strip() for a in accounts if a.get("id")]
+    results: list[dict[str, Any]] = []
+    for wid in targets:
+        proc = subprocess.run(
+            [cli, "execute", "GMAIL_FETCH_EMAILS", "-d", payload, "--account", wid],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        entry = {"account": wid, "returncode": proc.returncode}
+        if proc.returncode == 0:
+            try:
+                entry["data"] = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                entry["stdout"] = proc.stdout
+        else:
+            entry["stderr"] = proc.stderr.strip()[:500]
+        results.append(entry)
+    if json_out:
+        typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+    _render_gmail_messages(results, limit)
+
+
+def _render_gmail_messages(results: list[dict[str, Any]], limit: int) -> None:
+    for r in results:
+        typer.echo(f"--- {typer.style(r['account'], fg='cyan')} ---")
+        if r.get("data"):
+            messages = r["data"].get("data", {}).get("messages", []) if isinstance(r["data"], dict) else []
+            if not isinstance(messages, list):
+                messages = []
+            if not messages:
+                typer.echo("  (aucun message)")
+            for m in messages[:limit]:
+                if isinstance(m, dict):
+                    mid = m.get("messageId") or m.get("id") or "?"
+                    subject = m.get("subject") or (m.get("preview") or {}).get("subject") or "(no subject)"
+                    sender = m.get("sender") or "?"
+                    ts = (m.get("messageTimestamp") or "")[:10]
+                    line = f"  [{ts}] {mid}: {subject[:70]}"
+                    if sender:
+                        line += f"  (from: {sender[:40]})"
+                    typer.echo(line)
+        elif r.get("stderr"):
+            typer.echo(f"  erreur: {r['stderr']}", err=True)
+
+
+@gmail_app.command("last")
+def gmail_last_cmd(
+    limit: int = typer.Option(3, "--limit", min=1, max=20),
+    account: str | None = typer.Option(None, "--account", help="Compte spécifique, sinon tous"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Récupère les derniers emails d'un ou tous les comptes Gmail."""
+    cli = _composio_cli_or_die()
+    payload = json.dumps({"max_results": limit, "include_payload": False})
+    if account:
+        targets = [account]
+    else:
+        accounts = composio_svc.fetch_connections_via_cli_enriched(
+            toolkit="gmail", active_only=True, resolve_identities=False
+        )
+        targets = [str(a.get("id") or "").strip() for a in accounts if a.get("id")]
+    results: list[dict[str, Any]] = []
+    for wid in targets:
+        proc = subprocess.run(
+            [cli, "execute", "GMAIL_FETCH_EMAILS", "-d", payload, "--account", wid],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        entry = {"account": wid, "returncode": proc.returncode}
+        if proc.returncode == 0:
+            try:
+                entry["data"] = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                entry["stdout"] = proc.stdout
+        else:
+            entry["stderr"] = proc.stderr.strip()[:500]
+        results.append(entry)
+    if json_out:
+        typer.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+    _render_gmail_messages(results, limit)
 
 
 def main() -> None:

@@ -1,0 +1,746 @@
+{
+  "nav": {
+    "brandTagline": "skills · MCP · scan",
+    "overview": "Overview",
+    "systemCheck": "Check system",
+    "orgs": "Organizations",
+    "projects": "Projects",
+    "tasksInbox": "Tasks (multi-tool)",
+    "channels": "Comm channels",
+    "conversations": "Conversations",
+    "plugins": "Plugins",
+    "connectors": "Connectors",
+    "config": "Configuration",
+    "skills": "Skills",
+    "models": "Models & agents",
+    "workstation": "Workstation",
+    "hermes": "Hermes",
+    "crons": "Crons (Schedules)",
+    "cronsFull": "Crons & Schedulers",
+    "tests": "Tests & jobs",
+    "memory": "Memory",
+    "security": "Security",
+    "exports": "Exports",
+    "ide": "IDE / tools",
+    "ideFull": "IDE & tools",
+    "toolsGroup": "Tools",
+    "editSkill": "Edit SKILL",
+    "mobileDrawerTitle": "zab navigation",
+    "openMenu": "Open navigation menu"
+  },
+  "language": {
+    "en": "English",
+    "fr": "French",
+    "switchTo": "Switch language to {{lang}}"
+  },
+  "common": {
+    "loading": "Loading…",
+    "close": "Close",
+    "cancel": "Cancel",
+    "save": "Save",
+    "reload": "Reload",
+    "copy": "Copy",
+    "view": "View",
+    "detail": "Detail",
+    "add": "Add",
+    "prev": "Previous",
+    "next": "Next",
+    "notConfigured": "— (not configured)",
+    "dash": "—",
+    "copied": "Copied",
+    "copyFailed": "Copy failed",
+    "pathCopied": "Path copied",
+    "contentCopied": "Content copied",
+    "targetCopied": "Target copied",
+    "fileSaved": "File saved",
+    "jobDone": "Job completed",
+    "jobDoneWithCode": "Job finished: {{status}} (code {{code}})",
+    "sseInterrupted": "SSE stream interrupted",
+    "noSelection": "Nothing selected",
+    "enabled": "enabled",
+    "disabled": "disabled",
+    "active": "active",
+    "ok": "OK",
+    "warn": "Watch",
+    "fail": "Failed",
+    "pending": "Pending",
+    "running": "Running…",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "generate": "Generate",
+    "generating": "Generating…",
+    "never": "Never",
+    "pageOf": "Page {{page}}/{{total}}",
+    "results": "{{count}} result(s)"
+  },
+  "app": {
+    "docTitle": "zab dashboard",
+    "docTitleTab": "zab — {{title}}",
+    "skillsConfigMissing": "Skills config missing"
+  },
+  "overview": {
+    "title": "Overview",
+    "subtitle": "Skills repo, MCP and plugins status for your workspace.",
+    "stats": {
+      "orgs": "Organizations",
+      "skills": "Skills",
+      "connectors": "Connectors",
+      "plugins": "Plugins"
+    },
+    "skillsRoot": {
+      "title": "Repo root",
+      "notConfigured": "— (not configured)"
+    },
+    "mcpRegistry": "MCP registry",
+    "skillRefSource": "Reference skill source",
+    "stateIndex": {
+      "title": "Local-first index",
+      "notLoaded": "Index not loaded",
+      "neverSynced": "never synced"
+    },
+    "quickStart": {
+      "title": "Quick start",
+      "subtitle": "Common actions",
+      "conversations": "Agent conversations (history)",
+      "projects": "Local projects & config",
+      "connectors": "Configure connectors",
+      "skills": "Browse skills",
+      "tests": "Run a test job",
+      "security": "Check security",
+      "rescanTools": "Rescan tools",
+      "cliHelp": "zab CLI options (--help)"
+    },
+    "cliHelp": {
+      "title": "zab CLI options"
+    },
+    "lastCheck": "Last check:",
+    "serverStatus": "zab server {{version}} · Config file: {{configPath}} · Skills paths: {{skillsPaths}}",
+    "skillsNotConfigured": "not configured — run zab scan --apply-config",
+    "toast": {
+      "scanDone": "Scan done — {{cli}} zab commands, {{scripts}} scripts",
+      "indexSynced": "zab index synchronized"
+    }
+  },
+  "systemCheck": {
+    "title": "Check system",
+    "subtitle": "Read-only health view of zab services (API, index, MCP, skills).",
+    "run": "Run check",
+    "downloadReport": "Download zab report",
+    "fixWithHermes": "Fix with Hermes",
+    "noChecksYet": "No check run yet",
+    "running": "Check in progress…",
+    "summaryCounts": "{{ok}} OK · {{warn}} to watch · {{fail}} failed · {{total}} checks",
+    "table": {
+      "status": "Status",
+      "service": "Service",
+      "message": "Message",
+      "details": "Details"
+    },
+    "dashboard": "Dashboard",
+    "subtitleFull": "Read-only health view of zab services: config, index, skills, memory, Composio, security and local CLIs.",
+    "runFirst": "Run a system check first",
+    "checksCount": "{{count}} checks",
+    "toast": {
+      "done": "Check done: {{pct}}%",
+      "reportDownloaded": "zab report downloaded",
+      "hermesIssues": "Hermes started with {{count}} issue(s) to fix",
+      "allOk": "Nothing to fix — all OK!"
+    }
+  },
+  "orgs": {
+    "title": "Organizations",
+    "subtitle": "Skills and MCP grouped by organization.",
+    "subtitleCount": "{{count}} organizations (repo + merged local projects)",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "expandAria": "Expand skills list",
+    "collapseAria": "Collapse skills list",
+    "projectTag": "project",
+    "footer": "Repository list under projects_roots; save in ~/.config/zab/config.yaml — tab:"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "subtitle": "Claude plugin bundles detected on disk."
+  },
+  "tests": {
+    "title": "Tests & jobs",
+    "subtitle": "Run repo scripts with live output."
+  },
+  "security": {
+    "title": "Security",
+    "subtitle": "Secrets catalog, env scan and dependency checks.",
+    "osvZab": "OSV — zab repo",
+    "osvZabHint": "Vulnerabilities (Python lockfiles + UI) via osv-scanner -r .",
+    "npmAudit": "npm audit — zab-ui",
+    "npmAuditHint": "npm audit report in zab-ui (requires package-lock.json)",
+    "osvSkills": "OSV — skills repo",
+    "osvSkillsHint": "Same scanner on the skills root (~/.config/zab)."
+  },
+  "exports": {
+    "title": "Exports",
+    "subtitle": "Generate context packs for agents.",
+    "toastGenerated": "Context Pack generated",
+    "optionalOrg": "optional org",
+    "optionalProject": "optional project"
+  },
+  "memory": {
+    "title": "Memory",
+    "subtitle": "MemPalace (local) produces JSONL; zab imports into Postgres via MEHDI_MEMORY_DATABASE_URL.",
+    "toast": {
+      "mempalaceDone": "MemPalace: indexing done ({{name}})",
+      "mempalaceFail": "MemPalace: failed ({{name}}) — status {{status}}, code {{code}}",
+      "noProjects": "No project checked",
+      "mempalaceProjectFail": "MemPalace: failed on « {{name}} » (code {{code}})",
+      "mempalaceProjectsDone": "MemPalace: {{count}} project(s) indexed",
+      "pickProject": "Choose a project to scan",
+      "scanDone": "Project scan done",
+      "scanDonePersisted": "Project scan done and persisted",
+      "enterQuery": "Enter a memory query",
+      "results": "{{count}} memory result(s)"
+    },
+    "configHistoryLoading": "Loading…",
+    "configHistoryEmpty": "No recoverable history.",
+    "csvNote": ".txt files are ingested as text; .csv files do not yield structured rows in this view.",
+    "skillCount": "SKILL.md:",
+    "projectsDetected": "projects detected:",
+    "dbConfigured": "configured",
+    "dbAbsent": "missing",
+    "scriptPresent": "script present",
+    "scriptAbsent": "script absent",
+    "installed": "installed",
+    "absent": "missing"
+  },
+  "ide": {
+    "title": "IDE & tools",
+    "subtitle": "Indexed CLI tools and scripts from workspace scan.",
+    "codeTools": "Indexed code tools",
+    "columns": {
+      "tool": "Tool",
+      "provider": "Provider",
+      "state": "State",
+      "binary": "Binary"
+    }
+  },
+  "models": {
+    "title": "Models & agents",
+    "subtitle": "Local configuration and LLM endpoint tests.",
+    "windowMin": "{{min}} min window",
+    "primaryWindow": "Primary window",
+    "secondaryWindow": "Secondary window",
+    "apiMissing": "API \"/api/agents/discovery\" is missing (restart or update zab). Display limited to CodexBar agents.",
+    "discoverySaved": "Discovery saved (agentpipe + codexbar in models_discovery, last scan).",
+    "noCodexBar": "No CodexBar provider in the list — nothing to query for usage.",
+    "refreshUsage": "Refresh usage",
+    "refreshingUsage": "Refreshing…",
+    "noAgents": "No agents — run « Discover & save » or check agentpipe / CodexBar."
+  },
+  "hermes": {
+    "title": "Hermes",
+    "subtitle": "Local Open WebUI, OpenAI-compatible bridge, and Flowmetrik Hermes session profiles.",
+    "openWebui": "Local Open WebUI",
+    "openWebuiDesc": "Access the local Hermes web UI from the browser. Link points to the standard project port.",
+    "openWebuiBtn": "Open local Open WebUI",
+    "features": "Hermes features",
+    "featuresDesc": "Panel groups Flowmetrik Hermes control capabilities.",
+    "runLocal": "Run Hermes locally",
+    "runLocalDesc": "Alternative without Docker for the bridge only from",
+    "lastJob": "Last job:",
+    "inProgress": "… in progress",
+    "waitingDocker": "Waiting for Docker output…",
+    "composeUp": "Start Open WebUI (Docker)",
+    "stopContainers": "Stop containers",
+    "verifyBridge": "Verify bridge",
+    "localShortcuts": "Local shortcuts",
+    "composeProject": "Compose project",
+    "bridge": "Bridge",
+    "featureSessionProfiles": "Session profiles: hermes-local, hermes-gateway, hermes-workspace.",
+    "featureContextInjection": "Session context injection: Flowmetrik skills, business context and runtime variables.",
+    "featureOpenAiProxy": "OpenAI-compatible proxy to connect Open WebUI without changing upstream code.",
+    "featureUseCases": "Suited for local use, Flowmetrik gateway and workspace execution.",
+    "runLocalTitle": "Run Hermes locally",
+    "runLocalDescFull": "Docker-free alternative for the bridge only from {{path}}: uvicorn command below. Full web stack starts with « Start Open WebUI (Docker) »."
+  },
+  "skillEditor": {
+    "title": "SKILL editor",
+    "pathHint": "orgs/… or claude-plugins/…",
+    "close": "Close",
+    "load": "Load",
+    "save": "Save",
+    "closeAria": "Close",
+    "toastLoaded": "SKILL loaded",
+    "toastSaved": "SKILL saved (backup .zab-backup-*)"
+  },
+  "conversations": {
+    "status": {
+      "missing": "Missing",
+      "detected": "Detected",
+      "ready": "Ready to index",
+      "synced": "Indexed",
+      "unsupported": "Unsupported",
+      "error": "Error"
+    }
+  },
+  "connectors": {
+    "title": "Connectors",
+    "subtitleActive": "{{active}} active · {{forms}} form(s) · {{total}} connector(s) · {{mcp}} local MCP",
+    "checkAll": "Check all connectors",
+    "searchPlaceholder": "Search connectors…",
+    "searchAria": "Search connectors",
+    "filter": {
+      "all": "All",
+      "mcpLocal": "Local MCP",
+      "composio": "Composio"
+    },
+    "empty": "No connectors match.",
+    "status": {
+      "active": "active",
+      "disabled": "disabled"
+    },
+    "origin": {
+      "mcpLocal": "Local MCP",
+      "mcpRemote": "Remote MCP",
+      "composio": "Composio"
+    },
+    "formsCount": "{{count}} account(s) · {{forms}} form(s)",
+    "copyTarget": "Copy target",
+    "mcpSync": {
+      "title": "Local MCP — multi-source scan",
+      "description": "Skills repo (configs/*.json), ~/.cursor/mcp.json, Claude Desktop. The « Local MCP » count uses the connector list (stdio, excluding Composio).",
+      "sources": "Sources",
+      "counters": "Counters",
+      "byOrigin": "By origin",
+      "present": "present",
+      "absent": "absent",
+      "serversDetected": "Servers detected",
+      "uniqueSlugs": "Unique slugs",
+      "conflicts": "Conflicts (same name, different config)",
+      "conflictsList": "Conflicts",
+      "loadingStatus": "Loading MCP status…",
+      "refreshStatus": "Refresh status",
+      "scan": "Scan local MCP",
+      "scanning": "Scan…",
+      "refreshIndex": "Refresh index",
+      "toastScan": "Local MCP scan done",
+      "toastIndex": "state.yaml index regenerated"
+    },
+    "emptyRestartHint": "Or the table is empty after server restart: wait for full load.",
+    "globalCheck": {
+      "title": "Global check",
+      "description": "Read-only checks on local MCP and Composio forms.",
+      "rerun": "Rerun",
+      "checking": "Checking…",
+      "ready": "Ready"
+    },
+    "detail": {
+      "loading": "Loading detail…",
+      "target": "Target",
+      "command": "Command",
+      "source": "Source",
+      "variables": "Variables",
+      "testConnection": "Test connection",
+      "openEditor": "Open in editor",
+      "copyPath": "Copy absolute path"
+    },
+    "testConnection": "Test connection",
+    "checkStreamInterrupted": "Check stream interrupted",
+    "checkDone": "Check done: {{ok}} OK · {{warn}} watch · {{fail}} failed",
+    "configPanel": {
+      "title": "zab configuration",
+      "file": "File",
+      "copy": "Copy",
+      "reload": "Reload",
+      "save": "Save"
+    },
+    "staleBackend": "Connector aggregator unavailable on this server (HTTP {{status}}). Stop the process with Ctrl+C, then from zab repo root run:"
+  },
+  "skills": {
+    "title": "Skills",
+    "searchPlaceholder": "Search skill, tag, project…",
+    "emptyFiltered": "No skills match the filters.",
+    "sync": {
+      "title": "Actions",
+      "refreshIndex": "Refresh index",
+      "details": "Technical details",
+      "mirrorTitle": "Mirror /projects/skills",
+      "indexedCount": "{{count}} skills indexed",
+      "indexNotLoaded": "Index not loaded"
+    },
+    "registry": {
+      "adopt": "Adopt",
+      "unadopt": "Unadopt",
+      "ignore": "Ignore",
+      "resolve": "Resolve (this file)"
+    }
+  },
+  "projects": {
+    "title": "Projects",
+    "subtitle": "Repos under projects_roots: immediate folders and, when applicable, one level of subfolders (e.g. carrefour/danmdata). Skills: project root, .cursor/**/SKILL.md, .claude/**/SKILL.md. Filters and grid or list view below; Git / gh / glab on each project.",
+    "roots": {
+      "title": "Roots in config",
+      "fileHint": "File: {{path}} — key projects_roots",
+      "refresh": "Refresh",
+      "fillFromDetection": "Fill from detection",
+      "save": "Save to config.yaml",
+      "label": "One root per line (e.g. ~/projects)",
+      "hint": "After saving, reload the preview: projects at each line root + sub-projects one level down when they contain SKILL.md. Empty list disables discovery (projects_roots: [])."
+    },
+    "empty": {
+      "none": "No project with SKILL.md under configured roots. Check roots above, save and refresh.",
+      "filtered": "No project matches the filters."
+    },
+    "filters": {
+      "title": "Filters",
+      "description": "Refine the list (name, org, path, skill, Git branch…).",
+      "search": "Search",
+      "searchPlaceholder": "e.g. danmdata, carrefour, gmail…",
+      "org": "Organization",
+      "git": "Git",
+      "allOrgs": "All",
+      "allGit": "All",
+      "gitOnly": "Git repos only",
+      "noGit": "Without git repo",
+      "grid": "Grid",
+      "list": "List",
+      "displayCount": "Showing: {{shown}} / {{total}} project(s)",
+      "filterActive": " (filter active)"
+    },
+    "card": {
+      "skillsCount": "{{count}} skill(s)",
+      "noGit": "no git",
+      "skillsExpand": "Skills ({{count}}) — click to expand",
+      "subprojects": "· sub-projects"
+    },
+    "toast": {
+      "noRoots": "No root inferred",
+      "noRootsDesc": "Add SKILL.md under ~/projects or set paths below.",
+      "rootsProposed": "{{count}} root(s) proposed",
+      "saved": "projects_roots saved",
+      "savedDesc": "{{paths}}",
+      "savedEmpty": "(empty list — discovery disabled)",
+      "refreshed": "Preview refreshed"
+    }
+  },
+  "tasks": {
+    "title": "Tasks",
+    "subtitle": "All your todos in one place — GitLab, Linear, Notion, GitHub.",
+    "importEnv": "Import from .env files",
+    "refresh": "Refresh",
+    "filterLabel": "Filter:",
+    "removeFilter": "Remove filter",
+    "sources": {
+      "title": "Configured sources",
+      "description": "Your task integrations in config.yaml. Click a row to filter the list below.",
+      "add": "Add",
+      "placeholder": "https://linear.app/... or notion.so/...",
+      "none": "No source configured."
+    },
+    "table": {
+      "label": "Label",
+      "backend": "Backend",
+      "directory": "Directory / URL",
+      "url": "URL",
+      "status": "Status",
+      "tasks": "Tasks",
+      "actions": "Actions",
+      "source": "Source",
+      "id": "Id",
+      "titleCol": "Title",
+      "updated": "Updated",
+      "token": "Token"
+    },
+    "openProject": "Open project",
+    "test": "Test",
+    "testing": "Test…",
+    "testTitle": "Test connection to this source",
+    "setToken": "Set token",
+    "verifyToken": "Verify token",
+    "setTokenTitle": "Set variable {{token}}",
+    "verifyTokenTitle": "Verify value of {{token}}",
+    "editConfigTitle": "Edit task_sources in config.yaml",
+    "configBtn": "Config",
+    "allTasks": "All tasks ({{count}})",
+    "bySource": "Tasks by source",
+    "unifiedDesc": "Aggregation of all sources, sorted by last update",
+    "bySourceDesc": "Select a source above",
+    "unified": "Unified",
+    "bySourceMode": "By source",
+    "testedAt": "tested at",
+    "empty": {
+      "source": "No tasks for this source.",
+      "pickSource": "Click a source above to see its tasks.",
+      "none": "No tasks found. Check tokens in configuration."
+    },
+    "toast": {
+      "synced": "Tasks synced successfully",
+      "sourceFetched": "{{label}}: {{count}} task(s) fetched",
+      "sourceAdded": "Source added successfully!",
+      "pmEnvMerged": "PM tokens merged into ~/.config/zab/.env",
+      "pmEnvDesc": "{{files}} .env file(s) scanned · written: {{keys}}",
+      "pmEnvNone": "none"
+    }
+  },
+  "channels": {
+    "banner": {
+      "eyebrow": "Communication channels",
+      "title": "Manage your connectivity",
+      "subtitle": "Centralize email, WhatsApp and messaging accounts."
+    },
+    "actions": {
+      "new": "New channel",
+      "syncAll": "Sync all"
+    },
+    "loading": "Loading your channels…",
+    "status": {
+      "active": "Active",
+      "toConfigure": "To configure",
+      "disabled": "Disabled",
+      "error": "Error"
+    },
+    "neverSynced": "Never",
+    "modal": {
+      "title": "Add a communication channel",
+      "label": "Channel display name *",
+      "labelPlaceholder": "e.g. Personal Gmail",
+      "cancel": "Cancel",
+      "confirm": "Confirm add"
+    },
+    "toast": {
+      "syncOk": "Sync completed successfully!",
+      "labelRequired": "Please enter a label.",
+      "added": "Channel \"{{label}}\" added and synced!"
+    }
+  },
+  "crons": {
+    "title": "Crons & Schedulers",
+    "subtitle": "Multi-source local and cloud scheduler aggregator (Hermes, GCP).",
+    "syncSources": "Sync sources",
+    "loading": "Loading cron registry...",
+    "empty": {
+      "title": "No scheduler found",
+      "hint": "Try clicking Sync sources for active local and GCP discovery."
+    },
+    "lastRun": "Last run:",
+    "filter": {
+      "all": "All",
+      "hermes": "Hermes",
+      "gcp": "GCP",
+      "active": "Active",
+      "paused": "Paused"
+    },
+    "detail": {
+      "emptyTitle": "No cron selected",
+      "emptyHint": "Select a scheduler to see details and runs."
+    },
+    "logs": {
+      "title": "Execution runs",
+      "loading": "Loading...",
+      "none": "No run found.",
+      "selectRun": "Select a run to view logs."
+    },
+    "toast": {
+      "loadError": "Unable to load crons",
+      "apiError": "API communication error",
+      "syncing": "Syncing sources (Hermes + GCP)...",
+      "syncOk": "Sync completed successfully!",
+      "syncError": "Error during sync"
+    }
+  },
+  "config": {
+    "title": "Configuration",
+    "subtitle": "Guided editing of ~/.config/zab/config.yaml",
+    "viewMode": {
+      "form": "Form",
+      "yaml": "YAML"
+    },
+    "file": {
+      "absent": "absent",
+      "missingHint": "(missing or unresolved from IDE)",
+      "missingOnMachine": "(missing or unresolved on this machine)"
+    },
+    "groups": {
+      "skills": "Skills",
+      "tooling": "CLI & tools",
+      "projects": "Projects",
+      "integrations": "Integrations",
+      "system": "System",
+      "other": "Other"
+    },
+    "sections": {
+      "skills_registry_path": {
+        "label": "Skills registry path",
+        "description": "Registry JSON file (default ~/.config/zab/skills-registry.json)."
+      },
+      "claude_plugin_paths": {
+        "label": "Claude plugins",
+        "description": "Claude plugin roots detected during scan."
+      },
+      "skills_roots": {
+        "label": "Skills roots",
+        "description": "Repos containing SKILL.md (one per line)."
+      },
+      "skills_root": {
+        "label": "Skills root (legacy)",
+        "description": "Legacy compatibility — prefer skills_roots."
+      },
+      "cli_watchlist": {
+        "label": "CLI watchlist",
+        "description": "Binaries scanned via which for diagnostics."
+      },
+      "tracked_env_extra": {
+        "label": "Tracked variables (extra)",
+        "description": "Environment variables added to the Security catalog."
+      },
+      "agentpipe_config_path": {
+        "label": "agentpipe — path",
+        "description": "Otherwise ~/.agentpipe.yaml by default."
+      },
+      "codexbar_config_path": {
+        "label": "codexbar — path",
+        "description": "Otherwise ~/.codexbar/config.json by default."
+      },
+      "local_tools_path": {
+        "label": "local-tools — path",
+        "description": "Overrides the local-tools.yaml path."
+      },
+      "projects_roots": {
+        "label": "Project roots",
+        "description": "Repos containing projects (one per line)."
+      },
+      "task_sources": {
+        "label": "Task sources",
+        "description": "GitLab / Linear / Notion / GitHub for the tasks inbox. env_token = variable name; value goes in a .env (hint under each source)."
+      },
+      "communication_channels": {
+        "label": "Communication channels",
+        "description": "Channels tracked by the Channels tab (email, WhatsApp, Slack, Telegram). Format: id, label, type, connector, org, enabled (+ email_address for email). For WhatsApp Evolution, set credentials.evolution_api_url / credentials.evolution_api_key / credentials.evolution_instance."
+      },
+      "obsidian": {
+        "label": "Obsidian",
+        "description": "Vault exposed via the zab MCP."
+      },
+      "skills_sync": {
+        "label": "Skills sync",
+        "description": "Personal skills repo synchronization."
+      },
+      "models_discovery": {
+        "label": "Model discovery",
+        "description": "Filled by zab scan — usually read-only."
+      },
+      "last_scan_at_utc": {
+        "label": "Last scan",
+        "description": "Timestamp of the last persisted scan."
+      }
+    },
+    "types": {
+      "empty": "empty",
+      "stringList": "string list",
+      "objectList": "object list",
+      "list": "list",
+      "object": "object",
+      "string": "string",
+      "number": "number",
+      "boolean": "boolean"
+    },
+    "ui": {
+      "reload": "Reload",
+      "reloadTitle": "Reload from disk (discards local edits)",
+      "save": "Save",
+      "saving": "Saving…",
+      "upToDate": "Up to date",
+      "editor": "Editor",
+      "editorTitle": "Open in VS Code / Cursor",
+      "copyPath": "Copy path",
+      "copyContent": "Copy content",
+      "autosave": "Auto-saving…",
+      "unsaved": "● Unsaved changes",
+      "truncated": "Truncated preview: {{note}}",
+      "invalidYaml": "Invalid YAML — switch to YAML view to fix: {{error}}",
+      "commentsWarning": "Note: YAML comments may be lost when saving from Form view. Switch to YAML mode to keep them.",
+      "emptyFile": "Empty file. Add a key in YAML mode.",
+      "selectSection": "Select a section in the sidebar.",
+      "fieldsCount": "{{count}} field(s)",
+      "addEntry": "+ Add entry",
+      "listFilesError": "Could not list config files ({{status}}).",
+      "readError": "File read error ({{status}}).",
+      "networkError": "Network error loading config paths.",
+      "staleBackend": "Configuration aggregator unavailable (HTTP {{status}}).\nStop the process with Ctrl+C then from the zab repo root run:\n`uv run zab dashboard --no-open --port 8742`",
+      "rawResponse": "Raw response: {{detail}}",
+      "missingFileHeader": "# File missing on this machine:\n# {{path}}\n# Create it with « zab config --open » or copy the template from zab docs.\n",
+      "yamlSerializeError": "# YAML serialization error: {{message}}\n",
+      "openedEditor": "Opened ({{editor}}){{line}}",
+      "openedEditorLine": " — line {{line}}",
+      "secretFound": "Secret found",
+      "secretIn": "in",
+      "secretLine": " (line {{line}})",
+      "secretKey": " — key",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "remove": "Remove",
+      "copyItem": "Copy",
+      "add": "Add",
+      "bulkEdit": "Bulk edit",
+      "onePerLine": "One item per line…",
+      "addItem": "Add item…",
+      "addItemEnter": "Add item (Enter)…",
+      "replace": "Replace",
+      "emptyList": "(empty list)",
+      "emptyObject": "(empty object)",
+      "bulkCount": "{{current}} current → {{draft}} line(s) entered",
+      "initText": "Text",
+      "initList": "List",
+      "initObject": "Object"
+    },
+    "toast": {
+      "saved": "File saved",
+      "opened": "Opened"
+    },
+    "confirm": {
+      "discardChanges": "Discard unsaved changes?"
+    }
+  },
+  "workstation": {
+    "title": "Workstation",
+    "subtitle": "Local control of the Flowmetrik remote dev VM.",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "confirmStop": "Stop the workstation?",
+    "toast": {
+      "startLaunched": "Start launched",
+      "stopLaunched": "Stop launched"
+    }
+  },
+  "conversationsView": {
+    "title": "Conversations",
+    "subtitle": "Aggregate Cursor, Claude Code, Codex, Hermes and other CLI histories.",
+    "actions": {
+      "refreshChecks": "Refresh checks",
+      "dryRun": "Dry-run sync",
+      "sync": "Sync"
+    },
+    "history": {
+      "title": "Conversation history"
+    },
+    "search": {
+      "placeholder": "Search conversations…",
+      "noResults": "No results."
+    },
+    "empty": {
+      "postgres": "No conversational documents in Postgres. Run Sync to import.",
+      "none": "No historical conversations. Configure Postgres or run sync."
+    },
+    "toast": {
+      "postgresMissing": "Postgres not configured",
+      "postgresMissingDesc": "Set MEHDI_MEMORY_DATABASE_URL then sync.",
+      "dryRunDone": "Dry-run completed",
+      "syncDone": "Sync completed",
+      "pathCopied": "Path copied"
+    }
+  },
+  "meta": {
+    "connector": {
+      "bank": "Bank",
+      "accounting": "Accounting",
+      "prospecting": "Prospecting"
+    }
+  }
+}

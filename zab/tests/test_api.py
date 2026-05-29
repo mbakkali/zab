@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,86 @@ def test_health():
     r = client.get("/api/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+def test_system_check_api():
+    client = TestClient(create_app())
+    r = client.get("/api/system/check")
+    assert r.status_code == 200
+    data = r.json()
+    assert 0 <= data["percentage"] <= 100
+    assert data["total"] >= 1
+    assert isinstance(data["checks"], list)
+    ids = {row["id"] for row in data["checks"]}
+    assert {"config_yaml", "skills_root", "state_index", "cli_tools"} <= ids
+    assert all(row["status"] in {"ok", "warn", "fail"} for row in data["checks"])
+
+
+def test_system_check_stream():
+    client = TestClient(create_app())
+    r = client.get("/api/system/check/stream")
+    assert r.status_code == 200
+    assert "text/event-stream" in r.headers.get("content-type", "")
+    text = r.text
+
+    # Parse SSE events
+    events: dict[str, list[dict]] = {}
+    current_event = ""
+    for line in text.splitlines():
+        if line.startswith("event: "):
+            current_event = line[7:].strip()
+            events.setdefault(current_event, [])
+        elif line.startswith("data: ") and current_event:
+            import json
+            events[current_event].append(json.loads(line[6:]))
+
+    # Must have registry, at least one check, and done
+    assert "registry" in events
+    assert "check" in events
+    assert "done" in events
+    assert len(events["registry"]) == 1
+    registry = events["registry"][0]
+    assert isinstance(registry, list)
+    assert len(registry) >= 1
+    assert all("id" in d and "label" in d and "category" in d for d in registry)
+
+    assert len(events["check"]) >= 1
+    for chk in events["check"]:
+        assert chk["status"] in {"ok", "warn", "fail"}
+        assert "id" in chk
+
+    done = events["done"][0]
+    assert 0 <= done["percentage"] <= 100
+    assert done["total"] >= 1
+
+
+def test_system_check_last_api(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    client = TestClient(create_app())
+    r0 = client.get("/api/system/check/last")
+    assert r0.status_code == 200
+    assert r0.json()["present"] is False
+
+    report = {
+        "generated_at_utc": "2026-05-28T19:00:00+00:00",
+        "percentage": 100,
+        "score": 12.0,
+        "total": 12,
+        "ok": 12,
+        "warn": 0,
+        "fail": 0,
+        "checks": [],
+    }
+    r1 = client.post("/api/system/check/last", json={"report": report})
+    assert r1.status_code == 200
+    assert r1.json()["saved"] is True
+
+    r2 = client.get("/api/system/check/last")
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["present"] is True
+    assert data["report"]["percentage"] == 100
+    assert data["saved_at_utc"]
 
 
 def test_overview():
@@ -62,15 +143,94 @@ def test_connectors_api_404():
     assert r.status_code == 404
 
 
+def test_state_api_and_sync():
+    client = TestClient(create_app())
+    r = client.post("/api/sync")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["version"]
+    assert "counts" in data
+    r2 = client.get("/api/state")
+    assert r2.status_code == 200
+    assert r2.json()["counts"]["connectors"] >= 0
+
+
+def test_features_and_agent_guide_api():
+    client = TestClient(create_app())
+    r = client.get("/api/features")
+    assert r.status_code == 200
+    assert isinstance(r.json().get("features"), list)
+    g = client.get("/api/agent-guide")
+    assert g.status_code == 200
+    assert "bootstrap_commands" in g.json()
+
+
+def test_index_sections_and_context_pack():
+    client = TestClient(create_app())
+    assert client.post("/api/sync").status_code == 200
+    for path in ("/api/skills?limit=5", "/api/code-tools?limit=5", "/api/models?limit=5"):
+        r = client.get(path)
+        assert r.status_code == 200
+        payload = r.json()
+        assert "data" in payload and "pagination" in payload
+    cp = client.post("/api/context-pack", json={"limit": 5})
+    assert cp.status_code == 200
+    data = cp.json()
+    assert data["bytes"] > 0
+    assert "zab Context Pack" in data["preview"]
+
+
+def test_agent_search_and_security_api():
+    client = TestClient(create_app())
+    boot = client.get("/api/agent/bootstrap")
+    assert boot.status_code == 200
+    assert boot.json()["contract"] == "agent-bootstrap"
+
+    search = client.get("/api/search?q=skills&limit=5")
+    assert search.status_code == 200
+    assert search.json()["query"] == "skills"
+    assert "data" in search.json()
+
+    skills_manifest = client.get("/api/agent/skills?limit=5")
+    assert skills_manifest.status_code == 200
+    assert skills_manifest.json()["contract"] == "skills-manifest"
+
+    sec = client.get("/api/security/status")
+    assert sec.status_code == 200
+    assert sec.json()["policy"]["secrets"] == "never_print_raw_values"
+
+
+def test_agent_handoff_api(monkeypatch, tmp_path):
+    import yaml
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root = tmp_path / "projects"
+    project = root / "demo"
+    project.mkdir(parents=True)
+    (project / "SKILL.md").write_text("# Demo\n", encoding="utf-8")
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(
+        yaml.safe_dump({"projects_roots": [str(root)], "cli_watchlist": [], "tracked_env_extra": []}),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+    assert client.post("/api/sync").status_code == 200
+    r = client.post("/api/agent/handoff", json={"project": "demo", "limit": 5})
+    assert r.status_code == 200
+    assert r.json()["project"]["name"] == "demo"
+
+
 def test_config_files_api():
     client = TestClient(create_app())
     r = client.get("/api/config/files")
     assert r.status_code == 200
     rows = r.json()
     assert isinstance(rows, list)
-    assert len(rows) == 2
+    assert len(rows) == 1
     keys = {row["key"] for row in rows}
-    assert keys == {"local_tools_actual", "user_zab_config"}
+    assert keys == {"user_zab_config"}
+    assert rows[0]["path_display"].startswith("~/.config/zab/config.yaml")
 
 
 def test_config_file_one_key():
@@ -86,6 +246,16 @@ def test_config_file_bad_key():
     client = TestClient(create_app())
     r = client.get("/api/config/file?key=../../../etc/passwd")
     assert r.status_code == 400
+
+
+def test_config_history_api():
+    client = TestClient(create_app())
+    r = client.get("/api/config/history")
+    assert r.status_code == 200
+    rows = r.json()
+    assert isinstance(rows, list)
+    assert {row["key"] for row in rows} >= {"user_zab_config", "local_tools_actual", "scan_last"}
+    assert all("path_display" in row and "exists" in row for row in rows)
 
 
 def test_security_env_file_roundtrip(monkeypatch, tmp_path):
@@ -153,6 +323,32 @@ def test_security_env_merges_dotenv_file(monkeypatch, tmp_path):
     assert "text" in payload
     assert len(payload["text"]) > 20
     assert "COMMAND" in payload["text"].upper() or "doctor" in payload["text"].lower()
+
+
+def test_security_reports_api(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / ".local" / "share"))
+    report_dir = tmp_path / ".local" / "share" / "zab" / "security-last"
+    report_dir.mkdir(parents=True)
+    (report_dir / "security_osv_zab-zab.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-05-14T00:00:00+00:00",
+                "summary": {"preset": "security_osv_zab", "status": "done", "exit_code": 0},
+                "lines": ["ok"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+    r = client.get("/api/security/reports")
+    assert r.status_code == 200
+    assert r.json()["reports"][0]["key"] == "security_osv_zab-zab"
+    r2 = client.get("/api/security/last?key=security_osv_zab-zab")
+    assert r2.status_code == 200
+    assert r2.json()["present"] is True
+    assert r2.json()["summary"]["preset"] == "security_osv_zab"
 
 
 def test_config_projects_roots_put(monkeypatch, tmp_path):
@@ -243,9 +439,13 @@ def test_memory_documents_503_without_dsn(monkeypatch, tmp_path):
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MEHDI_MEMORY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ZAB_SKILLS_ROOT", raising=False)
+    monkeypatch.delenv("ZAB_INVOCATION_CWD", raising=False)
     repo = tmp_path / "sr"
     repo.mkdir()
     (repo / "configs").mkdir(parents=True)
+    monkeypatch.setattr("zab.services.memory_db.skills_root", lambda: repo)
+    monkeypatch.setattr("zab.services.memory_db.skills_root_from_config_file_only", lambda: repo)
     cfg_dir = tmp_path / ".config" / "zab"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "config.yaml").write_text(
@@ -257,6 +457,119 @@ def test_memory_documents_503_without_dsn(monkeypatch, tmp_path):
     assert r.status_code == 503
 
 
+def test_conversations_providers_ok():
+    client = TestClient(create_app())
+    r = client.get("/api/conversations/providers")
+    assert r.status_code == 200
+    j = r.json()
+    assert "providers" in j
+    assert len(j["providers"]) >= 1
+
+
+def test_conversations_health_ok():
+    client = TestClient(create_app())
+    r = client.get("/api/conversations/health")
+    assert r.status_code == 200
+    h = r.json()
+    assert h.get("severity") in ("ok", "warn", "fail")
+    assert "recommendations" in h
+
+
+def test_conversations_search_503_without_dsn(monkeypatch, tmp_path):
+    import yaml
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MEHDI_MEMORY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ZAB_SKILLS_ROOT", raising=False)
+    monkeypatch.delenv("ZAB_INVOCATION_CWD", raising=False)
+    repo = tmp_path / "sr"
+    repo.mkdir()
+    (repo / "configs").mkdir(parents=True)
+    monkeypatch.setattr("zab.services.memory_db.skills_root", lambda: repo)
+    monkeypatch.setattr("zab.services.memory_db.skills_root_from_config_file_only", lambda: repo)
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(
+        yaml.safe_dump({"skills_roots": [str(repo.resolve())], "cli_watchlist": [], "tracked_env_extra": []}),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app())
+    r = client.get("/api/conversations/search?q=test")
+    assert r.status_code == 503
+
+
+def test_conversations_documents_lists_history_without_query(monkeypatch):
+    monkeypatch.setattr(
+        "zab.api.routes.memory_db.fetch_status",
+        lambda: {"configured": True, "psycopg_available": True, "connected": True},
+    )
+    monkeypatch.setattr(
+        "zab.api.routes.memory_db.fetch_conversation_documents",
+        lambda limit=25, offset=0, provider=None, wing=None, source=None: {
+            "total": 1,
+            "conversation_storage": "archive",
+            "items": [
+                {
+                    "document_id": "00000000-0000-0000-0000-000000000001",
+                    "source": "cursor_agent_transcript",
+                    "wing": "cursor__zab",
+                    "room": "conversation",
+                    "synced_at": "2026-05-21T10:00:00+00:00",
+                    "path": "/tmp/demo.jsonl",
+                    "chunk_count": 3,
+                    "message_count": 2,
+                    "content_excerpt": "Bonjour",
+                }
+            ],
+        },
+    )
+
+    client = TestClient(create_app())
+    r = client.get("/api/conversations/documents?limit=25&offset=0&provider=cursor")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["total"] == 1
+    assert j["items"][0]["message_count"] == 2
+    assert j["items"][0]["document_id"].endswith("0001")
+
+
+def test_conversations_document_detail_exposes_structured_messages(monkeypatch):
+    monkeypatch.setattr(
+        "zab.api.routes.memory_db.fetch_status",
+        lambda: {"configured": True, "psycopg_available": True, "connected": True},
+    )
+    monkeypatch.setattr(
+        "zab.api.routes.memory_db.fetch_conversation_document_detail",
+        lambda document_id, chunk_limit=100: {
+            "id": document_id,
+            "source": "cursor_agent_transcript",
+            "metadata": {
+                "messages": [
+                    {"role": "user", "label": "You", "content": "bonjour"},
+                    {"role": "assistant", "label": "Agent", "content": "salut"},
+                ]
+            },
+            "chunks": [{"content": "### user\nbonjour"}],
+        },
+    )
+
+    client = TestClient(create_app())
+    r = client.get("/api/conversations/document/00000000-0000-0000-0000-000000000001")
+    assert r.status_code == 200
+    j = r.json()["document"]
+    assert j["messages"][0]["label"] == "You"
+    assert j["messages"][1]["label"] == "Agent"
+
+
+def test_conversations_sync_starts_job():
+    client = TestClient(create_app())
+    r = client.post("/api/conversations/sync", json={"dry_run": True, "append": True})
+    assert r.status_code == 200
+    j = r.json()
+    assert "id" in j
+    assert j.get("preset") == "conversation_sync"
+
+
 def test_build_argv_mempalace_install():
     from zab.services.jobs import build_argv_for_preset
 
@@ -264,3 +577,43 @@ def test_build_argv_mempalace_install():
     assert argv[:4] == ["uv", "tool", "install", "mempalace"]
     assert Path(cwd) == Path.home()
 
+
+def test_mcps_sync_status_and_list():
+    client = TestClient(create_app())
+    r = client.get("/api/mcps/sync-status")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-store"
+    j = r.json()
+    assert "counts" in j
+    assert "sources" in j
+
+    r2 = client.get("/api/mcps")
+    assert r2.status_code == 200
+    body = r2.json()
+    assert "data" in body
+    assert "total" in body
+
+
+def test_mcps_scan_persists_registry(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = tmp_path / "skills-repo"
+    (repo / "configs").mkdir(parents=True, exist_ok=True)
+    (repo / "configs" / "cursor-mcp.json").write_text(
+        json.dumps({"mcpServers": {"scanme": {"command": "true", "args": []}}}),
+        encoding="utf-8",
+    )
+    (repo / "configs" / "claude-desktop-mcp.json").write_text("{}", encoding="utf-8")
+    cfg = tmp_path / ".config" / "zab"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "config.yaml").write_text(
+        f"skills_roots: [{json.dumps(str(repo))}]\nprojects_roots: []\n",
+        encoding="utf-8",
+    )
+
+    client = TestClient(create_app())
+    r = client.post("/api/mcps/scan")
+    assert r.status_code == 200
+    out = r.json()
+    assert out.get("ok") is True
+    assert "state_summary" in out
+    assert (tmp_path / ".config" / "zab" / "mcp-registry.json").is_file()

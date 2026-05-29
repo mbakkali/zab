@@ -14,7 +14,6 @@ from zab.services.inventory_config import infer_mcp_repo_base_from_skill_md
 from zab.user_config import (
     claude_plugin_paths_resolved,
     projects_roots_resolved,
-    skill_md_paths_resolved,
     skills_roots_strings_ordered,
     user_config_path,
 )
@@ -35,7 +34,9 @@ def _repos_walk() -> list[Path]:
 
 
 def discovery_repo_bases() -> list[Path]:
-    """Dépôts pour MCP / registry : racines YAML + bases déduites des SKILL.md inventoriés."""
+    """Dépôts pour MCP / registry : racines YAML + bases déduites des SKILL.md adoptés."""
+    from zab.services import skills_registry
+
     bases: list[Path] = []
     seen: set[str] = set()
     for p in skills_roots_resolved_from_config():
@@ -43,7 +44,7 @@ def discovery_repo_bases() -> list[Path]:
         if k not in seen:
             seen.add(k)
             bases.append(p.resolve())
-    for md in skill_md_paths_resolved():
+    for md in skills_registry.adopted_skill_md_paths_resolved():
         b = infer_mcp_repo_base_from_skill_md(md)
         if b is None:
             continue
@@ -68,7 +69,13 @@ def _orgs_from_skill_inventory(paths: list[Path]) -> list[dict[str, Any]]:
                 org_name = parts[ix + 1]
                 skill_id = parts[ix + 3]
         except ValueError:
-            pass
+            try:
+                ix = parts.index("common")
+                if ix + 2 < len(parts) and parts[ix + 1] == "skills":
+                    org_name = "common"
+                    skill_id = parts[ix + 2]
+            except ValueError:
+                pass
         groups.setdefault(org_name, []).append({"id": skill_id, "path": str(md.resolve())})
     out: list[dict[str, Any]] = []
     for org in sorted(groups.keys(), key=lambda x: x.casefold()):
@@ -162,43 +169,96 @@ def list_orgs_with_skills() -> list[dict[str, Any]]:
     return _orgs_with_projects_tuple()[0]
 
 
-def list_orgs_skills_repo_only() -> list[dict[str, Any]]:
-    """Inventaire skills sans les projets locaux (uniquement dépôt ``orgs/`` ou ``skill_md_paths``)."""
-    inv = skill_md_paths_resolved()
-    if inv:
-        return _orgs_from_skill_inventory(inv)
+def _orgs_from_skills_roots_walk() -> list[dict[str, Any]]:
+    """Parcours skills_roots quand le registre est vide (avant premier refresh)."""
+    from zab.services import skills_registry
+    from zab.services.skills_scan import collect_skill_md_under_repo
 
     out: list[dict[str, Any]] = []
     for base in _repos_walk():
-        root = base / "orgs"
-        if not root.is_dir():
-            continue
-        for org_path in sorted(root.iterdir()):
-            if not org_path.is_dir() or org_path.name.startswith("."):
+        groups: dict[str, list[dict[str, str]]] = {}
+        for md in collect_skill_md_under_repo(base):
+            if not md.is_file():
                 continue
-            skills_dir = org_path / "skills"
-            skills: list[dict[str, str]] = []
-            if skills_dir.is_dir():
-                for skill_dir in sorted(skills_dir.iterdir()):
-                    if not skill_dir.is_dir():
-                        continue
-                    md = skill_dir / "SKILL.md"
-                    if md.is_file():
-                        skills.append(
-                            {
-                                "id": skill_dir.name,
-                                "path": str(md.relative_to(base)),
-                            }
-                        )
+            org_name = skills_registry.infer_org_slug_for_skill_file(md, base) or "hors-org"
+            skill_id = md.parent.name
+            try:
+                rel_path = str(md.relative_to(base))
+            except ValueError:
+                rel_path = str(md.resolve())
+            groups.setdefault(org_name, []).append({"id": skill_id, "path": rel_path})
+        for org in sorted(groups.keys(), key=lambda x: x.casefold()):
+            skills = sorted(groups[org], key=lambda x: (x["id"].casefold(), x["path"]))
             out.append(
                 {
-                    "org": org_path.name,
+                    "org": org,
                     "skills": skills,
                     "skills_repo_root": str(base.resolve()),
                     "from_inventory": False,
                 }
             )
     return out
+
+
+def _orgs_from_registry_inventory() -> list[dict[str, Any]]:
+    from zab.services import skills_registry
+
+    skills_registry.ensure_registry_and_migrate()
+    entries = skills_registry.query_registry()
+    if not entries:
+        return []
+    groups: dict[str, list[dict[str, str]]] = {}
+    for e in entries:
+        if str(e.get("status") or "").lower() == "ignored":
+            continue
+        org = str(e.get("org") or "hors-org")
+        slug = str(e.get("slug") or "")
+        cp = e.get("canonical_path")
+        path_abs = ""
+        if isinstance(cp, str) and cp.strip():
+            try:
+                p = Path(cp).expanduser().resolve()
+                if p.is_file():
+                    path_abs = str(p)
+            except OSError:
+                path_abs = cp.strip()
+        if not path_abs:
+            for src in e.get("sources") or []:
+                if not isinstance(src, dict):
+                    continue
+                sp = str(src.get("path") or "")
+                if not sp:
+                    continue
+                try:
+                    pp = Path(sp).expanduser().resolve()
+                    if pp.is_file():
+                        path_abs = str(pp)
+                        break
+                except OSError:
+                    continue
+        if not path_abs:
+            continue
+        groups.setdefault(org, []).append({"id": slug or Path(path_abs).parent.name, "path": path_abs})
+    out: list[dict[str, Any]] = []
+    for org in sorted(groups.keys(), key=lambda x: x.casefold()):
+        skills = sorted(groups[org], key=lambda x: (x["id"].casefold(), x["path"]))
+        out.append(
+            {
+                "org": org,
+                "skills": skills,
+                "skills_repo_root": "",
+                "from_inventory": True,
+            }
+        )
+    return out
+
+
+def list_orgs_skills_repo_only() -> list[dict[str, Any]]:
+    """Inventaire skills sans les projets locaux (registre ; repli skills_roots si vide)."""
+    inv = _orgs_from_registry_inventory()
+    if inv:
+        return inv
+    return _orgs_from_skills_roots_walk()
 
 
 def _plugin_bundle_record(plugin_dir: Path, base: Path | None) -> dict[str, Any]:
@@ -250,105 +310,32 @@ def list_claude_plugin_bundles() -> list[dict[str, Any]]:
     return out
 
 
-def _load_json(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"_error": "invalid_json", "path": str(path)}
-
-
 def list_mcp_configs() -> dict[str, Any]:
+    """MCP versionnés dans les dépôts skills uniquement (rétrocompat ``GET /api/mcp``)."""
+    from zab.services import mcp_sources
+
     bases = discovery_repo_bases()
     if not bases:
         return {
-            "cursor_mcp": _normalize_mcp_servers({}, "cursor-mcp.json", config_file=None),
-            "claude_desktop_mcp": _normalize_mcp_servers({}, "claude-desktop-mcp.json", config_file=None),
+            "cursor_mcp": {"source": "cursor-mcp.json", "servers": []},
+            "claude_desktop_mcp": {"source": "claude-desktop-mcp.json", "servers": []},
         }
 
     cur_servers: list[dict[str, Any]] = []
     desk_servers: list[dict[str, Any]] = []
-    for base in bases:
-        cfgdir = base / "configs"
-        cursor = cfgdir / "cursor-mcp.json"
-        desktop = cfgdir / "claude-desktop-mcp.json"
-        bc = _normalize_mcp_servers(_load_json(cursor), "cursor-mcp.json", config_file=cursor)
-        bd = _normalize_mcp_servers(_load_json(desktop), "claude-desktop-mcp.json", config_file=desktop)
-        for item in bc.get("servers") or []:
-            if isinstance(item, dict):
-                cur_servers.append({**item, "skills_repo_root": str(base.resolve())})
-        for item in bd.get("servers") or []:
-            if isinstance(item, dict):
-                desk_servers.append({**item, "skills_repo_root": str(base.resolve())})
+    for item in mcp_sources.scan_skills_repo_config_files():
+        if not isinstance(item, dict):
+            continue
+        sk = str(item.get("source_kind") or "")
+        if sk == "skills_repo_cursor":
+            cur_servers.append(item)
+        elif sk == "skills_repo_desktop":
+            desk_servers.append(item)
 
     return {
         "cursor_mcp": {"source": "cursor-mcp.json", "servers": cur_servers},
         "claude_desktop_mcp": {"source": "claude-desktop-mcp.json", "servers": desk_servers},
     }
-
-
-def _normalize_mcp_servers(
-    doc: dict[str, Any],
-    source: str,
-    *,
-    config_file: Path | None = None,
-) -> dict[str, Any]:
-    servers = doc.get("mcpServers", doc) if isinstance(doc, dict) else {}
-    if not isinstance(servers, dict):
-        return {"source": source, "servers": [], "_raw_error": "no_mcpServers"}
-    items: list[dict[str, Any]] = []
-    cf_base = ""
-    if config_file is not None and config_file.is_file():
-        cf_base = str(config_file.resolve())
-    for name, cfg in servers.items():
-        if not isinstance(cfg, dict):
-            items.append(
-                {
-                    "name": str(name),
-                    "kind": "unknown",
-                    "target": "",
-                    "enabled": True,
-                    "note": "",
-                    "config_path": cf_base,
-                    "transport_command": None,
-                    "transport_args": [],
-                    "env_var_names": [],
-                }
-            )
-            continue
-        enabled = cfg.get("enabled", True)
-        if str(name).startswith("_TODO"):
-            enabled = False
-        env_obj = cfg.get("env") if isinstance(cfg.get("env"), dict) else {}
-        env_var_names = sorted(str(k) for k in env_obj.keys())
-        cmd = cfg.get("command")
-        args_raw = cfg.get("args") or []
-        args_list = [str(a) for a in args_raw] if isinstance(args_raw, list) else []
-        if "url" in cfg:
-            kind = "http"
-            target = str(cfg.get("url", ""))
-        elif "command" in cfg:
-            kind = "stdio"
-            target = f"{cfg.get('command', '')} {' '.join(args_list)}".strip()
-        else:
-            kind = "other"
-            target = ""
-        cf = cf_base
-        items.append(
-            {
-                "name": str(name),
-                "kind": kind,
-                "target": target[:500],
-                "enabled": bool(enabled),
-                "note": str(cfg.get("note", ""))[:200],
-                "config_path": cf,
-                "transport_command": str(cmd) if cmd is not None else None,
-                "transport_args": args_list[:80],
-                "env_var_names": env_var_names,
-            }
-        )
-    return {"source": source, "servers": items}
 
 
 def mcp_registry_path() -> str | None:
@@ -383,18 +370,20 @@ def load_plugin_config_summary() -> dict[str, Any]:
 
 
 def overview() -> dict[str, Any]:
+    from zab.services import skills_registry
+
     bases_walk = _repos_walk()
     bases_mcp = discovery_repo_bases()
     primary = dashboard_anchor_path()
-    inv_skills = skill_md_paths_resolved()
+    inv_skills = skills_registry.adopted_skill_md_paths_resolved()
     inv_plugins = claude_plugin_paths_resolved()
     configured = len(bases_walk) > 0 or len(inv_skills) > 0 or len(inv_plugins) > 0
     ordered_yaml = skills_roots_strings_ordered()
     warn = None
     if not configured:
         warn = (
-            "Remplissez la config : zab scan --propose-config puis zab scan --apply-config "
-            "(écrit skill_md_paths et claude_plugin_paths), ou éditez ~/.config/zab/config.yaml."
+            "Remplissez la config : skills_roots dans ~/.config/zab/config.yaml "
+            "ou adoptez des skills dans ~/.config/zab/skills-registry.json (zab sync)."
         )
     orgs, projects = _orgs_with_projects_tuple()
     return {

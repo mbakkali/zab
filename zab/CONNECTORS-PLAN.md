@@ -7,7 +7,7 @@
 - **Local-first** : tout vit dans `~/.zab/` + le repo de skills de l'utilisateur. Aucun service distant requis.
 - **Source de vérité = filesystem + YAML** ; le fichier d'index `~/.zab/state.yaml` est un index dénormalisé reconstruisible à tout moment via `zab sync`.
 - **Inventaire unifié** : Skills, Connecteurs (MCP / API / CLI), Outils de code (agents CLI : Claude Code, Kimi, Gemini, Cursor…), Models (endpoints API : LiteLLM, OpenRouter, Anthropic…), Secrets — tous indexés, tagués, observables au même endroit.
-- **Open source à terme** : architecture vendor-neutral (pas de chemins en dur vers `/Users/mbakkali`, pas d'hypothèse sur les orgs `flowmetrik`/`carrefour`/…), config par YAML, indexers pluggables. Le repo `skills` privé de Mehdi n'est qu'**une instance** parmi d'autres.
+- **Open source** : vendor-neutral architecture (no hardcoded operator paths, no assumption about specific org names), YAML configuration, pluggable indexers. A private skills repo is just **one instance** among many.
 
 Public cible OSS : devs qui empilent Claude Code + Cursor + agents CLI (kimi, qwen, gemini), gèrent une dizaine de MCP, jonglent entre LiteLLM/OpenRouter/direct, et veulent **un seul écran** pour voir « qu'est-ce que j'ai, où c'est branché, est-ce que ça répond ».
 
@@ -105,7 +105,7 @@ connectors:
         last_seen_at: "2026-05-02T10:00:00Z"
       - kind: "api"
         source_kind: "env-file"
-        source_ref: "/Users/mbakkali/projects/skills/.env#LINEAR_API_KEY"
+        source_ref: "~/projects/skills/.env#LINEAR_API_KEY"
         enabled: true
         meta:
           base_url: "https://api.linear.app"
@@ -120,7 +120,7 @@ connectors:
     forms:
       - kind: "api"
         source_kind: "env-file"
-        source_ref: "/Users/mbakkali/projects/skills/.env#QONTO_API_KEY"
+        source_ref: "~/projects/skills/.env#QONTO_API_KEY"
         enabled: true
         meta:
           base_url: "https://thirdparty.qonto.com/v2"
@@ -148,10 +148,10 @@ code_tools:
     kind: "agent"
     provider: "anthropic"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#claude"
+    source_ref: "~/.agentpipe.yaml#claude"
     enabled: true
     meta:
-      binary: "/Users/mbakkali/.nvm/versions/node/v22.14.0/bin/claude"
+      binary: "~/.nvm/versions/node/v22.14.0/bin/claude"
       version: "2.1.126"
       install_hint: "npm install -g @anthropic-ai/claude-code"
       used_via: ["agentpipe", "direct"]
@@ -163,10 +163,10 @@ code_tools:
     kind: "agent"
     provider: "moonshot"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#kimi"
+    source_ref: "~/.agentpipe.yaml#kimi"
     enabled: true
     meta:
-      binary: "/Users/mbakkali/.local/bin/kimi"
+      binary: "~/.local/bin/kimi"
       version: "1.40.0"
       install_hint: "pip install kimi-cli"
       used_via: ["agentpipe", "direct"]
@@ -178,10 +178,10 @@ code_tools:
     kind: "agent"
     provider: "google"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#gemini"
+    source_ref: "~/.agentpipe.yaml#gemini"
     enabled: true
     meta:
-      binary: "/Users/mbakkali/.nvm/versions/node/v22.14.0/bin/gemini"
+      binary: "~/.nvm/versions/node/v22.14.0/bin/gemini"
       version: "0.40.1"
       install_hint: "npm install -g @google/gemini-cli"
       used_via: ["agentpipe"]
@@ -193,7 +193,7 @@ code_tools:
     kind: "ide"
     provider: "cursor"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#cursor"
+    source_ref: "~/.agentpipe.yaml#cursor"
     enabled: true
     meta:
       binary: "/usr/local/bin/cursor"
@@ -208,7 +208,7 @@ code_tools:
     kind: "agent"
     provider: "factory"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#factory"
+    source_ref: "~/.agentpipe.yaml#factory"
     enabled: true
     meta:
       binary: null
@@ -223,7 +223,7 @@ code_tools:
     kind: "agent"
     provider: "alibaba"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#qwen"
+    source_ref: "~/.agentpipe.yaml#qwen"
     enabled: true
     meta:
       binary: null
@@ -238,7 +238,7 @@ code_tools:
     kind: "ide-extension"
     provider: "continue"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#continue"
+    source_ref: "~/.agentpipe.yaml#continue"
     enabled: true
     meta:
       binary: null
@@ -254,7 +254,7 @@ models:
     kind: "api"
     provider: "litellm"
     source_kind: "local-tools-yaml"
-    source_ref: "/Users/mbakkali/projects/skills/zab/local-tools.yaml#proxies.litellm_hosted"
+    source_ref: "~/projects/skills/zab/local-tools.yaml#proxies.litellm_hosted"
     enabled: true
     meta:
       base_url: "https://litellm.fmetrik.com"
@@ -523,9 +523,9 @@ Composant `code-tools-view.tsx` :
 **Scan actuel (machine de dev)** :
 | Outil | Binaire | Version | Installé |
 |---|---|---|---|
-| Claude Code | `/Users/mbakkali/.nvm/versions/node/v22.14.0/bin/claude` | 2.1.126 | ✅ |
-| Kimi | `/Users/mbakkali/.local/bin/kimi` | 1.40.0 | ✅ |
-| Gemini CLI | `/Users/mbakkali/.nvm/versions/node/v22.14.0/bin/gemini` | 0.40.1 | ✅ |
+| Claude Code | `~/.nvm/versions/node/v22.14.0/bin/claude` | 2.1.126 | ✅ |
+| Kimi | `~/.local/bin/kimi` | 1.40.0 | ✅ |
+| Gemini CLI | `~/.nvm/versions/node/v22.14.0/bin/gemini` | 0.40.1 | ✅ |
 | Cursor | `/usr/local/bin/cursor` | 3.2.11 | ✅ |
 | Factory | — | — | ❌ (agentpipe only) |
 | Qwen | — | — | ❌ (agentpipe only) |
@@ -569,7 +569,7 @@ Ajouter une **Command Palette** (react-cmdk ou shadcn Command) accessible par `C
 
 ### Phase 0 — Fondations (pré-requis)
 
-1. **Dépaternalisation préalable** : extraire tous les chemins hardcodés (`/Users/mbakkali`, `~/.mehdi-context`, etc.) dans une fonction `zab/paths.py` qui lit `~/.zab/config.yaml`.
+1. **De-personalization** : extract hardcoded paths (`~/.zab-agent-context`, etc.) into `zab/paths.py` reading `~/.config/zab/config.yaml`.
 2. **Pydantic models** : `zab/models/state.py` avec les classes `ZabState`, `Connector`, `ConnectorForm`, `Skill`, `CodeTool`, `ModelEndpoint`, `Tag`, `SyncLogEntry`.
 3. **State persistence** : `zab/state_persistence.py` (lecture/écriture YAML, merge avec `overrides.yaml`, file lock, validation schema version).
 4. **CLI `zab init`** : génère `~/.zab/config.yaml` en mode interactif (détecte ce qui existe).
@@ -642,10 +642,10 @@ code_tools:
     kind: "agent"                   # agent | ide | ide-extension
     provider: "anthropic"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#claude"
+    source_ref: "~/.agentpipe.yaml#claude"
     enabled: true
     meta:
-      binary: "/Users/mbakkali/.nvm/versions/node/v22.14.0/bin/claude"
+      binary: "~/.nvm/versions/node/v22.14.0/bin/claude"
       version: "2.1.126"
       install_hint: "npm install -g @anthropic-ai/claude-code"
       used_via: ["agentpipe", "direct"]
@@ -657,7 +657,7 @@ code_tools:
     kind: "ide"
     provider: "cursor"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#cursor"
+    source_ref: "~/.agentpipe.yaml#cursor"
     enabled: true
     meta:
       binary: "/usr/local/bin/cursor"
@@ -672,7 +672,7 @@ code_tools:
     kind: "agent"
     provider: "factory"
     source_kind: "agentpipe"
-    source_ref: "/Users/mbakkali/.agentpipe.yaml#factory"
+    source_ref: "~/.agentpipe.yaml#factory"
     enabled: true
     meta:
       binary: null
@@ -718,7 +718,7 @@ models:
     kind: "api"
     provider: "litellm"
     source_kind: "local-tools-yaml"
-    source_ref: "/Users/mbakkali/projects/skills/zab/local-tools.yaml#proxies.litellm_hosted"
+    source_ref: "~/projects/skills/zab/local-tools.yaml#proxies.litellm_hosted"
     enabled: true
     meta:
       base_url: "https://litellm.fmetrik.com"
@@ -733,7 +733,7 @@ models:
     kind: "api"
     provider: "openrouter"
     source_kind: "local-tools-yaml"
-    source_ref: "/Users/mbakkali/projects/skills/zab/local-tools.yaml#proxies.openrouter"
+    source_ref: "~/projects/skills/zab/local-tools.yaml#proxies.openrouter"
     enabled: true
     meta:
       base_url: "https://openrouter.ai/api/v1"
@@ -907,7 +907,7 @@ Les résultats de probe sont stockés en mémoire (TTL 60 secondes) pour éviter
 
 ### 13.1 Dépaternalisation
 
-- **Aucun chemin en dur** vers `/Users/mbakkali`, `~/.mehdi-context`, `flowmetrik`, etc. dans le code.
+- **Aucun chemin en dur** vers `~`, `~/.mehdi-context`, `flowmetrik`, etc. dans le code.
 - Toute config dans `~/.zab/config.yaml` (créée par `zab init`) :
 
 ```yaml

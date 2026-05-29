@@ -11,7 +11,15 @@ from dotenv import dotenv_values
 from zab.paths import config_dir, skills_root_from_config_file_only
 from zab.user_config import projects_roots_resolved
 
-PM_KEYS: tuple[str, ...] = ("GITLAB_TOKEN", "LINEAR_API_KEY", "NOTION_TOKEN")
+PM_KEYS: tuple[str, ...] = ("GITLAB_TOKEN", "LINEAR_API_KEY", "NOTION_TOKEN", "GITHUB_TOKEN")
+# Clés supplémentaires trouvées dans les .env projets (ex. Carrefour danmdata : jeton API projet GitLab).
+PM_SCAN_KEYS: tuple[str, ...] = (
+    *PM_KEYS,
+    "GITLAB_PROJECT_MANAGEMENT_TOKEN",
+    "NOTION_NOTION_SECRET",
+    "NOTION_NOTION_SECRET_DEV",
+    "GLAB_TOKEN",
+)
 
 
 def user_pm_dotenv_path() -> Path:
@@ -27,7 +35,7 @@ def apply_pm_tokens_from_user_dotenv() -> None:
     if not path.is_file():
         return
     vals = dotenv_values(path)
-    for key in PM_KEYS:
+    for key in PM_SCAN_KEYS:
         cur = os.environ.get(key)
         if cur is not None and str(cur).strip():
             continue
@@ -41,7 +49,7 @@ def _consider_env_file(path: Path, found: dict[str, str], sources: list[str]) ->
         return
     vals = dotenv_values(path)
     sources.append(str(path.resolve()))
-    for k in PM_KEYS:
+    for k in PM_SCAN_KEYS:
         if k in found:
             continue
         v = vals.get(k)
@@ -51,8 +59,8 @@ def _consider_env_file(path: Path, found: dict[str, str], sources: list[str]) ->
 
 def scan_pm_tokens_from_projects() -> tuple[dict[str, str], list[str]]:
     """
-    Parcourt ``projects_roots`` : ``.env`` à la racine de chaque racine + ``.env`` dans chaque sous-dossier direct ;
-    puis ``skills_root/.env`` si présent.
+    Parcourt ``projects_roots`` : ``.env`` à la racine de chaque racine + ``.env`` dans chaque sous-dossier direct
+    et au niveau suivant (ex. ``orgs/foo/bar/.env``) ; puis ``skills_root/.env`` si présent.
     Première valeur non vide gagne par clé (ordre stable).
     """
     found: dict[str, str] = {}
@@ -73,6 +81,15 @@ def scan_pm_tokens_from_projects() -> tuple[dict[str, str], list[str]]:
             subs = []
         for proj in subs:
             _consider_env_file(proj / ".env", found, sources)
+            try:
+                nested = sorted(
+                    (p for p in proj.iterdir() if p.is_dir() and not p.name.startswith(".")),
+                    key=lambda x: x.name.casefold(),
+                )
+            except OSError:
+                nested = []
+            for sub in nested:
+                _consider_env_file(sub / ".env", found, sources)
 
     sr = skills_root_from_config_file_only()
     if sr is not None:
@@ -113,7 +130,7 @@ def sync_pm_tokens_to_user_dotenv(*, force: bool = False) -> dict[str, Any]:
     updated: list[str] = []
     skipped_existing: list[str] = []
 
-    for k in PM_KEYS:
+    for k in PM_SCAN_KEYS:
         sv = scanned.get(k)
         if not sv:
             continue
@@ -141,5 +158,5 @@ def sync_pm_tokens_to_user_dotenv(*, force: bool = False) -> dict[str, Any]:
         "keys_updated": updated,
         "keys_skipped_already_present": skipped_existing if not force else [],
         "keys_found_by_scan": sorted(scanned.keys()),
-        "keys_missing_after_scan": [k for k in PM_KEYS if k not in scanned],
+        "keys_missing_after_scan": [k for k in PM_SCAN_KEYS if k not in scanned],
     }

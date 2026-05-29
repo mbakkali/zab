@@ -1,0 +1,36 @@
+# Minimal zab configuration example.
+# Copy to ~/.config/zab/config.yaml and adjust paths for your machine.
+
+skills_roots:
+  - ~/skills
+
+projects_roots:
+  - ~/projects
+
+cli_watchlist:
+  - gh
+
+tracked_env_extra: []
+
+# Optional: Postgres memory / conversations archive
+# Set ZAB_MEMORY_DATABASE_URL in ~/.config/zab/.env or your skills/.env
+
+# Optional: remote dev workstation (GCP)
+# workstation:
+#   project_id: your-gcp-project
+#   instance_name: your-workstation
+#   region: europe-west9
+#   zone: europe-west9-b
+#   bucket: gs://your-sync-bucket
+#   firewall_rule: allow-your-ip
+#   gcloud_config: default
+
+# Optional: communication channels (email, Slack, WhatsApp, Telegram)
+# communication_channels:
+#   - id: work-email
+#     label: Work Email
+#     type: email
+#     connector: gmail
+#     org: work
+#     email_address: you@example.com
+#     enabled: true

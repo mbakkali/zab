@@ -55,17 +55,24 @@ def test_dashboard_anchor_from_skill_md_finds_repo_root(monkeypatch, tmp_path: P
     (repo / "configs" / "cursor-mcp.json").write_text("{}\n", encoding="utf-8")
 
     from zab import user_config
+    from zab.services import skills_registry
 
     def fake_load() -> dict:
-        return {"skills_roots": [], "skill_md_paths": [str(skill_dir / "SKILL.md")], "claude_plugin_paths": []}
+        return {"skills_roots": [], "claude_plugin_paths": []}
 
     monkeypatch.setattr(user_config, "load_user_config", fake_load)
+    monkeypatch.setattr(
+        skills_registry,
+        "adopted_skill_md_paths_resolved",
+        lambda: [(skill_dir / "SKILL.md").resolve()],
+    )
 
     from zab.paths import dashboard_anchor_path
 
     assert dashboard_anchor_path() == repo.resolve()
 
 
+def test_skills_root_honors_zab_invocation_cwd(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("ZAB_SKILLS_ROOT", raising=False)
     monkeypatch.delenv("ZAB_INVOCATION_CWD", raising=False)
     from zab import user_config

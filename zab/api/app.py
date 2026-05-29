@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from zab.api import routes
-from zab.paths import skills_root_from_config_file_only, zab_ui_dist_dir
+from zab.paths import config_dir, skills_root_from_config_file_only, zab_ui_dist_dir
 from zab.services.pm_env_sync import apply_pm_tokens_from_user_dotenv
 
 
@@ -23,6 +23,9 @@ def create_app() -> FastAPI:
         env_file = sr / ".env"
         if env_file.is_file():
             load_dotenv(env_file, override=False)
+    zab_env = config_dir() / ".env"
+    if zab_env.is_file():
+        load_dotenv(zab_env, override=False)
     apply_pm_tokens_from_user_dotenv()
     app = FastAPI(title="zab", version="0.2.0")
     app.add_middleware(
@@ -30,8 +33,14 @@ def create_app() -> FastAPI:
         allow_origins=[
             "http://127.0.0.1:5173",
             "http://localhost:5173",
+            "http://127.0.0.1:5174",
+            "http://localhost:5174",
             "http://127.0.0.1:4173",
             "http://localhost:4173",
+            "http://127.0.0.1:5280",
+            "http://localhost:5280",
+            "http://127.0.0.1:5281",
+            "http://localhost:5281",
         ],
         allow_credentials=True,
         allow_methods=["*"],

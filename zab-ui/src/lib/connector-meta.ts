@@ -101,7 +101,7 @@ export function connectorMeta(rawName: string): ConnectorMeta {
   if (has('pexels', 'image', 'photo')) return { label: 'Pexels', icon: Image01Icon, tone: 'bg-teal-100 text-teal-700', ringTone: 'ring-teal-200' }
   if (has('supabase', 'database', 'postgres', 'sql')) return { label: rawName.includes('supabase') ? 'Supabase' : 'Database', icon: Database02Icon, tone: 'bg-emerald-100 text-emerald-700', ringTone: 'ring-emerald-200' }
   if (has('flowmetrik', 'gateway')) return { label: 'Flowmetrik', icon: WorkflowSquare03Icon, tone: 'bg-blue-100 text-blue-700', ringTone: 'ring-blue-200' }
-  if (has('cowork', 'mehdi')) return { label: 'Mehdi Cowork', icon: Brain02Icon, tone: 'bg-violet-100 text-violet-700', ringTone: 'ring-violet-200' }
+  if (has('cowork')) return { label: 'Cowork', icon: Brain02Icon, tone: 'bg-violet-100 text-violet-700', ringTone: 'ring-violet-200' }
   if (has('clay', 'enrich', 'prospect', 'mipim')) return { label: 'Prospection', icon: ChartIcon, tone: 'bg-orange-100 text-orange-700', ringTone: 'ring-orange-200' }
   if (has('memory')) return { label: 'Memory', icon: Brain02Icon, tone: 'bg-fuchsia-100 text-fuchsia-700', ringTone: 'ring-fuchsia-200' }
   if (has('http', 'api', 'webhook')) return { label: 'HTTP/API', icon: ApiIcon, tone: 'bg-sky-100 text-sky-700', ringTone: 'ring-sky-200' }
@@ -116,6 +116,8 @@ export function kindMeta(kind: string): { icon: IconSvgElement; tone: string; la
       return { icon: CloudServerIcon, tone: 'bg-sky-100 text-sky-700', label: 'http' }
     case 'sse':
       return { icon: DataflowDownIcon, tone: 'bg-violet-100 text-violet-700', label: 'sse' }
+    case 'composio':
+      return { icon: Plug02Icon, tone: 'bg-fuchsia-100 text-fuchsia-700', label: 'composio' }
     default:
       return { icon: Plug02Icon, tone: 'bg-zinc-100 text-zinc-500', label: kind || '—' }
   }

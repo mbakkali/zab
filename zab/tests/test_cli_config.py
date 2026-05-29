@@ -22,7 +22,7 @@ def test_config_paths_only(monkeypatch, tmp_path: Path) -> None:
     assert r.exit_code == 0
     assert "skills_root=" in r.stdout
     assert "config_yaml=" in r.stdout
-    assert "local_tools_yaml=" in r.stdout
+    assert "local_tools_yaml=" not in r.stdout
 
 
 def test_config_help():

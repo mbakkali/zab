@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,15 +16,13 @@ CONFIG_FILENAME = "config.yaml"
 # Modèle écrit par ensure_user_config_exists() si ~/.config/zab/config.yaml est absent.
 DEFAULT_USER_CONFIG_YAML = """# Configuration zab — fichier créé au premier lancement ou par install-zab-shell.sh
 #
-# Inventaire explicite (recommandé) — rempli par : zab scan --propose-config puis zab scan --apply-config
-# Liste chaque SKILL.md et chaque dossier plugin Claude détectés au scan (pas seulement une racine).
-#
-skill_md_paths: []
+# Registre des skills (auto-créé) : ~/.config/zab/skills-registry.json
+# (remplace l’ancienne liste skill_md_paths — voir docs/skills-registry-migration.md)
+# skills_registry_path: ~/.config/zab/skills-registry.json
+
+skills_roots: []
 
 claude_plugin_paths: []
-
-# Racines dépôt (orgs/, configs/, …) — optionnel si skill_md_paths couvre déjà vos dépôts (MCP déduit des chemins SKILL.md).
-skills_roots: []
 
 # Ancienne clé (optionnelle) : première entrée équivalente à skills_roots[0] si la liste est vide
 # skills_root: ~/projects/skills
@@ -37,7 +36,7 @@ cli_watchlist: []
 # agentpipe_config_path: ~/.agentpipe.yaml
 # codexbar_config_path: ~/.codexbar/config.json
 
-# Rempli automatiquement si vous cochez « Enregistrer après scan » sur Modèles / Cursor :
+# Rempli automatiquement lors d'un scan workspace persisté (``/api/scan?persist=1``) :
 # models_discovery:
 #   updated_at_utc: ...
 #   agentpipe: { config_path, coding_models_flat, agents: [...] }
@@ -48,8 +47,34 @@ cli_watchlist: []
 # projects_roots:
 #   - ~/projects
 
+# Création/synchronisation optionnelle d'un dépôt personnel de skills.
+# Par défaut, les opérations réseau restent explicites (`zab skill sync --push`).
+# skills_sync:
+#   repo_root: ~/projects/skills
+#   git_remote: git@github.com:YOUR_USER/your-skills.git
+#   hermes_config_path: ~/.hermes/config.yaml
+#   auto_sync: false
+#   auto_hermes_update: false
+#   notify: false
+#   notify_channel: evolution
+
+# Vault Obsidian — exposé via le MCP zab (vault_list, vault_read, vault_search, daily_append, inbox_create).
+# allow_full_write reste à false par défaut : seuls daily_append et inbox_create écrivent dans le vault.
+# obsidian:
+#   vault_path: ~/ObsidianVault
+#   allow_full_write: false
+#   daily_dir: 10_daily
+#   inbox_dir: 00_inbox
+#   daily_template: 90_meta/templates/daily.md
+
 # Variables supplémentaires suivies (dashboard Sécurité), en plus du catalogue zab
 tracked_env_extra: []
+
+# Fichiers .env éditables et scannés par l’onglet Sécurité (chemins absolus ou ~).
+# Si la clé est absente : première racine skills + ~/.hermes/.env + ~/.config/zab/.env
+# security_env_paths:
+#   - ~/projects/skills/.env
+#   - ~/.hermes/.env
 
 # Tâches agrégées : jetons GitLab / Linear / Notion — préférez ~/.config/zab/.env
 # (fusion : zab pm-env sync ou bouton dans l’onglet Tâches). Ne mettez pas de secrets dans ce YAML.
@@ -60,7 +85,41 @@ tracked_env_extra: []
 # Linear : optionnel team_keys (clés d’équipe).
 # Notion : database_id ; notion_title_prop (défaut Name).
 # task_sources: []
-"""
+
+# Canaux de communication (dashboard Canaux). Vous pouvez inclure la config
+# directement dans ce YAML, y compris les credentials par canal.
+# Exemple WhatsApp Evolution API :
+# communication_channels:
+#   - id: whatsapp-evo
+#     label: WhatsApp (Evolution API)
+#     type: whatsapp
+#     connector: evolution-api
+#     org: flowmetrik
+#     enabled: true
+#     documentation: https://doc.evolution-api.com/
+#     credentials:
+#       evolution_api_url: https://wa.example.com
+#       evolution_api_key: VOTRE_CLE
+#       evolution_instance: mon-instance
+#   - id: slack-carrefour
+#     label: Slack Carrefour
+#     type: slack
+#     connector: slack
+#     org: carrefour
+#     enabled: true
+#     documentation: https://api.slack.com/authentication/token-types#bot
+#     credentials:
+#       slack_bot_token: xoxb-...
+#       slack_channel_id: C01234567
+#   - id: work-email
+#     label: Flowmetrik (E-mail Pro)
+#     type: email
+#     connector: outlook
+#     org: flowmetrik
+#     enabled: true
+#     email_address: you@example.com
+#     documentation: https://docs.composio.dev
+ """
 
 
 def user_config_path() -> Path:
@@ -156,17 +215,97 @@ def skills_roots_strings_ordered() -> list[str]:
 
 
 def skill_md_paths_strings_ordered() -> list[str]:
+    """Déprécié : chemins adoptés du registre skills (compat tests / ancien code)."""
+    from zab.services import skills_registry
+
+    return [str(p) for p in skills_registry.adopted_skill_md_paths_resolved()]
+
+
+def skill_md_paths_resolved() -> list[Path]:
+    from zab.services import skills_registry
+
+    return skills_registry.adopted_skill_md_paths_resolved()
+
+
+def register_skill_md_path(path: str | Path) -> Path:
+    """Déprécié : utiliser skills_registry.register_mirror_skill_path."""
+    from zab.services import skills_registry
+
+    return skills_registry.register_mirror_skill_path(path)
+
+
+def merge_scan_inventory_into_config(
+    skill_md_abs_paths: list[str],
+    *,
+    claude_plugin_abs_paths: list[str] | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    """
+    Compat : alimente skills-registry.json (adopted) + claude_plugin_paths dans config.
+    Ne réécrit plus skill_md_paths.
+    """
+    from zab.services import skills_registry
+    from zab.services.inventory_config import collect_plugin_roots_from_skill_paths
+
+    skills_set = sorted(
+        {str(Path(x).expanduser().resolve()) for x in skill_md_abs_paths if x and str(x).strip()}
+    )
+    if claude_plugin_abs_paths is None:
+        roots_pl = collect_plugin_roots_from_skill_paths([Path(s) for s in skills_set])
+        plugins_set = [str(p) for p in roots_pl]
+    else:
+        plugins_set = sorted(
+            {str(Path(x).expanduser().resolve()) for x in claude_plugin_abs_paths if x and str(x).strip()}
+        )
     cfg = load_user_config()
-    raw = cfg.get("skill_md_paths")
-    if not isinstance(raw, list):
-        return []
-    out: list[str] = []
-    for x in raw:
-        if isinstance(x, str) and x.strip():
-            v = x.strip()
-            if v not in out:
-                out.append(v)
-    return out
+    cfg.pop("_error", None)
+    cfg["claude_plugin_paths"] = plugins_set
+    cfg["skills_roots"] = []
+    cfg.pop("skills_root", None)
+    save_user_config(cfg)
+
+    skills_registry.ensure_registry_and_migrate()
+    doc = skills_registry.load_registry_document()
+    by_key = {}
+    for s in doc.get("skills") or []:
+        if isinstance(s, dict) and s.get("key"):
+            by_key[str(s["key"])] = s
+    for abs_p in skills_set:
+        md = Path(abs_p)
+        if not md.is_file():
+            continue
+        slug = md.parent.name
+        org = "hors-org"
+        try:
+            settings = skills_sync_settings()
+            rr = Path(str(settings["repo_root"])).expanduser().resolve()
+            hint = skills_registry.infer_org_slug_for_skill_file(md, rr)
+            if hint:
+                org = hint
+        except OSError:
+            pass
+        key = f"{org.strip().lower()}:{slug.strip().lower()}"
+        by_key[key] = {
+            "key": key,
+            "org": org,
+            "slug": slug,
+            "status": "adopted",
+            "canonical_path": abs_p,
+            "sources": [
+                {
+                    "kind": "config_legacy",
+                    "path": abs_p,
+                    "project": None,
+                    "last_seen_at": skills_registry.utc_now_iso(),
+                }
+            ],
+            "sync": {},
+            "tags": [],
+            "description": None,
+            "frontmatter_name": None,
+        }
+    skills_registry.replace_skills_entries(by_key)
+    summary = {"skill_md_paths": skills_set, "claude_plugin_paths": plugins_set}
+    return user_config_path(), summary
 
 
 def claude_plugin_paths_strings_ordered() -> list[str]:
@@ -180,24 +319,6 @@ def claude_plugin_paths_strings_ordered() -> list[str]:
             v = x.strip()
             if v not in out:
                 out.append(v)
-    return out
-
-
-def skill_md_paths_resolved() -> list[Path]:
-    out: list[Path] = []
-    seen: set[str] = set()
-    for s in skill_md_paths_strings_ordered():
-        try:
-            p = Path(s).expanduser().resolve()
-        except OSError:
-            continue
-        if not p.is_file():
-            continue
-        k = str(p)
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(p)
     return out
 
 
@@ -219,36 +340,43 @@ def claude_plugin_paths_resolved() -> list[Path]:
     return out
 
 
-def merge_scan_inventory_into_config(
-    skill_md_abs_paths: list[str],
-    *,
-    claude_plugin_abs_paths: list[str] | None = None,
-) -> tuple[Path, dict[str, Any]]:
+def skills_sync_settings() -> dict[str, Any]:
+    """Paramètres du dépôt de skills édité par `zab skill`.
+
+    Les valeurs réseau/écriture automatique sont désactivées par défaut pour
+    garder une étape de revue explicite avant publication ou modification Hermes.
     """
-    Remplace skill_md_paths / claude_plugin_paths et vide skills_roots (inventaire explicite).
-    Si claude_plugin_abs_paths est None, déduit les bundles depuis les chemins SKILL.md.
-    """
-    from zab.services.inventory_config import collect_plugin_roots_from_skill_paths
 
     cfg = load_user_config()
-    cfg.pop("_error", None)
-    skills_set = sorted(
-        {str(Path(x).expanduser().resolve()) for x in skill_md_abs_paths if x and str(x).strip()}
+    raw = cfg.get("skills_sync")
+    block = raw if isinstance(raw, dict) else {}
+    roots = skills_roots_strings_ordered()
+    default_root = roots[0] if roots else str(Path.home() / "projects" / "skills")
+    repo_root = block.get("repo_root") if isinstance(block.get("repo_root"), str) and block.get("repo_root").strip() else default_root
+    git_remote = (
+        block.get("git_remote")
+        if isinstance(block.get("git_remote"), str) and block.get("git_remote").strip()
+        else ""
     )
-    if claude_plugin_abs_paths is None:
-        roots_pl = collect_plugin_roots_from_skill_paths([Path(s) for s in skills_set])
-        plugins_set = [str(p) for p in roots_pl]
-    else:
-        plugins_set = sorted(
-            {str(Path(x).expanduser().resolve()) for x in claude_plugin_abs_paths if x and str(x).strip()}
-        )
-    cfg["skill_md_paths"] = skills_set
-    cfg["claude_plugin_paths"] = plugins_set
-    cfg["skills_roots"] = []
-    cfg.pop("skills_root", None)
-    save_user_config(cfg)
-    summary = {"skill_md_paths": skills_set, "claude_plugin_paths": plugins_set}
-    return user_config_path(), summary
+    hermes_config_path = (
+        block.get("hermes_config_path")
+        if isinstance(block.get("hermes_config_path"), str) and block.get("hermes_config_path").strip()
+        else str(Path.home() / ".hermes" / "config.yaml")
+    )
+    notify_raw = block.get("notify", False)
+    notify = bool(notify_raw) if not isinstance(notify_raw, str) else notify_raw.strip().lower() in ("1", "true", "yes")
+    notify_channel = block.get("notify_channel")
+    ch = str(notify_channel).strip().lower() if isinstance(notify_channel, str) and notify_channel.strip() else "evolution"
+
+    return {
+        "repo_root": str(Path(str(repo_root)).expanduser()),
+        "git_remote": str(git_remote),
+        "hermes_config_path": str(Path(str(hermes_config_path)).expanduser()),
+        "auto_sync": bool(block.get("auto_sync", False)),
+        "auto_hermes_update": bool(block.get("auto_hermes_update", False)),
+        "notify": notify,
+        "notify_channel": ch if ch in ("evolution", "telegram") else "evolution",
+    }
 
 
 def merge_skills_roots_into_config(paths_str: list[str]) -> tuple[Path, list[str]]:
@@ -378,6 +506,78 @@ def merge_models_discovery_from_workspace_scan(scan: dict[str, Any]) -> Path:
     return save_user_config(cfg)
 
 
+def primary_skills_dotenv_from_inventory() -> Path | None:
+    """
+    Déduit ``…/skills/.env`` à partir de ``skill_md_paths`` (ancêtre commun avec ``orgs/`` ou ``common/``).
+    """
+    mds = skill_md_paths_resolved()
+    if not mds:
+        return None
+    try:
+        common = Path(os.path.commonpath([str(m.resolve()) for m in mds]))
+    except (ValueError, OSError):
+        common = mds[0].resolve().parent
+    cur = common
+    for _ in range(16):
+        if (cur / "orgs").is_dir() or (cur / "common").is_dir():
+            return (cur / ".env").resolve()
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+    return None
+
+
+def security_env_paths_strings_ordered() -> list[str]:
+    """
+    Chemins .env pour l’onglet Sécurité (lecture / édition / scan de présence).
+
+    Clé absente : défaut = dépôt skills déduit, ``~/.hermes/.env``, ``~/.config/zab/.env``.
+    ``security_env_paths: []`` explicite : aucun fichier configuré.
+    """
+    cfg = load_user_config()
+    if "security_env_paths" in cfg:
+        return _as_str_list(cfg.get("security_env_paths"))
+    out: list[str] = []
+    inv = primary_skills_dotenv_from_inventory()
+    if inv is not None:
+        out.append(str(inv))
+    for s in skills_roots_strings_ordered():
+        candidate = f"{s.rstrip('/')}/.env"
+        if candidate not in out:
+            out.append(candidate)
+    leg = cfg.get("skills_root")
+    if isinstance(leg, str) and leg.strip():
+        candidate = f"{leg.strip().rstrip('/')}/.env"
+        if candidate not in out:
+            out.append(candidate)
+    out.append(str(Path.home() / ".hermes" / ".env"))
+    out.append(str(config_dir() / ".env"))
+    deduped: list[str] = []
+    for item in out:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def security_env_paths_resolved() -> list[Path]:
+    out: list[Path] = []
+    seen: set[str] = set()
+    for s in security_env_paths_strings_ordered():
+        try:
+            p = Path(s).expanduser().resolve()
+        except OSError:
+            continue
+        if p.name != ".env":
+            continue
+        k = str(p)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(p)
+    return out
+
+
 def tracked_env_extra_from_user_config() -> list[str]:
     cfg = load_user_config()
     raw = cfg.get("tracked_env_extra")
@@ -438,8 +638,8 @@ def task_sources_from_user_config() -> tuple[list[dict[str, Any]], list[str]]:
         if not label:
             errors.append(f"{prefix} id={sid!r}: label manquant")
             continue
-        if backend not in ("gitlab", "linear", "notion"):
-            errors.append(f"{prefix} id={sid!r}: backend invalide (gitlab|linear|notion)")
+        if backend not in ("gitlab", "linear", "notion", "github"):
+            errors.append(f"{prefix} id={sid!r}: backend invalide (gitlab|linear|notion|github)")
             continue
 
         entry: dict[str, Any] = {
@@ -449,6 +649,7 @@ def task_sources_from_user_config() -> tuple[list[dict[str, Any]], list[str]]:
             "routing_doc": _as_str(item.get("routing_doc")),
             "mcp_hint": _as_str(item.get("mcp_hint")),
             "local_project_path": _as_str(item.get("local_project_path")),
+            "url": _as_str(item.get("url")),
         }
 
         env_token = _as_str(item.get("env_token"))
@@ -473,6 +674,9 @@ def task_sources_from_user_config() -> tuple[list[dict[str, Any]], list[str]]:
         elif backend == "linear":
             entry["env_token"] = env_token or "LINEAR_API_KEY"
             entry["team_keys"] = [k.upper() for k in _as_str_list(item.get("team_keys"))]
+        elif backend == "github":
+            entry["env_token"] = env_token or "GITHUB_TOKEN"
+            entry["repos"] = _as_str_list(item.get("repos"))
         else:
             entry["env_token"] = env_token or "NOTION_TOKEN"
             db = _as_str(item.get("database_id"))

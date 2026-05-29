@@ -60,6 +60,44 @@ def test_discover_projects_cursor_claude(monkeypatch, tmp_path_factory) -> None:
     assert ids == {"ctx", "other"}
 
 
+def test_discover_projects_excludes_global_skills_repo(monkeypatch, tmp_path_factory) -> None:
+    home = tmp_path_factory.mktemp("wp-exclude-skills")
+    monkeypatch.setenv("HOME", str(home))
+    proot = home / "projects"
+    proot.mkdir()
+    global_repo = proot / "skills"
+    rogue_project_skill = global_repo / ".cursor" / "skills" / "duplicate" / "SKILL.md"
+    rogue_project_skill.parent.mkdir(parents=True)
+    rogue_project_skill.write_text("# duplicate\n", encoding="utf-8")
+    real_project = proot / "demo-app"
+    real_skill = real_project / ".cursor" / "skills" / "ctx" / "SKILL.md"
+    real_skill.parent.mkdir(parents=True)
+    real_skill.write_text("# ctx\n", encoding="utf-8")
+
+    cfg_d = home / ".config" / "zab"
+    cfg_d.mkdir(parents=True)
+    (cfg_d / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "projects_roots": [str(proot.resolve())],
+                "skills_roots": [str(global_repo.resolve())],
+                "skill_md_paths": [],
+                "claude_plugin_paths": [],
+                "cli_watchlist": [],
+                "tracked_env_extra": [],
+                "skills_sync": {"repo_root": str(global_repo.resolve())},
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    rows = discover_projects()
+
+    assert [row["name"] for row in rows] == ["demo-app"]
+
+
 def test_discover_projects_nested_org(monkeypatch, tmp_path_factory) -> None:
     home = tmp_path_factory.mktemp("wp-nested")
     monkeypatch.setenv("HOME", str(home))

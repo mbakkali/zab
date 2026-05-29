@@ -1,23 +1,21 @@
-# Copier vers ~/.config/zab/local-tools.yaml (recommandé) ou zab/local-tools.yaml dans le clone.
+# Copy to ~/.config/zab/local-tools.yaml (recommended) or zab/local-tools.yaml in your clone.
 #
-# cli_watchlist : binaires à tester avec `which` lors du scan (ex. gh, kubectl).
-# Les autres outils peuvent être ajoutés manuellement dans ce YAML ou dans
-# ~/.config/zab/config.yaml sous la clé cli_watchlist.
+# cli_watchlist: binaries to probe with `which` during scans (e.g. gh, kubectl).
+# Add more tools manually in this YAML or in ~/.config/zab/config.yaml under cli_watchlist.
 
 ide:
   cursor_config: ~/.cursor/mcp.json
   claude_desktop_config: ~/Library/Application Support/Claude/claude_desktop_config.json
   codexbar:
-    note: "Lien ou chemin vers Codexbar quand tu as une spec d’intégration."
+    note: "Link or path to Codexbar when you have an integration spec."
     url: ""
 
 cli_watchlist:
   - gh
-  - mempalace
 
 proxies:
   litellm:
-    base_url: "https://litellm.fmetrik.com"
+    base_url: "https://litellm.example.com"
     api_key_env: "OPENAI_API_KEY"
   openrouter:
     base_url: "https://openrouter.ai/api/v1"

@@ -83,3 +83,95 @@ def test_tasks_inbox_gitlab_mocked(tmp_path, monkeypatch):
     assert body["sources"][0]["status"] == "ok"
     assert len(body["sources"][0]["items"]) == 1
     assert body["sources"][0]["items"][0]["title"] == "Issue test"
+
+
+def _write_single_gitlab_source(tmp_path):
+    """Helper : écrit un task_sources GitLab unique dans le config.yaml du HOME isolé."""
+    cfg = tmp_path / ".config" / "zab" / "config.yaml"
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    data["task_sources"] = [
+        {
+            "id": "gl-check",
+            "label": "GitLab à tester",
+            "backend": "gitlab",
+            "host": "gitlab.com",
+            "path_with_namespace": "foo/bar",
+        },
+    ]
+    cfg.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def test_check_single_source_unknown_id_returns_404(tmp_path):
+    _write_single_gitlab_source(tmp_path)
+    client = TestClient(create_app())
+    r = client.post("/api/tasks/sources/does-not-exist/check")
+    assert r.status_code == 404
+
+
+def test_check_single_source_skipped_without_token(tmp_path, monkeypatch):
+    _write_single_gitlab_source(tmp_path)
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
+    monkeypatch.delenv("gitlab_access_token_ntp", raising=False)
+    monkeypatch.delenv("gitlab_access_token_mehdi_group", raising=False)
+    client = TestClient(create_app())
+    r = client.post("/api/tasks/sources/gl-check/check")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == "gl-check"
+    assert body["status"] == "skipped"
+    assert body["token_present"] is False
+    assert "GITLAB_TOKEN" in (body.get("reason") or "")
+    assert "checked_at_utc" in body
+
+
+def test_check_single_source_ok_updates_cache(tmp_path, monkeypatch):
+    _write_single_gitlab_source(tmp_path)
+    monkeypatch.setenv("GITLAB_TOKEN", "glpat-test")
+
+    monkeypatch.setattr(
+        "zab.services.tasks_inbox._fetch_gitlab",
+        lambda *_a, **_k: [
+            {
+                "identifier": "#1",
+                "title": "T",
+                "url": "https://gitlab.com/foo/bar/-/issues/1",
+                "state": "opened",
+                "updated_at": "2024-01-01T00:00:00Z",
+            }
+        ],
+    )
+    client = TestClient(create_app())
+    full = client.get("/api/tasks/inbox").json()
+    assert full["sources"][0]["status"] == "ok"
+
+    r = client.post("/api/tasks/sources/gl-check/check")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["token_present"] is True
+    assert len(body["items"]) == 1
+
+    refreshed = client.get("/api/tasks/inbox").json()
+    assert refreshed["sources"][0]["status"] == "ok"
+    assert refreshed["sources"][0]["items"][0]["identifier"] == "#1"
+
+
+def test_check_single_source_http_error_reflected(tmp_path, monkeypatch):
+    _write_single_gitlab_source(tmp_path)
+    monkeypatch.setenv("GITLAB_TOKEN", "glpat-test")
+
+    import httpx as _httpx
+
+    def _boom(*_a, **_k):
+        req = _httpx.Request("GET", "https://gitlab.com")
+        resp = _httpx.Response(404, request=req)
+        raise _httpx.HTTPStatusError("404", request=req, response=resp)
+
+    monkeypatch.setattr("zab.services.tasks_inbox._fetch_gitlab", _boom)
+    client = TestClient(create_app())
+    r = client.post("/api/tasks/sources/gl-check/check")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "error"
+    assert "404" in (body.get("reason") or "")
+    assert body["token_present"] is True

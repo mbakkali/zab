@@ -1,22 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { useI18n } from '@/i18n/use-i18n'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Folder02Icon } from '@hugeicons/core-free-icons'
-import { RefreshCw, Save } from 'lucide-react'
+import { Filter, LayoutGrid, List, RefreshCw, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
+import { ProjectActions, type OverviewProject } from '@/components/project-actions'
+import { ProjectsTable } from '@/components/projects-table'
 import { cn } from '@/lib/utils'
-
-type OverviewProject = {
-  name: string
-  path: string
-  org: string
-  projects_root: string
-  /** Dossier parent sous la racine (ex. carrefour) quand le projet est un sous-dossier. */
-  workspace_parent?: string | null
-  skills: { id: string; path: string; rel_from_home?: string; source?: string }[]
-}
 
 type OverviewLike = {
   user_config_path?: string
@@ -31,8 +24,8 @@ function shortenHome(p: string): string {
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init)
   if (!r.ok) {
-    const t = await r.text()
-    throw new Error(t || r.statusText)
+    const respText = await r.text()
+    throw new Error(respText || r.statusText)
   }
   return r.json() as Promise<T>
 }
@@ -41,11 +34,22 @@ function ProjectCard({
   p,
   shortenHome: sh,
   onOpenSkill,
+  miningProjectPath,
+  onMineMemory,
+  onRunSecurityScan,
 }: {
   p: OverviewProject
   shortenHome: (path: string) => string
   onOpenSkill: (path: string) => void
+  miningProjectPath?: string | null
+  onMineMemory?: (path: string, name: string) => void | Promise<void>
+  onRunSecurityScan?: (preset: string, path: string) => void
 }) {
+  const { t } = useI18n()
+  const gitRepo = Boolean(p.git_repo)
+  const branch = p.git_branch || null
+  const remote = (p.remote_host || '') as string
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -63,58 +67,61 @@ function ProjectCard({
             <span className="text-muted-foreground">
               {p.skills.length} skill{p.skills.length > 1 ? 's' : ''}
             </span>
+            {gitRepo ? (
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                  'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100',
+                )}
+                title={p.origin_https || undefined}
+              >
+                git{branch ? ` · ${branch}` : ''}
+              </span>
+            ) : (
+              <span className="text-muted-foreground rounded-full px-2 py-0.5 text-[11px]">{t('projects.card.noGit')}</span>
+            )}
+            {remote ? (
+              <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[11px] capitalize">
+                {remote}
+              </span>
+            ) : null}
           </span>
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="text-xs"
-            onClick={() => {
-              void (async () => {
-                try {
-                  const r = await fetch('/api/system/open-folder', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: p.path }),
-                  })
-                  if (!r.ok) {
-                    const t = await r.text()
-                    throw new Error(t || r.statusText)
-                  }
-                  toast.success('Dossier ouvert')
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : String(e))
-                }
-              })()
-            }}
-          >
-            Ouvrir le dossier
-          </Button>
-        </div>
+        <ProjectActions
+          p={p}
+          miningProjectPath={miningProjectPath}
+          onMineMemory={onMineMemory}
+          onRunSecurityScan={onRunSecurityScan}
+        />
         <p className="text-muted-foreground font-mono text-[10px] break-all">{sh(p.path)}</p>
-        <ul className="space-y-1.5 border-t border-zinc-100 pt-2 text-xs dark:border-zinc-800">
-          {p.skills.map((s) => (
-            <li key={s.path} className="flex flex-col gap-0.5">
-              <button type="button" onClick={() => onOpenSkill(s.path)} className="text-primary w-fit hover:underline">
-                <code className="font-mono text-[11px]">{s.id}</code>
-              </button>
-              <button
-                type="button"
-                className="text-muted-foreground truncate text-left hover:text-foreground"
-                onClick={() => {
-                  window.location.href = `vscode://file${s.path}`
-                }}
-                title={s.path}
-              >
-                {s.rel_from_home ? sh(s.rel_from_home) : sh(s.path)}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <details className="rounded-md border border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-950/40">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">
+            {t('projects.card.skillsExpand', { count: String(p.skills.length) })}
+          </summary>
+          <div className="max-h-[min(50vh,28rem)] overflow-y-auto border-t border-zinc-200 px-2 pb-2 pt-1 dark:border-zinc-800">
+            <ul className="space-y-1.5 text-xs">
+              {p.skills.map((s) => (
+                <li key={s.path} className="flex flex-col gap-0.5">
+                  <button type="button" onClick={() => onOpenSkill(s.path)} className="text-primary w-fit hover:underline">
+                    <code className="font-mono text-[11px]">{s.id}</code>
+                  </button>
+                  <button
+                    type="button"
+                    className="text-muted-foreground truncate text-left hover:text-foreground"
+                    onClick={() => {
+                      window.location.href = `vscode://file${s.path}`
+                    }}
+                    title={s.path}
+                  >
+                    {s.rel_from_home ? sh(s.rel_from_home) : sh(s.path)}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </details>
       </CardContent>
     </Card>
   )
@@ -124,14 +131,40 @@ export function ProjectsView({
   overview,
   onOpenSkill,
   onRefreshOverview,
+  miningProjectPath,
+  onMineMemory,
+  onRunSecurityScan,
 }: {
   overview: OverviewLike | null
   onOpenSkill: (path: string) => void
   onRefreshOverview: () => Promise<void> | void
+  miningProjectPath?: string | null
+  onMineMemory?: (path: string, name: string) => void | Promise<void>
+  onRunSecurityScan?: (preset: string, path: string) => void
 }) {
+  const { t } = useI18n()
   const [rootsText, setRootsText] = useState('')
   const [saving, setSaving] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [filterQuery, setFilterQuery] = useState('')
+  const [filterOrg, setFilterOrg] = useState<string>('all')
+  const [filterGit, setFilterGit] = useState<'all' | 'git' | 'nogit'>('all')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    try {
+      const v = localStorage.getItem('zab-projects-view')
+      return v === 'list' ? 'list' : 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('zab-projects-view', viewMode)
+    } catch {
+      /* ignore */
+    }
+  }, [viewMode])
 
   useEffect(() => {
     if (!overview) return
@@ -152,9 +185,37 @@ export function ProjectsView({
   }, [overview?.projects])
 
   const projects = overview?.projects ?? []
+
+  const orgOptions = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of projects) s.add(p.org)
+    return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [projects])
+
+  const filteredProjects = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase()
+    let xs = projects
+    if (q) {
+      xs = xs.filter((p) => {
+        if (p.name.toLowerCase().includes(q)) return true
+        if (p.org.toLowerCase().includes(q)) return true
+        if (p.path.toLowerCase().includes(q)) return true
+        const wp = p.workspace_parent
+        if (wp && wp.toLowerCase().includes(q)) return true
+        if ((p.git_branch || '').toLowerCase().includes(q)) return true
+        if ((p.remote_host || '').toLowerCase().includes(q)) return true
+        return p.skills.some((s) => s.id.toLowerCase().includes(q) || s.path.toLowerCase().includes(q))
+      })
+    }
+    if (filterOrg !== 'all') xs = xs.filter((p) => p.org === filterOrg)
+    if (filterGit === 'git') xs = xs.filter((p) => p.git_repo)
+    if (filterGit === 'nogit') xs = xs.filter((p) => !p.git_repo)
+    return xs
+  }, [projects, filterQuery, filterOrg, filterGit])
+
   const grouped = useMemo(() => {
-    const nested = projects.filter((p) => p.workspace_parent)
-    const root = projects.filter((p) => !p.workspace_parent)
+    const nested = filteredProjects.filter((p) => p.workspace_parent)
+    const root = filteredProjects.filter((p) => !p.workspace_parent)
     const byParent = new Map<string, OverviewProject[]>()
     for (const p of nested) {
       const key = p.workspace_parent ?? ''
@@ -167,15 +228,15 @@ export function ProjectsView({
     const parentKeys = Array.from(byParent.keys()).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
     root.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
     return { byParent, parentKeys, root }
-  }, [projects])
+  }, [filteredProjects])
 
   const applyDetectedRoots = () => {
     if (detectedRoots.length === 0) {
-      toast.message('Aucune racine déduite', { description: 'Ajoutez des SKILL.md sous ~/projects ou renseignez les chemins ci‑dessous.' })
+      toast.message(t('projects.toast.noRoots'), { description: t('projects.toast.noRootsDesc') })
       return
     }
     setRootsText(detectedRoots.map((r) => shortenHome(r)).join('\n'))
-    toast.success(`${detectedRoots.length} racine(s) proposée(s)`)
+    toast.success(t('projects.toast.rootsProposed', { count: String(detectedRoots.length) }))
   }
 
   const saveRoots = async () => {
@@ -190,8 +251,9 @@ export function ProjectsView({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roots }),
       })
-      toast.success('projects_roots enregistré', {
-        description: r.projects_roots.join(', ') || '(liste vide — découverte désactivée)',
+      toast.success(t('projects.toast.saved'), {
+        description:
+          r.projects_roots.join(', ') || t('projects.toast.savedEmpty'),
       })
       await onRefreshOverview()
     } catch (e) {
@@ -205,7 +267,7 @@ export function ProjectsView({
     setRefreshing(true)
     try {
       await onRefreshOverview()
-      toast.success('Aperçu actualisé')
+      toast.success(t('projects.toast.refreshed'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -213,20 +275,15 @@ export function ProjectsView({
     }
   }
 
-  if (!overview) return <p className="text-muted-foreground">Chargement…</p>
+  if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
 
   const cfgPath = (overview.user_config_path ?? '').replace(/^\/Users\/[^/]+/, '~')
 
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Projets</h2>
-        <p className="text-muted-foreground text-sm">
-          Dépôts sous <code className="font-mono text-[11px]">projects_roots</code> : dossiers immédiats et, le cas échéant,{' '}
-          <strong className="font-medium text-foreground">un niveau de sous-dossiers</strong> (ex.{' '}
-          <code className="font-mono text-[11px]">carrefour/danmdata</code>). Skills : racine du projet,{' '}
-          <code className="font-mono text-[11px]">.cursor/**/SKILL.md</code>, <code className="font-mono text-[11px]">.claude/**/SKILL.md</code>.
-        </p>
+        <h2 className="text-2xl font-semibold tracking-tight">{t('projects.title')}</h2>
+        <p className="text-muted-foreground text-sm">{t('projects.subtitle')}</p>
       </header>
 
       <Card>
@@ -236,29 +293,28 @@ export function ProjectsView({
               <HugeiconsIcon icon={Folder02Icon} size={20} />
             </div>
             <div>
-              <CardTitle className="text-base">Racines dans la config</CardTitle>
+              <CardTitle className="text-base">{t('projects.roots.title')}</CardTitle>
               <CardDescription>
-                Fichier : <code className="font-mono text-[11px]">{cfgPath || '—'}</code> — clé{' '}
-                <code className="font-mono text-[11px]">projects_roots</code>
+                {t('projects.roots.fileHint', { path: cfgPath || '—' })}
               </CardDescription>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" disabled={refreshing} onClick={() => void refresh()}>
               <RefreshCw className="mr-1.5 size-3.5 opacity-70" />
-              Rafraîchir
+              {t('projects.roots.refresh')}
             </Button>
             <Button type="button" variant="secondary" size="sm" onClick={applyDetectedRoots} disabled={detectedRoots.length === 0}>
-              Remplir depuis la détection
+              {t('projects.roots.fillFromDetection')}
             </Button>
             <Button type="button" size="sm" disabled={saving} onClick={() => void saveRoots()}>
               <Save className="mr-1.5 size-3.5 opacity-90" />
-              Enregistrer dans config.yaml
+              {t('projects.roots.save')}
             </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          <label className="text-muted-foreground text-xs font-medium">Une racine par ligne (ex. ~/projects)</label>
+          <label className="text-muted-foreground text-xs font-medium">{t('projects.roots.label')}</label>
           <Textarea
             value={rootsText}
             onChange={(e) => setRootsText(e.target.value)}
@@ -266,55 +322,174 @@ export function ProjectsView({
             className="font-mono text-xs"
             spellCheck={false}
           />
-          <p className="text-muted-foreground text-[11px] leading-relaxed">
-            Après enregistrement, recharge l’aperçu : projets à la racine de chaque ligne + sous-projets un niveau plus bas
-            lorsqu’ils contiennent des SKILL.md. Liste vide = désactive la découverte (<code className="font-mono">projects_roots: []</code>).
-          </p>
+          <p className="text-muted-foreground text-[11px] leading-relaxed">{t('projects.roots.hint')}</p>
         </CardContent>
       </Card>
 
       {projects.length === 0 ? (
         <p className="text-muted-foreground rounded-lg border border-dashed py-12 text-center text-sm">
-          Aucun projet avec SKILL.md pour l’instant. Vérifiez les racines ci‑dessus puis enregistrez et rafraîchissez.
+          {t('projects.empty.none')}
         </p>
       ) : (
-        <div className="space-y-8">
-          {grouped.parentKeys.map((parent) => (
-            <section key={parent} className="space-y-3">
-              <h3 className="text-muted-foreground flex flex-wrap items-baseline gap-2 border-b border-zinc-200 pb-2 text-sm font-medium dark:border-zinc-800">
-                <span className="text-foreground">{parent}</span>
-                <span className="font-normal">· sous-projets</span>
-                <span className="font-mono text-[11px] font-normal opacity-80">
-                  {(() => {
-                    const first = (grouped.byParent.get(parent) ?? [])[0]?.path
-                    if (!first) return ''
-                    const segs = first.split('/').filter(Boolean)
-                    segs.pop()
-                    return shortenHome(`/${segs.join('/')}`)
-                  })()}
-                </span>
-              </h3>
-              <div className="grid gap-3 md:grid-cols-2">
-                {(grouped.byParent.get(parent) ?? []).map((p) => (
-                  <ProjectCard key={p.path} p={p} shortenHome={shortenHome} onOpenSkill={onOpenSkill} />
-                ))}
+        <>
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pb-2">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Filter className="text-muted-foreground size-4" />
+                  {t('projects.filters.title')}
+                </CardTitle>
+                <CardDescription>{t('projects.filters.description')}</CardDescription>
               </div>
-            </section>
-          ))}
+              <div className="flex gap-1">
+                <Button
+                  type="button"
+                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
+                  size="sm"
+                  aria-pressed={viewMode === 'grid'}
+                  onClick={() => setViewMode('grid')}
+                >
+                  <LayoutGrid className="mr-1.5 size-3.5" />
+                  {t('projects.filters.grid')}
+                </Button>
+                <Button
+                  type="button"
+                  variant={viewMode === 'list' ? 'default' : 'ghost'}
+                  size="sm"
+                  aria-pressed={viewMode === 'list'}
+                  onClick={() => setViewMode('list')}
+                >
+                  <List className="mr-1.5 size-3.5" />
+                  {t('projects.filters.list')}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+              <div className="min-w-[200px] flex-1 space-y-1">
+                <label htmlFor="proj-filter-q" className="text-muted-foreground text-xs font-medium">
+                  {t('projects.filters.search')}
+                </label>
+                <input
+                  id="proj-filter-q"
+                  type="search"
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  placeholder={t('projects.filters.searchPlaceholder')}
+                  className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="proj-filter-org" className="text-muted-foreground text-xs font-medium">
+                  {t('projects.filters.org')}
+                </label>
+                <select
+                  id="proj-filter-org"
+                  value={filterOrg}
+                  onChange={(e) => setFilterOrg(e.target.value)}
+                  className="border-input bg-background h-9 rounded-md border px-2 text-sm shadow-sm"
+                >
+                  <option value="all">{t('projects.filters.allOrgs')}</option>
+                  {orgOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="proj-filter-git" className="text-muted-foreground text-xs font-medium">
+                  {t('projects.filters.git')}
+                </label>
+                <select
+                  id="proj-filter-git"
+                  value={filterGit}
+                  onChange={(e) => setFilterGit(e.target.value as 'all' | 'git' | 'nogit')}
+                  className="border-input bg-background h-9 rounded-md border px-2 text-sm shadow-sm"
+                >
+                  <option value="all">{t('projects.filters.allGit')}</option>
+                  <option value="git">{t('projects.filters.gitOnly')}</option>
+                  <option value="nogit">{t('projects.filters.noGit')}</option>
+                </select>
+              </div>
+              <p className="text-muted-foreground w-full text-[11px] sm:mb-1">
+                {t('projects.filters.displayCount', {
+                  shown: String(filteredProjects.length),
+                  total: String(projects.length),
+                })}
+                {filteredProjects.length !== projects.length ? t('projects.filters.filterActive') : ''}.
+              </p>
+            </CardContent>
+          </Card>
 
-          {grouped.root.length > 0 ? (
-            <section className="space-y-3">
-              <h3 className="text-muted-foreground border-b border-zinc-200 pb-2 text-sm font-medium dark:border-zinc-800">
-                À la racine des <code className="font-mono text-[11px]">projects_roots</code>
-              </h3>
-              <div className="grid gap-3 md:grid-cols-2">
-                {grouped.root.map((p) => (
-                  <ProjectCard key={p.path} p={p} shortenHome={shortenHome} onOpenSkill={onOpenSkill} />
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </div>
+          {filteredProjects.length === 0 ? (
+            <p className="text-muted-foreground rounded-lg border border-dashed py-10 text-center text-sm">
+              {t('projects.empty.filtered')}
+            </p>
+          ) : viewMode === 'list' ? (
+            <ProjectsTable
+              projects={filteredProjects}
+              shortenHome={shortenHome}
+              onOpenSkill={onOpenSkill}
+              miningProjectPath={miningProjectPath}
+              onMineMemory={onMineMemory}
+              onRunSecurityScan={onRunSecurityScan}
+            />
+          ) : (
+            <div className="space-y-8">
+              {grouped.parentKeys.map((parent) => (
+                <details key={parent} className="space-y-3" open>
+                  <summary className="text-muted-foreground flex cursor-pointer list-none flex-wrap items-baseline gap-2 border-b border-zinc-200 pb-2 text-sm font-medium marker:content-none dark:border-zinc-800 [&::-webkit-details-marker]:hidden">
+                    <span className="text-foreground">{parent}</span>
+                    <span className="font-normal">{t('projects.card.subprojects')}</span>
+                    <span className="font-mono text-[11px] font-normal opacity-80">
+                      {(() => {
+                        const first = (grouped.byParent.get(parent) ?? [])[0]?.path
+                        if (!first) return ''
+                        const segs = first.split('/').filter(Boolean)
+                        segs.pop()
+                        return shortenHome(`/${segs.join('/')}`)
+                      })()}
+                    </span>
+                  </summary>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {(grouped.byParent.get(parent) ?? []).map((p) => (
+                      <ProjectCard
+                        key={p.path}
+                        p={p}
+                        shortenHome={shortenHome}
+                        onOpenSkill={onOpenSkill}
+                        miningProjectPath={miningProjectPath}
+                        onMineMemory={onMineMemory}
+                        onRunSecurityScan={onRunSecurityScan}
+                      />
+                    ))}
+                  </div>
+                </details>
+              ))}
+
+              {grouped.root.length > 0 ? (
+                <details className="space-y-3" open>
+                  <summary className="text-muted-foreground flex cursor-pointer list-none items-baseline gap-2 border-b border-zinc-200 pb-2 text-sm font-medium marker:content-none dark:border-zinc-800 [&::-webkit-details-marker]:hidden">
+                    À la racine des <code className="font-mono text-[11px]">projects_roots</code>
+                  </summary>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {grouped.root.map((p) => (
+                      <ProjectCard
+                        key={p.path}
+                        p={p}
+                        shortenHome={shortenHome}
+                        onOpenSkill={onOpenSkill}
+                        miningProjectPath={miningProjectPath}
+                        onMineMemory={onMineMemory}
+                        onRunSecurityScan={onRunSecurityScan}
+                      />
+                    ))}
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          )}
+        </>
       )}
     </div>
   )

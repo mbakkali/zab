@@ -5,7 +5,11 @@ import { defineConfig, devices } from '@playwright/test'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const zabRepoRoot = path.resolve(__dirname, '..')
 const testPort = process.env.ZAB_E2E_PORT ?? '18742'
-const baseURL = `http://127.0.0.1:${testPort}`
+/** Si défini (URL complète sans slash final), les tests frappent cette instance et aucun serveur local n’est démarré. */
+const remoteBase =
+  typeof process.env.PLAYWRIGHT_BASE_URL === 'string' ? process.env.PLAYWRIGHT_BASE_URL.trim() : ''
+const baseURL =
+  remoteBase.length > 0 ? remoteBase.replace(/\/$/, '') : `http://127.0.0.1:${testPort}`
 
 export default defineConfig({
   testDir: './e2e',
@@ -19,13 +23,17 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: {
-    command: `bash "${path.join(zabRepoRoot, 'scripts/zab-e2e-dashboard.sh')}"`,
-    cwd: zabRepoRoot,
-    url: `${baseURL}/api/health`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  },
+  ...(remoteBase.length > 0
+    ? {}
+    : {
+        webServer: {
+          command: `bash "${path.join(zabRepoRoot, 'scripts/zab-e2e-dashboard.sh')}"`,
+          cwd: zabRepoRoot,
+          url: `${baseURL}/api/health`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 180_000,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      }),
 })

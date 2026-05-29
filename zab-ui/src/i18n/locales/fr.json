@@ -1,0 +1,746 @@
+{
+  "nav": {
+    "brandTagline": "skills · MCP · scan",
+    "overview": "Vue d’ensemble",
+    "systemCheck": "Check system",
+    "orgs": "Organisations",
+    "projects": "Projets",
+    "tasksInbox": "Tâches (multi-outils)",
+    "channels": "Canaux de comms",
+    "conversations": "Conversations",
+    "plugins": "Plugins",
+    "connectors": "Connecteurs",
+    "config": "Configuration",
+    "skills": "Skills",
+    "models": "Modèles & agents",
+    "workstation": "Workstation",
+    "hermes": "Hermes",
+    "crons": "Crons (Schedules)",
+    "cronsFull": "Crons & Planificateurs",
+    "tests": "Tests & jobs",
+    "memory": "Mémoire",
+    "security": "Sécurité",
+    "exports": "Exports",
+    "ide": "IDE / outils",
+    "ideFull": "IDE & outils",
+    "toolsGroup": "Outils",
+    "editSkill": "Éditer SKILL",
+    "mobileDrawerTitle": "Navigation zab",
+    "openMenu": "Ouvrir le menu de navigation"
+  },
+  "language": {
+    "en": "Anglais",
+    "fr": "Français",
+    "switchTo": "Changer la langue : {{lang}}"
+  },
+  "common": {
+    "loading": "Chargement…",
+    "close": "Fermer",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "reload": "Recharger",
+    "copy": "Copier",
+    "view": "Voir",
+    "detail": "Détail",
+    "add": "Ajouter",
+    "prev": "Précédent",
+    "next": "Suivant",
+    "notConfigured": "— (non configuré)",
+    "dash": "—",
+    "copied": "Copié",
+    "copyFailed": "Copie impossible",
+    "pathCopied": "Chemin copié",
+    "contentCopied": "Contenu copié",
+    "targetCopied": "Cible copiée",
+    "fileSaved": "Fichier enregistré",
+    "jobDone": "Job terminé",
+    "jobDoneWithCode": "Job terminé : {{status}} (code {{code}})",
+    "sseInterrupted": "Flux SSE interrompu",
+    "noSelection": "Aucune sélection",
+    "enabled": "activé",
+    "disabled": "désactivé",
+    "active": "actif",
+    "ok": "OK",
+    "warn": "À surveiller",
+    "fail": "KO",
+    "pending": "En attente",
+    "running": "En cours…",
+    "refresh": "Rafraîchir",
+    "refreshing": "Rafraîchissement…",
+    "generate": "Générer",
+    "generating": "Génération…",
+    "never": "Jamais",
+    "pageOf": "Page {{page}}/{{total}}",
+    "results": "{{count}} résultat(s)"
+  },
+  "app": {
+    "docTitle": "zab dashboard",
+    "docTitleTab": "zab — {{title}}",
+    "skillsConfigMissing": "Config skills manquante"
+  },
+  "overview": {
+    "title": "Vue d’ensemble",
+    "subtitle": "État du dépôt skills, MCP et plugins pour votre workspace.",
+    "stats": {
+      "orgs": "Organisations",
+      "skills": "Skills",
+      "connectors": "Connecteurs",
+      "plugins": "Plugins"
+    },
+    "skillsRoot": {
+      "title": "Racine du dépôt",
+      "notConfigured": "— (non configuré)"
+    },
+    "mcpRegistry": "MCP registry",
+    "skillRefSource": "Skill source de référence",
+    "stateIndex": {
+      "title": "Index local-first",
+      "notLoaded": "Index non chargé",
+      "neverSynced": "jamais synchronisé"
+    },
+    "quickStart": {
+      "title": "Démarrage rapide",
+      "subtitle": "Quelques actions courantes",
+      "conversations": "Conversations agents (historique)",
+      "projects": "Projets locaux & config",
+      "connectors": "Configurer les connecteurs",
+      "skills": "Parcourir les skills",
+      "tests": "Lancer un job de test",
+      "security": "Vérifier la sécurité",
+      "rescanTools": "Relancer le scan outils",
+      "cliHelp": "Options CLI zab (--help)"
+    },
+    "cliHelp": {
+      "title": "Options du CLI zab"
+    },
+    "lastCheck": "Dernier check :",
+    "serverStatus": "Serveur zab {{version}} · Fichier lu : {{configPath}} · Chemins skills : {{skillsPaths}}",
+    "skillsNotConfigured": "non configuré — lancer zab scan --apply-config",
+    "toast": {
+      "scanDone": "Scan terminé — {{cli}} commandes zab, {{scripts}} scripts",
+      "indexSynced": "Index zab synchronisé"
+    }
+  },
+  "systemCheck": {
+    "title": "Check system",
+    "subtitle": "Vue santé read-only des services zab (API, index, MCP, skills).",
+    "run": "Lancer le check",
+    "downloadReport": "Télécharger le rapport zab",
+    "fixWithHermes": "Fixer avec Hermes",
+    "noChecksYet": "Aucun check lancé",
+    "running": "Vérification en cours…",
+    "summaryCounts": "{{ok}} OK · {{warn}} à surveiller · {{fail}} KO · {{total}} checks",
+    "table": {
+      "status": "État",
+      "service": "Service",
+      "message": "Message",
+      "details": "Détails"
+    },
+    "dashboard": "Dashboard",
+    "subtitleFull": "Vue santé read-only des services zab : configuration, index, skills, mémoire, Composio, sécurité et CLI locaux.",
+    "runFirst": "Lancez d’abord un check system",
+    "checksCount": "{{count}} checks",
+    "toast": {
+      "done": "Check terminé : {{pct}}%",
+      "reportDownloaded": "Rapport zab téléchargé",
+      "hermesIssues": "Hermes lancé avec {{count}} problème(s) à fixer",
+      "allOk": "Aucun problème à fixer — tout est OK !"
+    }
+  },
+  "orgs": {
+    "title": "Organisations",
+    "subtitle": "Skills et MCP regroupés par organisation.",
+    "subtitleCount": "{{count}} organisations (dépôt + projets locaux fusionnés)",
+    "expand": "Déplier",
+    "collapse": "Réduire",
+    "expandAria": "Déplier la liste des skills",
+    "collapseAria": "Replier la liste des skills",
+    "projectTag": "projet",
+    "footer": "Liste des dépôts sous projects_roots ; enregistrement dans ~/.config/zab/config.yaml — onglet"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "subtitle": "Bundles de plugins Claude détectés sur le disque."
+  },
+  "tests": {
+    "title": "Tests & jobs",
+    "subtitle": "Lancer des jobs zab et suivre la sortie."
+  },
+  "security": {
+    "title": "Sécurité",
+    "subtitle": "Catalogue secrets, scan env et vérifications de dépendances.",
+    "osvZab": "OSV — dépôt zab",
+    "osvZabHint": "Vulnérabilités (lockfiles Python + UI) via osv-scanner -r .",
+    "npmAudit": "npm audit — zab-ui",
+    "npmAuditHint": "Rapport npm audit dans zab-ui (nécessite package-lock.json)",
+    "osvSkills": "OSV — dépôt skills",
+    "osvSkillsHint": "Même scanner sur la racine skills (config ~/.config/zab)."
+  },
+  "exports": {
+    "title": "Exports",
+    "subtitle": "Générer des context packs pour les agents.",
+    "toastGenerated": "Context Pack généré",
+    "optionalOrg": "org optionnelle",
+    "optionalProject": "projet optionnel"
+  },
+  "memory": {
+    "title": "Mémoire",
+    "subtitle": "MemPalace (local) produit du JSONL ; zab importe dans Postgres via MEHDI_MEMORY_DATABASE_URL.",
+    "toast": {
+      "mempalaceDone": "MemPalace : indexation terminée ({{name}})",
+      "mempalaceFail": "MemPalace : échec ({{name}}) — statut {{status}}, code {{code}}",
+      "noProjects": "Aucun projet coché",
+      "mempalaceProjectFail": "MemPalace : échec sur « {{name}} » (code {{code}})",
+      "mempalaceProjectsDone": "MemPalace : {{count}} projet(s) indexé(s)",
+      "pickProject": "Choisissez un projet à scanner",
+      "scanDone": "Scan projet terminé",
+      "scanDonePersisted": "Scan projet terminé et persisté",
+      "enterQuery": "Saisissez une requête mémoire",
+      "results": "{{count}} résultat(s) mémoire"
+    },
+    "configHistoryLoading": "Chargement…",
+    "configHistoryEmpty": "Aucun historique récupérable.",
+    "csvNote": "Les fichiers .txt sont ingérés en texte ; les .csv ne donnent pas de lignes structurées dans cette vue.",
+    "skillCount": "SKILL.md :",
+    "projectsDetected": "projets détectés :",
+    "dbConfigured": "configuré",
+    "dbAbsent": "absent",
+    "scriptPresent": "script présent",
+    "scriptAbsent": "script absent",
+    "installed": "installé",
+    "absent": "absent"
+  },
+  "ide": {
+    "title": "IDE & outils",
+    "subtitle": "Outils CLI et scripts indexés depuis le scan workspace.",
+    "codeTools": "Code tools indexés",
+    "columns": {
+      "tool": "Outil",
+      "provider": "Provider",
+      "state": "État",
+      "binary": "Binaire"
+    }
+  },
+  "models": {
+    "title": "Modèles & agents",
+    "subtitle": "Configuration locale et tests d’endpoints LLM.",
+    "windowMin": "fenêtre {{min}} min",
+    "primaryWindow": "Fenêtre principale",
+    "secondaryWindow": "Fenêtre secondaire",
+    "apiMissing": "L’API « /api/agents/discovery » est absente (zab à redémarrer ou à mettre à jour). Affichage limité aux agents CodexBar.",
+    "discoverySaved": "Découverte enregistrée (agentpipe + codexbar dans models_discovery, dernier scan).",
+    "noCodexBar": "Aucun provider CodexBar dans la liste — rien à interroger pour la conso.",
+    "refreshUsage": "Rafraîchir la conso",
+    "refreshingUsage": "Rafraîchissement…",
+    "noAgents": "Aucun agent — lance « Découvrir & enregistrer » ou vérifie agentpipe / CodexBar."
+  },
+  "hermes": {
+    "title": "Hermes",
+    "subtitle": "Open WebUI locale, bridge OpenAI-compatible et profils Hermes Flowmetrik.",
+    "openWebui": "Open WebUI locale",
+    "openWebuiDesc": "Accède à l’interface web locale de Hermes depuis le navigateur.",
+    "openWebuiBtn": "Ouvrir Open WebUI locale",
+    "features": "Fonctionnalités Hermes",
+    "featuresDesc": "Capacités de pilotage Hermes exposées côté Flowmetrik.",
+    "runLocal": "Lancer Hermes en local",
+    "runLocalDesc": "Alternative sans Docker pour le bridge seul depuis",
+    "lastJob": "Dernier job :",
+    "inProgress": " … en cours",
+    "waitingDocker": "En attente de sortie Docker…",
+    "composeUp": "Démarrer Open WebUI (Docker)",
+    "stopContainers": "Arrêter les conteneurs",
+    "verifyBridge": "Vérifier le bridge",
+    "localShortcuts": "Raccourcis locaux",
+    "composeProject": "Projet Compose",
+    "bridge": "Bridge",
+    "featureSessionProfiles": "Profils de session : hermes-local, hermes-gateway, hermes-workspace.",
+    "featureContextInjection": "Injection de contexte de session : skills Flowmetrik, contexte métier et variables d’exécution.",
+    "featureOpenAiProxy": "Proxy OpenAI-compatible pour brancher Open WebUI sans modifier son code upstream.",
+    "featureUseCases": "Adapté aux usages locaux, à la gateway Flowmetrik et à l’exécution workspace.",
+    "runLocalTitle": "Lancer Hermes en local",
+    "runLocalDescFull": "Alternative sans Docker pour le bridge seul depuis {{path}} : commande uvicorn ci-dessous. La stack web complète se lance avec le bouton « Démarrer Open WebUI (Docker) »."
+  },
+  "skillEditor": {
+    "title": "Éditeur SKILL",
+    "pathHint": "orgs/… ou claude-plugins/…",
+    "close": "Fermer",
+    "load": "Charger",
+    "save": "Enregistrer",
+    "closeAria": "Fermer",
+    "toastLoaded": "SKILL chargé",
+    "toastSaved": "SKILL enregistré (backup .zab-backup-*)"
+  },
+  "conversations": {
+    "status": {
+      "missing": "Absent",
+      "detected": "Détecté",
+      "ready": "Prêt à indexer",
+      "synced": "Indexé",
+      "unsupported": "Non supporté",
+      "error": "Erreur"
+    }
+  },
+  "connectors": {
+    "title": "Connecteurs",
+    "subtitleActive": "{{active}} actifs · {{forms}} forme(s) · {{total}} connecteur(s) · {{mcp}} MCP locaux",
+    "checkAll": "Vérifier tous les connecteurs",
+    "searchPlaceholder": "Rechercher un connecteur…",
+    "searchAria": "Rechercher un connecteur",
+    "filter": {
+      "all": "Tous",
+      "mcpLocal": "MCP locaux",
+      "composio": "Composio"
+    },
+    "empty": "Aucun connecteur ne correspond.",
+    "status": {
+      "active": "actif",
+      "disabled": "désactivé"
+    },
+    "origin": {
+      "mcpLocal": "MCP local",
+      "mcpRemote": "MCP distant",
+      "composio": "Composio"
+    },
+    "formsCount": "{{count}} compte(s) · {{forms}} forme(s)",
+    "copyTarget": "Copier la cible",
+    "mcpSync": {
+      "title": "MCP locaux — scan multi-sources",
+      "description": "Dépôt skills (configs/*.json), ~/.cursor/mcp.json, Claude Desktop. Le compteur « MCP locaux » utilise la liste des connecteurs (stdio, hors Composio).",
+      "sources": "Sources",
+      "counters": "Compteurs",
+      "byOrigin": "Par origine",
+      "present": "présent",
+      "absent": "absent",
+      "serversDetected": "Serveurs détectés",
+      "uniqueSlugs": "Slugs uniques",
+      "conflicts": "Conflits (même nom, config différente)",
+      "conflictsList": "Conflits",
+      "loadingStatus": "Chargement du statut MCP…",
+      "refreshStatus": "Actualiser statut",
+      "scan": "Scanner MCP locaux",
+      "scanning": "Scan…",
+      "refreshIndex": "Rafraîchir index",
+      "toastScan": "Scan MCP locaux terminé",
+      "toastIndex": "Index state.yaml régénéré"
+    },
+    "emptyRestartHint": "Ou le tableau est vide après redémarrage du serveur : attends le chargement complet.",
+    "globalCheck": {
+      "title": "Vérification globale",
+      "description": "Checks read-only sur MCP locaux et formulaires Composio.",
+      "rerun": "Relancer",
+      "checking": "Vérification…",
+      "ready": "Prêt"
+    },
+    "detail": {
+      "loading": "Chargement du détail…",
+      "target": "Cible",
+      "command": "Commande",
+      "source": "Source",
+      "variables": "Variables",
+      "testConnection": "Tester la connexion",
+      "openEditor": "Ouvrir dans l’éditeur",
+      "copyPath": "Copier chemin absolu"
+    },
+    "testConnection": "Tester la connexion",
+    "checkStreamInterrupted": "Flux de vérification interrompu",
+    "checkDone": "Vérification terminée : {{ok}} OK · {{warn}} à surveiller · {{fail}} KO",
+    "configPanel": {
+      "title": "Configuration zab",
+      "file": "Fichier",
+      "copy": "Copier",
+      "reload": "Recharger",
+      "save": "Enregistrer"
+    },
+    "staleBackend": "L’agrégateur de connecteurs n’est pas disponible sur ce serveur (HTTP {{status}}). Arrête ce processus avec Ctrl+C, puis depuis la racine du dépôt zab exécute :"
+  },
+  "skills": {
+    "title": "Skills",
+    "searchPlaceholder": "Rechercher une skill, un tag, un projet…",
+    "emptyFiltered": "Aucune skill ne correspond aux filtres.",
+    "sync": {
+      "title": "Actions",
+      "refreshIndex": "Rafraîchir index",
+      "details": "Détails techniques",
+      "mirrorTitle": "Miroir /projects/skills",
+      "indexedCount": "{{count}} skills indexées",
+      "indexNotLoaded": "Index non chargé"
+    },
+    "registry": {
+      "adopt": "Adopter",
+      "unadopt": "Désadopter",
+      "ignore": "Ignorer",
+      "resolve": "Résoudre (ce fichier)"
+    }
+  },
+  "projects": {
+    "title": "Projets",
+    "subtitle": "Dépôts sous projects_roots : dossiers immédiats et, le cas échéant, un niveau de sous-dossiers (ex. carrefour/danmdata). Skills : racine du projet, .cursor/**/SKILL.md, .claude/**/SKILL.md. Filtres et vue grille ou liste ci-dessous ; Git / gh / glab sur chaque projet.",
+    "roots": {
+      "title": "Racines dans la config",
+      "fileHint": "Fichier : {{path}} — clé projects_roots",
+      "refresh": "Rafraîchir",
+      "fillFromDetection": "Remplir depuis la détection",
+      "save": "Enregistrer dans config.yaml",
+      "label": "Une racine par ligne (ex. ~/projects)",
+      "hint": "Après enregistrement, recharge l’aperçu : projets à la racine de chaque ligne + sous-projets un niveau plus bas lorsqu’ils contiennent des SKILL.md. Liste vide = désactive la découverte (projects_roots: [])."
+    },
+    "empty": {
+      "none": "Aucun projet avec SKILL.md pour l’instant. Vérifiez les racines ci-dessus puis enregistrez et rafraîchissez.",
+      "filtered": "Aucun projet ne correspond aux filtres."
+    },
+    "filters": {
+      "title": "Filtres",
+      "description": "Affine la liste (nom, org, chemin, skill, branche Git…).",
+      "search": "Recherche",
+      "searchPlaceholder": "ex. danmdata, carrefour, gmail…",
+      "org": "Organisation",
+      "git": "Git",
+      "allOrgs": "Toutes",
+      "allGit": "Tous",
+      "gitOnly": "Dépôts git uniquement",
+      "noGit": "Sans dépôt git",
+      "grid": "Grille",
+      "list": "Liste",
+      "displayCount": "Affichage : {{shown}} / {{total}} projet(s)",
+      "filterActive": " (filtre actif)"
+    },
+    "card": {
+      "skillsCount": "{{count}} skill(s)",
+      "noGit": "sans git",
+      "skillsExpand": "Skills ({{count}}) — cliquer pour déplier",
+      "subprojects": "· sous-projets"
+    },
+    "toast": {
+      "noRoots": "Aucune racine déduite",
+      "noRootsDesc": "Ajoutez des SKILL.md sous ~/projects ou renseignez les chemins ci-dessous.",
+      "rootsProposed": "{{count}} racine(s) proposée(s)",
+      "saved": "projects_roots enregistré",
+      "savedDesc": "{{paths}}",
+      "savedEmpty": "(liste vide — découverte désactivée)",
+      "refreshed": "Aperçu actualisé"
+    }
+  },
+  "tasks": {
+    "title": "Tâches",
+    "subtitle": "Toutes vos todos en un seul endroit — GitLab, Linear, Notion, GitHub.",
+    "importEnv": "Importer depuis les .env",
+    "refresh": "Rafraîchir",
+    "filterLabel": "Filtre :",
+    "removeFilter": "Retirer le filtre",
+    "sources": {
+      "title": "Sources configurées",
+      "description": "Vos intégrations de tâches configurées dans config.yaml. Clique sur une ligne pour filtrer la liste ci-dessous.",
+      "add": "Ajouter",
+      "placeholder": "https://linear.app/... ou notion.so/...",
+      "none": "Aucune source configurée."
+    },
+    "table": {
+      "label": "Label",
+      "backend": "Backend",
+      "directory": "Répertoire / URL",
+      "url": "URL",
+      "status": "Statut",
+      "tasks": "Tâches",
+      "actions": "Actions",
+      "source": "Source",
+      "id": "Id",
+      "titleCol": "Titre",
+      "updated": "MàJ",
+      "token": "Token"
+    },
+    "openProject": "Ouvrir le projet",
+    "test": "Tester",
+    "testing": "Test…",
+    "testTitle": "Tester la connexion à cette source",
+    "setToken": "Définir le token",
+    "verifyToken": "Vérifier le token",
+    "setTokenTitle": "Définir la variable {{token}}",
+    "verifyTokenTitle": "Vérifier la valeur de {{token}}",
+    "editConfigTitle": "Éditer task_sources dans config.yaml",
+    "configBtn": "Config",
+    "allTasks": "Toutes les tâches ({{count}})",
+    "bySource": "Tâches par source",
+    "unifiedDesc": "Agrégation de toutes vos sources, triées par date de mise à jour",
+    "bySourceDesc": "Sélectionnez une source ci-dessus",
+    "unified": "Unifié",
+    "bySourceMode": "Par source",
+    "testedAt": "testé à",
+    "empty": {
+      "source": "Aucune tâche pour cette source.",
+      "pickSource": "Cliquez sur une source ci-dessus pour voir ses tâches.",
+      "none": "Aucune tâche trouvée. Vérifiez vos tokens dans la configuration."
+    },
+    "toast": {
+      "synced": "Tâches synchronisées avec succès",
+      "sourceFetched": "{{label}} : {{count}} tâche(s) récupérée(s)",
+      "sourceAdded": "Source ajoutée avec succès !",
+      "pmEnvMerged": "Jetons PM fusionnés dans ~/.config/zab/.env",
+      "pmEnvDesc": "{{files}} fichier(s) .env parcouru(s) · écrits : {{keys}}",
+      "pmEnvNone": "aucun"
+    }
+  },
+  "channels": {
+    "banner": {
+      "eyebrow": "Canaux de communication",
+      "title": "Gérez votre connectivité",
+      "subtitle": "Centralisez vos comptes e-mails, WhatsApp et messageries."
+    },
+    "actions": {
+      "new": "Nouveau canal",
+      "syncAll": "Synchroniser tout"
+    },
+    "loading": "Chargement de vos canaux…",
+    "status": {
+      "active": "Actif",
+      "toConfigure": "À configurer",
+      "disabled": "Désactivé",
+      "error": "Erreur"
+    },
+    "neverSynced": "Jamais",
+    "modal": {
+      "title": "Ajouter un canal de communication",
+      "label": "Nom d’affichage du canal *",
+      "labelPlaceholder": "ex. Gmail Personnel",
+      "cancel": "Annuler",
+      "confirm": "Confirmer l’ajout"
+    },
+    "toast": {
+      "syncOk": "Synchronisation effectuée avec succès !",
+      "labelRequired": "Veuillez saisir un libellé.",
+      "added": "Canal \"{{label}}\" ajouté et synchronisé !"
+    }
+  },
+  "crons": {
+    "title": "Crons & Planificateurs",
+    "subtitle": "Agrégateur multi-sources local et cloud (Hermes, GCP).",
+    "syncSources": "Sync sources",
+    "loading": "Chargement du registre des crons...",
+    "empty": {
+      "title": "Aucun planificateur trouvé",
+      "hint": "Essayez de cliquer sur Sync sources pour lancer une découverte active locale et GCP."
+    },
+    "lastRun": "Dernier run :",
+    "filter": {
+      "all": "Tous",
+      "hermes": "Hermes",
+      "gcp": "GCP",
+      "active": "Actifs",
+      "paused": "Suspendus"
+    },
+    "detail": {
+      "emptyTitle": "Aucun cron sélectionné",
+      "emptyHint": "Sélectionnez un planificateur pour voir les détails et runs."
+    },
+    "logs": {
+      "title": "Runs d’exécution",
+      "loading": "Chargement...",
+      "none": "Aucun run trouvé.",
+      "selectRun": "Sélectionnez un run pour voir ses logs."
+    },
+    "toast": {
+      "loadError": "Impossible de charger les crons",
+      "apiError": "Erreur de communication avec l’API",
+      "syncing": "Synchronisation des sources (Hermes + GCP)...",
+      "syncOk": "Synchronisation terminée avec succès !",
+      "syncError": "Erreur pendant la synchronisation"
+    }
+  },
+  "config": {
+    "title": "Configuration",
+    "subtitle": "Édition guidée de ~/.config/zab/config.yaml",
+    "viewMode": {
+      "form": "Form",
+      "yaml": "YAML"
+    },
+    "file": {
+      "absent": "absent",
+      "missingHint": "(fichier manquant ou non résolu depuis l’IDE)",
+      "missingOnMachine": "(fichier manquant ou non résolu sur ce poste)"
+    },
+    "groups": {
+      "skills": "Skills",
+      "tooling": "CLI & outils",
+      "projects": "Projets",
+      "integrations": "Intégrations",
+      "system": "Système",
+      "other": "Autre"
+    },
+    "sections": {
+      "skills_registry_path": {
+        "label": "Chemin registre skills",
+        "description": "Fichier JSON du registre (défaut ~/.config/zab/skills-registry.json)."
+      },
+      "claude_plugin_paths": {
+        "label": "Plugins Claude",
+        "description": "Racines de plugins Claude détectées lors du scan."
+      },
+      "skills_roots": {
+        "label": "Racines de skills",
+        "description": "Dépôts contenant des SKILL.md (un par ligne)."
+      },
+      "skills_root": {
+        "label": "Skills root (legacy)",
+        "description": "Compatibilité ancienne version — préférer skills_roots."
+      },
+      "cli_watchlist": {
+        "label": "Watchlist CLI",
+        "description": "Binaires scannés via which pour le diagnostic."
+      },
+      "tracked_env_extra": {
+        "label": "Variables suivies (extra)",
+        "description": "Variables d’environnement ajoutées au catalogue Sécurité."
+      },
+      "agentpipe_config_path": {
+        "label": "agentpipe — chemin",
+        "description": "Sinon ~/.agentpipe.yaml par défaut."
+      },
+      "codexbar_config_path": {
+        "label": "codexbar — chemin",
+        "description": "Sinon ~/.codexbar/config.json par défaut."
+      },
+      "local_tools_path": {
+        "label": "local-tools — chemin",
+        "description": "Surcharge le chemin de local-tools.yaml."
+      },
+      "projects_roots": {
+        "label": "Racines de projets",
+        "description": "Dépôts contenant des projets (un par ligne)."
+      },
+      "task_sources": {
+        "label": "Sources de tâches",
+        "description": "GitLab / Linear / Notion / GitHub pour l’inbox tâches. Le champ env_token = nom de variable ; la valeur se met dans un .env (indication sous chaque source)."
+      },
+      "communication_channels": {
+        "label": "Canaux de communication",
+        "description": "Canaux suivis par l’onglet Canaux (email, WhatsApp, Slack, Telegram). Format: id, label, type, connector, org, enabled (+ email_address pour l’email). Pour WhatsApp Evolution, définir credentials.evolution_api_url / credentials.evolution_api_key / credentials.evolution_instance."
+      },
+      "obsidian": {
+        "label": "Obsidian",
+        "description": "Vault exposé via le MCP zab."
+      },
+      "skills_sync": {
+        "label": "Skills sync",
+        "description": "Synchronisation du dépôt personnel de skills."
+      },
+      "models_discovery": {
+        "label": "Découverte modèles",
+        "description": "Rempli par zab scan — généralement lecture seule."
+      },
+      "last_scan_at_utc": {
+        "label": "Dernier scan",
+        "description": "Horodatage du dernier scan persisté."
+      }
+    },
+    "types": {
+      "empty": "vide",
+      "stringList": "liste de chaînes",
+      "objectList": "liste d’objets",
+      "list": "liste",
+      "object": "objet",
+      "string": "chaîne",
+      "number": "nombre",
+      "boolean": "booléen"
+    },
+    "ui": {
+      "reload": "Recharger",
+      "reloadTitle": "Recharger depuis le disque (annule les modifs locales)",
+      "save": "Enregistrer",
+      "saving": "Sauvegarde…",
+      "upToDate": "À jour",
+      "editor": "Éditeur",
+      "editorTitle": "Ouvrir dans VS Code / Cursor",
+      "copyPath": "Copier chemin",
+      "copyContent": "Copier contenu",
+      "autosave": "Sauvegarde auto…",
+      "unsaved": "● Modifications non sauvegardées",
+      "truncated": "Aperçu tronqué : {{note}}",
+      "invalidYaml": "YAML invalide — basculez en vue YAML pour corriger : {{error}}",
+      "commentsWarning": "Note : les commentaires YAML peuvent être perdus lors d’une sauvegarde depuis la vue Form. Passe en mode YAML si tu veux les conserver.",
+      "emptyFile": "Fichier vide. Ajoute une clé directement en mode YAML.",
+      "selectSection": "Sélectionne une section dans la barre latérale.",
+      "fieldsCount": "{{count}} champ(s)",
+      "addEntry": "+ Ajouter une entrée",
+      "listFilesError": "Impossible de lister les configs ({{status}}).",
+      "readError": "Erreur lecture fichier ({{status}}).",
+      "networkError": "Erreur réseau lors du chargement des chemins config.",
+      "staleBackend": "L’agrégateur de configuration n’est pas disponible (HTTP {{status}}).\nArrête le processus avec Ctrl+C puis depuis la racine du dépôt zab exécute :\n`uv run zab dashboard --no-open --port 8742`",
+      "rawResponse": "Réponse brute : {{detail}}",
+      "missingFileHeader": "# Fichier absent sur ce poste :\n# {{path}}\n# Créez-le avec « zab config --open » ou copiez le modèle depuis la doc zab.\n",
+      "yamlSerializeError": "# erreur sérialisation YAML : {{message}}\n",
+      "openedEditor": "Ouvert ({{editor}}){{line}}",
+      "openedEditorLine": " — ligne {{line}}",
+      "secretFound": "Secret trouvé",
+      "secretIn": "dans",
+      "secretLine": " (ligne {{line}})",
+      "secretKey": " — clé",
+      "expand": "Déplier",
+      "collapse": "Replier",
+      "remove": "Supprimer",
+      "copyItem": "Copier",
+      "add": "Ajouter",
+      "bulkEdit": "Modifier en bloc",
+      "onePerLine": "Un élément par ligne…",
+      "addItem": "Ajouter un élément…",
+      "addItemEnter": "Ajouter un élément (Entrée)…",
+      "replace": "Remplacer",
+      "emptyList": "(liste vide)",
+      "emptyObject": "(objet vide)",
+      "bulkCount": "{{current}} actuel(s) → {{draft}} ligne(s) saisie(s)",
+      "initText": "Texte",
+      "initList": "Liste",
+      "initObject": "Objet"
+    },
+    "toast": {
+      "saved": "Fichier enregistré",
+      "opened": "Ouvert"
+    },
+    "confirm": {
+      "discardChanges": "Annuler les changements non sauvegardés ?"
+    }
+  },
+  "workstation": {
+    "title": "Workstation",
+    "subtitle": "Pilotage local de la VM remote dev Flowmetrik.",
+    "refresh": "Rafraîchir",
+    "refreshing": "Rafraîchissement…",
+    "confirmStop": "Arrêter la workstation ?",
+    "toast": {
+      "startLaunched": "Démarrage lancé",
+      "stopLaunched": "Arrêt lancé"
+    }
+  },
+  "conversationsView": {
+    "title": "Conversations",
+    "subtitle": "Agrégation Cursor, Claude Code, Codex, Hermes et autres historiques CLI.",
+    "actions": {
+      "refreshChecks": "Rafraîchir checks",
+      "dryRun": "Dry-run sync",
+      "sync": "Synchroniser"
+    },
+    "history": {
+      "title": "Historique des conversations"
+    },
+    "search": {
+      "placeholder": "Rechercher dans les conversations…",
+      "noResults": "Aucun résultat."
+    },
+    "empty": {
+      "postgres": "Aucun document conversationnel dans Postgres. Exécutez Synchroniser pour importer.",
+      "none": "Aucune conversation historique. Configurez Postgres ou lancez une synchronisation."
+    },
+    "toast": {
+      "postgresMissing": "Postgres non configuré",
+      "postgresMissingDesc": "Configurez MEHDI_MEMORY_DATABASE_URL puis synchronisez.",
+      "dryRunDone": "Dry-run terminé",
+      "syncDone": "Synchronisation terminée",
+      "pathCopied": "Chemin copié"
+    }
+  },
+  "meta": {
+    "connector": {
+      "bank": "Banque",
+      "accounting": "Comptabilité",
+      "prospecting": "Prospection"
+    }
+  }
+}

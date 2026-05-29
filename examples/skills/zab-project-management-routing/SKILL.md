@@ -13,7 +13,7 @@ Ce skill complète l’onglet **Tâches (multi-outils)** du dashboard zab (`GET 
 |----------|----------------|-------|---------------------|-------------------|
 | Carrefour data | `danmdata` (ex. `~/projects/carrefour/danmdata`) | **GitLab** | `.cursor/rules/gitlab-project-danmdata.mdc` | `GITLAB_TOKEN` ; MCP GitLab ou CLI `glab` |
 | Agile Immo | `agile-taskforce` (ex. `~/projects/agileimmo/agile-taskforce`) | **Linear** | `.cursor/rules/01-linear-agile.mdc` | `LINEAR_API_KEY` ; MCP Linear / API GraphQL |
-| Perso / cowork | projets personnels | **Notion** | skills **mehdi-cowork** ou **mehdi-perso** (chemins selon votre dépôt skills) | `NOTION_TOKEN` (intégration interne) ; base Notion par `database_id` dans `task_sources` |
+| Personal / cowork | personal projects | **Notion** | skills under your skills repo (e.g. `orgs/personal/skills/…`) | `NOTION_TOKEN` ; Notion database id in `task_sources` |
 
 ## Comportement agent
 

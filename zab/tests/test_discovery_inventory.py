@@ -1,4 +1,4 @@
-"""Découverte pilotée par skill_md_paths dans config."""
+"""Découverte pilotée par skills-registry.json (et repli skills_roots)."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ def test_list_orgs_from_skill_inventory(monkeypatch, tmp_path_factory) -> None:
                 "claude_plugin_paths": [],
                 "cli_watchlist": [],
                 "tracked_env_extra": [],
+                "skills_sync": {"repo_root": str(repo.resolve())},
             },
             allow_unicode=True,
             sort_keys=False,
@@ -61,6 +62,7 @@ def test_discovery_repo_bases_from_skill_paths(monkeypatch, tmp_path_factory) ->
                 "claude_plugin_paths": [],
                 "cli_watchlist": [],
                 "tracked_env_extra": [],
+                "skills_sync": {"repo_root": str(repo.resolve())},
             },
             allow_unicode=True,
             sort_keys=False,
@@ -99,3 +101,34 @@ def test_explicit_plugin_bundles(monkeypatch, tmp_path_factory) -> None:
     assert len(bundles) == 1
     assert bundles[0]["id"] == "my-plugin"
     assert bundles[0].get("fs_path")
+
+
+def test_list_orgs_includes_common_skills_repo_layout(monkeypatch, tmp_path_factory) -> None:
+    home = tmp_path_factory.mktemp("inv-home-common")
+    monkeypatch.setenv("HOME", str(home))
+    repo = home / "skills-repo"
+    md = repo / "common" / "skills" / "shared" / "SKILL.md"
+    md.parent.mkdir(parents=True)
+    md.write_text("---\nname: shared\n---\n", encoding="utf-8")
+    cfg_d = home / ".config" / "zab"
+    cfg_d.mkdir(parents=True, exist_ok=True)
+    (cfg_d / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "skills_roots": [str(repo.resolve())],
+                "skill_md_paths": [],
+                "claude_plugin_paths": [],
+                "cli_watchlist": [],
+                "tracked_env_extra": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    orgs = discovery.list_orgs_with_skills()
+
+    by_org = {o["org"]: o for o in orgs}
+    assert by_org["common"]["skills"][0]["id"] == "shared"
+    assert by_org["common"]["skills"][0]["path"] == "common/skills/shared/SKILL.md"
