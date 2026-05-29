@@ -80,9 +80,13 @@ function NavBrand() {
   const { t } = useI18n()
   return (
     <div className="mb-6 flex items-center gap-2 px-2">
-      <div className="flex size-8 items-center justify-center rounded-lg bg-zinc-900 text-white">
-        <HugeiconsIcon icon={SparklesIcon} size={18} strokeWidth={2} />
-      </div>
+      <img
+        src="/favicon.svg"
+        alt=""
+        width={32}
+        height={32}
+        className="size-8 shrink-0 rounded-lg"
+      />
       <div>
         <p className="text-sm font-semibold tracking-tight">zab</p>
         <p className="text-muted-foreground text-[11px]">{t('nav.brandTagline')}</p>
