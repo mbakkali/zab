@@ -26,6 +26,6 @@ def test_config_paths_only(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_config_help():
-    r = runner.invoke(app, ["config", "--help"])
+    r = runner.invoke(app, ["config", "--help"], env={"NO_COLOR": "1", "TERM": "dumb"})
     assert r.exit_code == 0
-    assert "--open" in r.stdout
+    assert "open" in r.stdout

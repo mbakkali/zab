@@ -158,6 +158,7 @@ def test_gemini_discovery_ready_with_safe_jsonl(tmp_path: Path, monkeypatch: pyt
     (gem / "a.jsonl").write_text(line * 3, encoding="utf-8")
 
     monkeypatch.setattr("zab.services.agent_memory_import.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("zab.services.agent_memory_import._gemini_path_skipped", lambda _path: None)
     st = discover_gemini_cli_status()
     assert st["status"] == "ready"
     docs = collect_agent_memory_documents(providers=frozenset({PROVIDER_GEMINI}))

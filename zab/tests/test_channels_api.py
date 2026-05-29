@@ -11,27 +11,44 @@ def client():
     return TestClient(create_app())
 
 
-def test_api_get_channels(client, monkeypatch, tmp_path) -> None:
+@pytest.fixture
+def sample_channels() -> list[dict]:
+    return [
+        {
+            "id": "email-work",
+            "label": "Work email",
+            "type": "email",
+            "connector": "gog",
+            "org": "acme",
+            "email_address": "work@example.com",
+            "enabled": True,
+        }
+    ]
+
+
+def test_api_get_channels(client, monkeypatch, tmp_path, sample_channels) -> None:
     """Vérifie l'endpoint GET /api/channels."""
     monkeypatch.setattr("zab.services.communication_channels.data_dir", lambda: tmp_path)
-    
+    monkeypatch.setattr("zab.services.communication_channels.load_channels_config", lambda: sample_channels)
+
     response = client.get("/api/channels")
     assert response.status_code == 200
     data = response.json()
     assert "channels" in data
     assert "action_items" in data
-    assert len(data["channels"]) > 0
+    assert len(data["channels"]) == 1
 
 
-def test_api_sync_channels(client, monkeypatch, tmp_path) -> None:
+def test_api_sync_channels(client, monkeypatch, tmp_path, sample_channels) -> None:
     """Vérifie l'endpoint POST /api/channels/sync."""
     monkeypatch.setattr("zab.services.communication_channels.data_dir", lambda: tmp_path)
-    
+    monkeypatch.setattr("zab.services.communication_channels.load_channels_config", lambda: sample_channels)
+
     response = client.post("/api/channels/sync")
     assert response.status_code == 200
     data = response.json()
     assert "generated_at_utc" in data
-    assert len(data["channels"]) > 0
+    assert len(data["channels"]) == 1
 
 
 def test_api_add_channel(client, monkeypatch, tmp_path) -> None:
