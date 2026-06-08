@@ -6,6 +6,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from zab.api.app import create_app
+from zab.services.tasks_inbox import _fetch_notion
 from zab.user_config import task_sources_from_user_config
 
 
@@ -49,6 +50,56 @@ def test_tasks_inbox_skipped_without_token(tmp_path, monkeypatch):
     assert "GITLAB_TOKEN" in (body["sources"][0].get("reason") or "")
 
 
+def test_notion_identifier_keeps_full_page_id(monkeypatch):
+    page_id = "35e20277-4e9e-8163-95b3-c6f32384b0f4"
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {
+                "results": [
+                    {
+                        "id": page_id,
+                        "url": "https://app.notion.com/p/example",
+                        "last_edited_time": "2026-05-12T12:52:00.000Z",
+                        "properties": {
+                            "Name": {
+                                "type": "title",
+                                "title": [{"plain_text": "Arnaud Baudel - Contact MIPIM"}],
+                            }
+                        },
+                    }
+                ]
+            }
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        @staticmethod
+        def post(*args, **kwargs):
+            return _Response()
+
+    monkeypatch.setattr("zab.services.tasks_inbox.httpx.Client", _Client)
+
+    rows = _fetch_notion("database", "secret", "Name")
+
+    assert rows[0]["identifier"] == page_id
+    assert rows[0]["display_identifier"] == "35e20277…84b0f4"
+
+
 def test_tasks_inbox_gitlab_mocked(tmp_path, monkeypatch):
     cfg = tmp_path / ".config" / "zab" / "config.yaml"
     data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
@@ -83,6 +134,52 @@ def test_tasks_inbox_gitlab_mocked(tmp_path, monkeypatch):
     assert body["sources"][0]["status"] == "ok"
     assert len(body["sources"][0]["items"]) == 1
     assert body["sources"][0]["items"][0]["title"] == "Issue test"
+
+
+def test_tasks_inbox_reads_token_from_local_project_dotenv(tmp_path, monkeypatch):
+    cfg = tmp_path / ".config" / "zab" / "config.yaml"
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".env").write_text("gitlab_access_token_ntp=glpat-project\n", encoding="utf-8")
+
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    data["task_sources"] = [
+        {
+            "id": "danmdata-gitlab",
+            "label": "GitLab projet",
+            "backend": "gitlab",
+            "host": "gitlab.com",
+            "project_id": 123,
+            "env_token": "gitlab_access_token_ntp",
+            "local_project_path": str(project),
+        },
+    ]
+    cfg.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    monkeypatch.delenv("gitlab_access_token_ntp", raising=False)
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
+
+    seen: dict[str, str] = {}
+
+    def fake_fetch(_host, _project_ref, token, _assignee_username):
+        seen["token"] = token
+        return [
+            {
+                "identifier": "#7",
+                "title": "Depuis .env local",
+                "url": "https://gitlab.com/foo/bar/-/issues/7",
+                "state": "opened",
+                "updated_at": "2024-01-03T00:00:00Z",
+            }
+        ]
+
+    monkeypatch.setattr("zab.services.tasks_inbox._fetch_gitlab", fake_fetch)
+    client = TestClient(create_app())
+    body = client.get("/api/tasks/inbox").json()
+
+    assert seen["token"] == "glpat-project"
+    assert body["sources"][0]["status"] == "ok"
+    assert body["sources"][0]["items"][0]["title"] == "Depuis .env local"
+    assert body["env_hints"]["gitlab_access_token_ntp"] is True
 
 
 def _write_single_gitlab_source(tmp_path):

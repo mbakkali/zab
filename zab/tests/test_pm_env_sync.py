@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
+
 import yaml
 from dotenv import dotenv_values
 
-from zab.services.pm_env_sync import sync_pm_tokens_to_user_dotenv
+from zab.services.pm_env_sync import apply_pm_tokens_from_user_dotenv, sync_pm_tokens_to_user_dotenv
 
 
 def test_sync_writes_zab_dotenv_from_projects(tmp_path) -> None:
@@ -33,6 +35,28 @@ def test_sync_writes_zab_dotenv_from_projects(tmp_path) -> None:
     vals = dotenv_values(zab_env)
     assert vals.get("GITLAB_TOKEN") == "glpat-from-demo"
     assert vals.get("LINEAR_API_KEY") == "lin_from_demo"
+
+
+def test_apply_loads_custom_task_source_env_token(tmp_path, monkeypatch) -> None:
+    cfg = tmp_path / ".config" / "zab" / "config.yaml"
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    data["task_sources"] = [
+        {
+            "id": "danmdata-gitlab",
+            "label": "Danmdata",
+            "backend": "gitlab",
+            "project_id": 123,
+            "env_token": "gitlab_access_token_ntp",
+        }
+    ]
+    cfg.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    zab_env = tmp_path / ".config" / "zab" / ".env"
+    zab_env.write_text("gitlab_access_token_ntp=glpat-custom\n", encoding="utf-8")
+    monkeypatch.delenv("gitlab_access_token_ntp", raising=False)
+
+    apply_pm_tokens_from_user_dotenv()
+
+    assert os.environ["gitlab_access_token_ntp"] == "glpat-custom"
 
 
 def test_sync_skips_existing_without_force(tmp_path) -> None:

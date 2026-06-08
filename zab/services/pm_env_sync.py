@@ -22,6 +22,22 @@ PM_SCAN_KEYS: tuple[str, ...] = (
 )
 
 
+def _configured_pm_keys() -> tuple[str, ...]:
+    """PM keys to load/scan, including custom env_token names from task_sources."""
+    keys: set[str] = set(PM_SCAN_KEYS)
+    try:
+        from zab.user_config import task_sources_from_user_config
+
+        sources, _errors = task_sources_from_user_config()
+    except Exception:
+        sources = []
+    for source in sources:
+        env_name = source.get("env_token") if isinstance(source, dict) else None
+        if isinstance(env_name, str) and env_name.strip():
+            keys.add(env_name.strip())
+    return tuple(sorted(keys))
+
+
 def user_pm_dotenv_path() -> Path:
     return config_dir() / ".env"
 
@@ -35,7 +51,7 @@ def apply_pm_tokens_from_user_dotenv() -> None:
     if not path.is_file():
         return
     vals = dotenv_values(path)
-    for key in PM_SCAN_KEYS:
+    for key in _configured_pm_keys():
         cur = os.environ.get(key)
         if cur is not None and str(cur).strip():
             continue
@@ -49,7 +65,7 @@ def _consider_env_file(path: Path, found: dict[str, str], sources: list[str]) ->
         return
     vals = dotenv_values(path)
     sources.append(str(path.resolve()))
-    for k in PM_SCAN_KEYS:
+    for k in _configured_pm_keys():
         if k in found:
             continue
         v = vals.get(k)
@@ -130,7 +146,7 @@ def sync_pm_tokens_to_user_dotenv(*, force: bool = False) -> dict[str, Any]:
     updated: list[str] = []
     skipped_existing: list[str] = []
 
-    for k in PM_SCAN_KEYS:
+    for k in _configured_pm_keys():
         sv = scanned.get(k)
         if not sv:
             continue
@@ -158,5 +174,5 @@ def sync_pm_tokens_to_user_dotenv(*, force: bool = False) -> dict[str, Any]:
         "keys_updated": updated,
         "keys_skipped_already_present": skipped_existing if not force else [],
         "keys_found_by_scan": sorted(scanned.keys()),
-        "keys_missing_after_scan": [k for k in PM_SCAN_KEYS if k not in scanned],
+        "keys_missing_after_scan": [k for k in _configured_pm_keys() if k not in scanned],
     }

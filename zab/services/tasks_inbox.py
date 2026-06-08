@@ -10,9 +10,10 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from dotenv import dotenv_values
 
 from zab.paths import data_dir
-from zab.services.env_token_locate import fallbacks_for_backend
+from zab.services.env_token_locate import candidate_env_files_for_task_source, fallbacks_for_backend
 from zab.services.pm_env_sync import PM_SCAN_KEYS, apply_pm_tokens_from_user_dotenv
 from zab.user_config import task_sources_from_user_config
 
@@ -42,12 +43,41 @@ def _token_for(env_name: str) -> str | None:
     return str(v).strip()
 
 
-def _token_for_with_fallbacks(env_name: str, fallbacks: list[str]) -> str | None:
-    """Récupère un token en essayant d'abord le nom principal, puis les fallbacks."""
+def _token_from_env_file(path: Path, key: str) -> str | None:
+    """Lit une clé dans un .env sans jamais exposer la valeur dans les sorties."""
+    if not path.is_file():
+        return None
+    try:
+        vals = dotenv_values(path)
+    except OSError:
+        return None
+    value = vals.get(key)
+    if value is None or not str(value).strip():
+        return None
+    return str(value).strip()
+
+
+def _token_for_with_fallbacks(
+    env_name: str,
+    fallbacks: list[str],
+    *,
+    local_project_path: str | None = None,
+) -> str | None:
+    """Récupère un token depuis le processus puis les .env candidats.
+
+    Priorité : variable primaire, puis fallbacks backend. Pour chaque clé,
+    essayer d'abord l'environnement du processus, puis les .env sûrs associés
+    à la source (`local_project_path/.env`, ~/.config/zab/.env, ~/.env, etc.).
+    """
+    files = candidate_env_files_for_task_source(local_project_path=local_project_path)
     for name in [env_name] + fallbacks:
         tok = _token_for(name)
         if tok:
             return tok
+        for path in files:
+            tok = _token_from_env_file(path, name)
+            if tok:
+                return tok
     return None
 
 
@@ -281,9 +311,12 @@ def _fetch_notion(database_id: str, token: str, title_prop: str) -> list[dict[st
         if not url_page and pid:
             url_page = f"https://www.notion.so/{str(pid).replace('-', '')}"
         last_edited = page.get("last_edited_time") or ""
+        pid_str = str(pid or "")
+        display_id = f"{pid_str[:8]}…{pid_str[-6:]}" if pid_str and len(pid_str) > 18 else pid_str
         out.append(
             {
-                "identifier": str(pid or "")[:12] + "…" if pid and len(str(pid)) > 12 else str(pid or ""),
+                "identifier": pid_str,
+                "display_identifier": display_id,
                 "title": title,
                 "url": str(url_page or ""),
                 "state": "",
@@ -342,7 +375,11 @@ def _resolve_token_for_entry(entry: dict[str, Any]) -> tuple[str | None, list[st
     backend = entry["backend"]
     env_name = str(entry["env_token"])
     fallbacks = fallbacks_for_backend(backend)
-    return _token_for_with_fallbacks(env_name, fallbacks), fallbacks
+    return _token_for_with_fallbacks(
+        env_name,
+        fallbacks,
+        local_project_path=entry.get("local_project_path"),
+    ), fallbacks
 
 
 def _build_source_meta(entry: dict[str, Any]) -> dict[str, Any]:
@@ -467,6 +504,10 @@ def sync_tasks_inbox() -> dict[str, Any]:
         if et:
             hint_names.add(str(et))
     env_hints = {n: bool(_token_for(n)) for n in sorted(hint_names)}
+    for entry in sources_cfg:
+        et = entry.get("env_token")
+        if et:
+            env_hints[str(et)] = bool(_resolve_token_for_entry(entry)[0])
 
     blocks: list[dict[str, Any]] = []
     all_items: list[dict[str, Any]] = []

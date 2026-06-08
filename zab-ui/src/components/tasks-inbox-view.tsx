@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils'
 
 type TaskItem = {
   identifier: string
+  display_identifier?: string
   title: string
   url: string
   state: string
@@ -525,7 +526,9 @@ export function TasksInboxView({ onJump }: { onJump?: (id: NavId) => void } = {}
                         {row.source_label}
                       </span>
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{row.identifier}</TableCell>
+                    <TableCell className="font-mono text-xs" title={row.identifier}>
+                      {row.display_identifier || row.identifier}
+                    </TableCell>
                     <TableCell className="max-w-md truncate text-sm font-medium">{row.title}</TableCell>
                     <TableCell className="text-muted-foreground text-xs">{row.state || '—'}</TableCell>
                     <TableCell className="text-muted-foreground text-xs">{formatTaskDate(row.updated_at, intlLocale)}</TableCell>
