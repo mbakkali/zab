@@ -13,6 +13,7 @@ from zab.paths import dashboard_anchor_path, skills_roots_resolved_from_config
 from zab.services.inventory_config import infer_mcp_repo_base_from_skill_md
 from zab.user_config import (
     claude_plugin_paths_resolved,
+    organization_slugs_from_user_config,
     projects_roots_resolved,
     skills_roots_strings_ordered,
     user_config_path,
@@ -154,14 +155,107 @@ def merge_workspace_projects_into_orgs(
     return sorted(by_org.values(), key=lambda x: str(x["org"]).casefold())
 
 
+def _canonical_org_records(
+    *,
+    base_orgs: list[dict[str, Any]],
+    projects: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Retourne uniquement les organisations métier définies par l'utilisateur."""
+    canonical = organization_slugs_from_user_config()
+    if not canonical:
+        return merge_workspace_projects_into_orgs(base_orgs, projects)
+    if "hors-org" not in canonical:
+        canonical = [*canonical, "hors-org"]
+    canonical_set = set(canonical)
+    base_by_org = {str(o.get("org") or ""): o for o in base_orgs if isinstance(o, dict)}
+    by_org: dict[str, dict[str, Any]] = {}
+
+    for org in canonical:
+        base = base_by_org.get(org) or {}
+        by_org[org] = {
+            "org": org,
+            "skills": [dict(s) for s in (base.get("skills") or [])],
+            "skills_repo_root": base.get("skills_repo_root") or "",
+            "from_inventory": bool(base.get("from_inventory", False)),
+            "projects": [],
+            "sources": ["canonical_config"],
+        }
+
+    seen_paths: set[str] = set()
+    for block in by_org.values():
+        for s in block.get("skills") or []:
+            raw_p = str(s.get("path") or "")
+            if not raw_p:
+                continue
+            try:
+                seen_paths.add(str(Path(raw_p).expanduser().resolve()))
+            except OSError:
+                seen_paths.add(raw_p)
+
+    for proj in projects:
+        raw_org = str(proj.get("org") or "hors-org")
+        org_slug = raw_org if raw_org in canonical_set else "hors-org"
+        bucket = by_org[org_slug]
+        project_ref = {
+            "id": proj.get("id"),
+            "name": proj.get("name"),
+            "path": proj.get("path"),
+            "workspace_parent": proj.get("workspace_parent"),
+            "skills_count": len(proj.get("skills") or []),
+            "org": raw_org,
+            "git_repo": proj.get("git_repo"),
+            "git_branch": proj.get("git_branch"),
+            "remote_host": proj.get("remote_host"),
+            "last_activity_at_utc": proj.get("last_activity_at_utc"),
+            "last_activity_source": proj.get("last_activity_source"),
+            "last_activity_path": proj.get("last_activity_path"),
+        }
+        projects_bucket = bucket.setdefault("projects", [])
+        if isinstance(projects_bucket, list) and project_ref not in projects_bucket:
+            projects_bucket.append(project_ref)
+        sources = bucket.setdefault("sources", [])
+        if isinstance(sources, list) and "workspace_projects" not in sources:
+            sources.append("workspace_projects")
+        for sk in proj.get("skills") or []:
+            ap = str(sk.get("path") or "")
+            if not ap:
+                continue
+            try:
+                key = str(Path(ap).expanduser().resolve())
+            except OSError:
+                key = ap
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            bucket["skills"].append(
+                {
+                    "id": str(sk.get("id") or Path(ap).parent.name),
+                    "path": key,
+                    "source": "workspace",
+                    "project": str(proj.get("name") or ""),
+                }
+            )
+
+    for block in by_org.values():
+        block["skills"] = sorted(
+            block["skills"],
+            key=lambda x: (str(x.get("id", "")).casefold(), str(x.get("path", "")).casefold()),
+        )
+        block["projects"] = sorted(
+            block.get("projects") or [],
+            key=lambda x: (str(x.get("workspace_parent") or "").casefold(), str(x.get("name") or "").casefold()),
+        )
+        block["projects_count"] = len(block.get("projects") or [])
+        block["project_names"] = [p.get("name") for p in block.get("projects") or [] if isinstance(p, dict)]
+    return [by_org[org] for org in canonical]
+
+
 def _orgs_with_projects_tuple() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from zab.services.workspace_projects import discover_projects
 
     projects = discover_projects()
     base = list_orgs_skills_repo_only()
-    if not projects:
-        return base, projects
-    return merge_workspace_projects_into_orgs(base, projects), projects
+    return _canonical_org_records(base_orgs=base, projects=projects), projects
 
 
 def list_orgs_with_skills() -> list[dict[str, Any]]:

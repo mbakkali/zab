@@ -12,13 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, FrozenSet
 
-from zab.paths import skills_root, skills_root_from_config_file_only
 from zab.services.conversations_archive import (
     delete_archive_for_providers,
     ensure_conversations_archive_schema,
     upsert_conversation_archive,
 )
-from zab.services.memory_scan import resolve_mehdi_memory_database_url
+from zab.services.postgres_dsn import resolve_postgres_dsn
 
 AGENT_MEMORY_SOURCES = (
     "cursor_agent_transcript",
@@ -532,6 +531,7 @@ def _collect_hermes_documents_strict() -> list[AgentMemoryDocument]:
     except sqlite3.Error:
         return docs
     try:
+        conn.text_factory = lambda raw: raw.decode("utf-8", errors="replace")
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cur.fetchall()}
@@ -855,6 +855,15 @@ def _messages_for_archive(doc: AgentMemoryDocument) -> list[dict[str, Any]]:
     return []
 
 
+def _sanitize_nul(obj: Any) -> Any:
+    if isinstance(obj, str):
+        return obj.replace("\x00", "")
+    elif isinstance(obj, dict):
+        return {k: _sanitize_nul(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_nul(x) for x in obj]
+    return obj
+
 def sync_agent_memory_to_postgres(
     *,
     replace: bool = True,
@@ -885,11 +894,9 @@ def sync_agent_memory_to_postgres(
     if dry_run:
         return summary
 
-    url = resolve_mehdi_memory_database_url(skills_root_from_config_file_only()) or resolve_mehdi_memory_database_url(
-        skills_root()
-    )
+    url = resolve_postgres_dsn()
     if not url:
-        raise RuntimeError("MEHDI_MEMORY_DATABASE_URL absent (processus ou .env skills).")
+        raise RuntimeError("ZAB_MEMORY_DATABASE_URL absent (ou alias legacy MEHDI_MEMORY_DATABASE_URL).")
     try:
         import psycopg
     except ImportError as exc:
@@ -909,8 +916,9 @@ def sync_agent_memory_to_postgres(
                 if not content:
                     continue
                 doc_id = uuid.uuid4()
+                content = content.replace("\x00", "")
                 h = hashlib.sha256((doc.source + "|" + str(doc.path) + "|" + content).encode("utf-8")).hexdigest()[:32]
-                meta = {**doc.metadata, "path": str(doc.path), "chars": len(content)}
+                meta = _sanitize_nul({**doc.metadata, "path": str(doc.path), "chars": len(content)})
                 if _conversation_doc_should_archive(doc):
                     prov = str(meta.get("conversation_provider") or "unknown")
                     archive_meta = _archive_metadata_stub(doc, content_len=len(content))

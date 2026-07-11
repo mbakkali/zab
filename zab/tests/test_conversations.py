@@ -37,10 +37,26 @@ def test_build_health_payload_no_postgres(monkeypatch: pytest.MonkeyPatch) -> No
     assert any(r["id"] == "configure_postgres" for r in h["recommendations"])
 
 
-def test_build_providers_payload_marks_last_failed_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_providers_payload_keeps_synced_provider_when_last_failure_is_stale(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "zab.services.conversations.memory_db.fetch_conversation_provider_document_counts",
         lambda: {"cursor": 1, "claude": 0, "codex": 0, "hermes": 181, "gemini": 0, "kimi": 0},
+    )
+    monkeypatch.setattr(
+        "zab.services.conversations._load_index",
+        lambda: {"summary": {"failed_providers": {"hermes": "database disk image is malformed"}}},
+    )
+
+    p = conversations.build_providers_payload()
+    hermes = next(row for row in p["providers"] if row["id"] == "hermes")
+    assert hermes["status"] == "synced"
+    assert "malformed" in hermes["local"]["last_sync_warning"]
+
+
+def test_build_providers_payload_marks_failed_provider_without_postgres_docs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "zab.services.conversations.memory_db.fetch_conversation_provider_document_counts",
+        lambda: {"cursor": 1, "claude": 0, "codex": 0, "hermes": 0, "gemini": 0, "kimi": 0},
     )
     monkeypatch.setattr(
         "zab.services.conversations._load_index",

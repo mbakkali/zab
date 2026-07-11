@@ -189,6 +189,103 @@ def test_cli_check_api(monkeypatch) -> None:
     assert payload["ok"] == 1
 
 
+def test_default_cli_checks_config_uses_cli_watchlist(tmp_path, monkeypatch) -> None:
+    local_tools = tmp_path / "local-tools.yaml"
+    local_tools.write_text("cli_watchlist:\n  - gh\n  - kubectl\n", encoding="utf-8")
+    monkeypatch.setattr(cli_check, "local_tools_config_path", lambda: local_tools)
+    monkeypatch.setattr(cli_check, "cli_watchlist_from_user_config", lambda: ["gh", "aws"])
+
+    cfg = cli_check.default_cli_checks_config()
+
+    checks = cfg["checks"]
+    assert [row["binary"] for row in checks] == ["gh", "kubectl", "aws"]
+    assert checks[0]["command"] == ["gh", "--version"]
+    assert checks[0]["login_command"] == ["gh", "auth", "login"]
+    assert checks[1].get("login_command") is None
+    assert checks[2]["login_command"] == ["aws", "configure"]
+
+
+def test_legacy_default_cli_checks_config_is_migrated_to_watchlist(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "cli-checks.json"
+    target.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "checks": [{"id": cid, "label": cid} for cid in cli_check._LEGACY_DEFAULT_CHECK_IDS],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    local_tools = tmp_path / "local-tools.yaml"
+    local_tools.write_text("cli_watchlist:\n  - gh\n", encoding="utf-8")
+    monkeypatch.setattr(cli_check, "local_tools_config_path", lambda: local_tools)
+    monkeypatch.setattr(cli_check, "cli_watchlist_from_user_config", lambda: [])
+
+    cli_check.ensure_default_cli_checks_config(path=target)
+
+    migrated = json.loads(target.read_text(encoding="utf-8"))
+    assert migrated["source"] == "cli_watchlist"
+    assert migrated["checks"] == [cli_check._watchlist_check("gh")]
+
+
+def test_cli_check_config_crud(tmp_path) -> None:
+    spec = tmp_path / "cli-checks.json"
+    spec.write_text(json.dumps({"version": 1, "checks": []}) + "\n", encoding="utf-8")
+
+    created = cli_check.upsert_cli_check_config({"id": "gh", "command": ["gh", "--version"]}, path=spec)
+    assert created["config"]["checks"][0]["id"] == "gh"
+
+    updated = cli_check.upsert_cli_check_config({"id": "gh-auth", "command": ["gh", "auth", "status"]}, previous_id="gh", path=spec)
+    assert updated["config"]["checks"][0]["id"] == "gh-auth"
+
+    deleted = cli_check.delete_cli_check_config("gh-auth", path=spec)
+    assert deleted["config"]["checks"] == []
+
+
+def test_cli_check_watchlist_crud_updates_user_config(tmp_path, monkeypatch) -> None:
+    spec = tmp_path / "cli-checks.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source": "cli_watchlist",
+                "checks": [
+                    {"id": "cli-gh", "label": "gh", "binary": "gh", "command": ["gh", "--version"]},
+                    {"id": "cli-node", "label": "node", "binary": "node", "command": ["node", "--version"]},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    user_cfg = {"cli_watchlist": ["gh", "node"]}
+    saved: dict[str, object] = {}
+
+    monkeypatch.setattr(cli_check, "cli_checks_config_path", lambda: spec)
+    monkeypatch.setattr(cli_check, "local_tools_config_path", lambda: tmp_path / "missing-local-tools.yaml")
+    monkeypatch.setattr(cli_check, "cli_watchlist_from_user_config", lambda: list(user_cfg["cli_watchlist"]))
+    monkeypatch.setattr(cli_check, "load_user_config", lambda: dict(user_cfg))
+
+    def fake_save(data: dict) -> Path:  # noqa: ANN001
+        user_cfg.clear()
+        user_cfg.update(data)
+        saved["data"] = data
+        return tmp_path / "config.yaml"
+
+    monkeypatch.setattr(cli_check, "save_user_config", fake_save)
+
+    cli_check.upsert_cli_check_config(
+        {"id": "cli-github", "label": "github", "binary": "github", "command": ["github", "--version"]},
+        previous_id="cli-gh",
+    )
+    assert user_cfg["cli_watchlist"] == ["github", "node"]
+
+    cli_check.delete_cli_check_config("cli-node")
+    assert user_cfg["cli_watchlist"] == ["github"]
+    assert saved["data"]["cli_watchlist"] == ["github"]
+
+
 def test_open_terminal_for_check_uses_configured_command(monkeypatch) -> None:
     spec = config_dir() / "cli-checks.json"
     _write_spec(spec)
@@ -210,6 +307,43 @@ def test_open_terminal_for_check_uses_configured_command(monkeypatch) -> None:
     assert captured["title"] == "zab: Python OK"
 
 
+def test_open_login_terminal_for_check_uses_configured_login_command(monkeypatch) -> None:
+    spec = config_dir() / "cli-checks.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "checks": [
+                    {
+                        "id": "claude",
+                        "label": "Claude",
+                        "command": ["claude", "--version"],
+                        "login_command": ["claude", "auth", "login"],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_open(command, *, cwd=None, title=None):  # noqa: ANN001
+        captured["command"] = list(command)
+        captured["cwd"] = str(cwd)
+        captured["title"] = title
+        return "fake-terminal"
+
+    monkeypatch.setattr(cli_check, "open_command_in_terminal", fake_open)
+
+    result = cli_check.open_check_login_terminal("claude")
+
+    assert result["opened"] is True
+    assert result["opened_with"] == "fake-terminal"
+    assert captured["command"] == ["claude", "auth", "login"]
+    assert captured["title"] == "zab login: Claude"
+
+
 def test_cli_check_open_terminal_api(monkeypatch) -> None:
     spec = config_dir() / "cli-checks.json"
     _write_spec(spec)
@@ -225,3 +359,33 @@ def test_cli_check_open_terminal_api(monkeypatch) -> None:
 
     no_command = client.post("/api/cli-check/env-only/open-terminal")
     assert no_command.status_code == 400
+
+
+def test_cli_check_open_login_terminal_api(monkeypatch) -> None:
+    spec = config_dir() / "cli-checks.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "checks": [
+                    {
+                        "id": "gh",
+                        "label": "GitHub CLI",
+                        "command": ["gh", "--version"],
+                        "login_command": ["gh", "auth", "login"],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli_check, "open_command_in_terminal", lambda command, **kwargs: "fake-terminal")
+
+    client = TestClient(create_app())
+    response = client.post("/api/cli-check/gh/open-login-terminal")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["opened"] is True
+    assert payload["command"] == ["gh", "auth", "login"]

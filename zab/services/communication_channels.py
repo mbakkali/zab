@@ -8,9 +8,12 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from zab.paths import data_dir
 from zab.user_config import load_user_config, save_user_config
 from zab.services import obsidian_vault
+from zab.services import postgres_store as local_db
 from zab.services.memory_db import _url_or_none, _pg_connect_timeout, memory_psycopg_available
 from zab.services.channel_fetchers import fetch_for_channel
 
@@ -21,6 +24,60 @@ CACHE_FILENAME = "channels_cache.json"
 _LEGACY_MOCK_ACTION_IDS = {"act_mail_001", "act_mail_002", "act_whatsapp_001", "act_slack_001"}
 
 DEFAULT_CHANNELS: list[dict[str, Any]] = []
+
+
+def hermes_channels_snapshot(hermes_home: Path | None = None) -> dict[str, Any]:
+    """Read Hermes channel configuration and discovered directory without mutating it."""
+    root = (hermes_home or Path.home() / ".hermes").expanduser()
+    config_path = root / "config.yaml"
+    directory_path = root / "channel_directory.json"
+
+    config: dict[str, Any] = {}
+    config_error: str | None = None
+    if config_path.is_file():
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            config = raw if isinstance(raw, dict) else {}
+        except (OSError, yaml.YAMLError) as exc:
+            config_error = str(exc)
+
+    comm = config.get("communication_channels") if isinstance(config.get("communication_channels"), dict) else {}
+    channels = comm.get("channels") if isinstance(comm, dict) and isinstance(comm.get("channels"), list) else []
+    platform_toolsets = config.get("platform_toolsets") if isinstance(config.get("platform_toolsets"), dict) else {}
+    platforms_cfg = config.get("platforms") if isinstance(config.get("platforms"), dict) else {}
+
+    directory: dict[str, Any] = {}
+    directory_error: str | None = None
+    if directory_path.is_file():
+        try:
+            raw_dir = json.loads(directory_path.read_text(encoding="utf-8"))
+            directory = raw_dir if isinstance(raw_dir, dict) else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            directory_error = str(exc)
+
+    directory_platforms = directory.get("platforms") if isinstance(directory.get("platforms"), dict) else {}
+    counts = {
+        str(platform): len(entries) if isinstance(entries, list) else 0
+        for platform, entries in directory_platforms.items()
+    }
+
+    return {
+        "home": str(root),
+        "config_path": str(config_path),
+        "config_present": config_path.is_file(),
+        "config_error": config_error,
+        "enabled": bool(comm.get("enabled")) if isinstance(comm, dict) else False,
+        "default_org": comm.get("default_org") if isinstance(comm, dict) else None,
+        "channels": channels,
+        "platform_toolsets": platform_toolsets,
+        "platforms": platforms_cfg,
+        "directory_path": str(directory_path),
+        "directory_present": directory_path.is_file(),
+        "directory_error": directory_error,
+        "directory_updated_at": directory.get("updated_at"),
+        "directory_counts": counts,
+        "directory_platforms": directory_platforms,
+    }
 
 
 def ensure_postgres_channels_schema(conn) -> None:
@@ -80,66 +137,229 @@ def get_pg_connection() -> tuple[Any, str | None]:
         return None, None
 
 
-def load_channels_config() -> list[dict[str, Any]]:
-    """Charge les canaux configurés depuis PostgreSQL si disponible, sinon depuis ~/.config/zab/config.yaml."""
-    conn, _ = get_pg_connection()
-    if conn:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT id, label, type, connector, org, email_address, enabled, status, reason, last_synced_at, sync_summary
-                        FROM zab_communication_channels
-                        ORDER BY org, label ASC
-                    """)
-                    rows = cur.fetchall()
-                    if rows:
-                        channels = []
-                        for r in rows:
-                            channels.append({
-                                "id": r[0],
-                                "label": r[1],
-                                "type": r[2],
-                                "connector": r[3],
-                                "org": r[4],
-                                "email_address": r[5],
-                                "enabled": r[6],
-                                "status": r[7] or "ok",
-                                "reason": r[8],
-                                "last_synced_at": r[9],
-                                "sync_summary": r[10] if isinstance(r[10], dict) else None,
-                            })
-                        return channels
-                    else:
-                        # La table existe mais est vide. On migre la config du fichier local.
-                        local_channels = _load_local_channels_config()
-                        for c in local_channels:
-                            cur.execute("""
-                                INSERT INTO zab_communication_channels (id, label, type, connector, org, email_address, enabled, status)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (id) DO NOTHING
-                            """, (
-                                c.get("id"),
-                                c.get("label"),
-                                c.get("type"),
-                                c.get("connector"),
-                                c.get("org", "personal"),
-                                c.get("email_address"),
-                                c.get("enabled", True),
-                                "ok"
-                            ))
-                        conn.commit()
-                        return local_channels
-        except Exception as e:
-            print(f"[Channels PG] Erreur lors de la lecture des canaux Postgres : {e}")
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+def _legacy_pg_connection() -> tuple[Any | None, str | None]:
+    """Compatibility hook for the pre-canonical-store channel tests/integrations."""
 
-    # Repli local
-    return _load_local_channels_config()
+    hook_is_overridden = getattr(get_pg_connection, "__module__", __name__) != __name__
+    if _url_or_none() and not hook_is_overridden:
+        return None, None
+    try:
+        conn, url = get_pg_connection()
+    except Exception:
+        return None, None
+    if conn is None or not url:
+        return None, None
+    return conn, url
+
+
+def _row_get(row: Any, index: int, key: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[index]
+    except (IndexError, TypeError):
+        return default
+
+
+def _legacy_channel_from_row(row: Any) -> dict[str, Any]:
+    return {
+        "id": _row_get(row, 0, "id"),
+        "label": _row_get(row, 1, "label"),
+        "type": _row_get(row, 2, "type"),
+        "connector": _row_get(row, 3, "connector"),
+        "org": _row_get(row, 4, "org"),
+        "email_address": _row_get(row, 5, "email_address"),
+        "enabled": bool(_row_get(row, 6, "enabled", True)),
+        "status": _row_get(row, 7, "status"),
+        "reason": _row_get(row, 8, "reason"),
+        "last_synced_at": _row_get(row, 9, "last_synced_at"),
+        "sync_summary": _row_get(row, 10, "sync_summary"),
+    }
+
+
+def _legacy_action_from_row(row: Any) -> dict[str, Any]:
+    date_value = _row_get(row, 7, "date")
+    processed_at = _row_get(row, 11, "processed_at")
+    return {
+        "id": _row_get(row, 0, "id"),
+        "channel_id": _row_get(row, 1, "channel_id"),
+        "channel_label": _row_get(row, 2, "channel_label"),
+        "type": _row_get(row, 3, "type"),
+        "sender": _row_get(row, 4, "sender"),
+        "subject": _row_get(row, 5, "subject"),
+        "content": _row_get(row, 6, "content"),
+        "date": date_value.isoformat() if hasattr(date_value, "isoformat") else date_value,
+        "url": _row_get(row, 8, "url"),
+        "org": _row_get(row, 9, "org"),
+        "status": _row_get(row, 10, "status", "pending"),
+        "processed_at": processed_at.isoformat() if hasattr(processed_at, "isoformat") else processed_at,
+        "obsidian_noted": bool(_row_get(row, 12, "obsidian_noted", False)),
+    }
+
+
+def _legacy_load_channels(conn: Any) -> list[dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, label, type, connector, org, email_address, enabled, status, reason, last_synced_at, sync_summary "
+            "FROM zab_communication_channels ORDER BY org, label"
+        )
+        rows = cur.fetchall()
+    return [_legacy_channel_from_row(row) for row in rows]
+
+
+def _legacy_replace_channels(conn: Any, channels: list[dict[str, Any]]) -> None:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM zab_communication_channels")
+        for channel in channels:
+            cur.execute(
+                "INSERT INTO zab_communication_channels "
+                "(id, label, type, connector, org, email_address, enabled, status, reason, last_synced_at, sync_summary) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    channel.get("id"),
+                    channel.get("label"),
+                    channel.get("type"),
+                    channel.get("connector"),
+                    channel.get("org"),
+                    channel.get("email_address"),
+                    bool(channel.get("enabled", True)),
+                    channel.get("status"),
+                    channel.get("reason"),
+                    channel.get("last_synced_at"),
+                    channel.get("sync_summary"),
+                ),
+            )
+    conn.commit()
+
+
+def _legacy_update_channels(conn: Any, channels: list[dict[str, Any]]) -> None:
+    with conn.cursor() as cur:
+        for channel in channels:
+            cur.execute(
+                "UPDATE zab_communication_channels SET status = %s, reason = %s, last_synced_at = %s, sync_summary = %s WHERE id = %s",
+                (
+                    channel.get("status"),
+                    channel.get("reason"),
+                    channel.get("last_synced_at"),
+                    channel.get("sync_summary"),
+                    channel.get("id"),
+                ),
+            )
+    conn.commit()
+
+
+def _legacy_load_dashboard_actions(conn: Any) -> list[dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, channel_id, channel_label, type, sender, subject, content, date, url, org, status, processed_at, obsidian_noted "
+            "FROM zab_dashboard_actions ORDER BY updated_at DESC, id"
+        )
+        rows = cur.fetchall()
+    return [_legacy_action_from_row(row) for row in rows]
+
+
+def _legacy_replace_dashboard_actions(conn: Any, actions: list[dict[str, Any]]) -> None:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM zab_dashboard_actions")
+        for action in actions:
+            cur.execute(
+                "INSERT INTO zab_dashboard_actions "
+                "(id, channel_id, channel_label, type, sender, subject, content, date, url, org, status, processed_at, obsidian_noted) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    action.get("id"),
+                    action.get("channel_id"),
+                    action.get("channel_label"),
+                    action.get("type"),
+                    action.get("sender"),
+                    action.get("subject"),
+                    action.get("content"),
+                    action.get("date"),
+                    action.get("url"),
+                    action.get("org"),
+                    action.get("status"),
+                    action.get("processed_at"),
+                    bool(action.get("obsidian_noted", False)),
+                ),
+            )
+    conn.commit()
+
+
+def _legacy_update_dashboard_action(conn: Any, action_id: str, patch: dict[str, Any]) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE zab_dashboard_actions SET status = %s, processed_at = %s, obsidian_noted = %s WHERE id = %s",
+            (
+                patch.get("status"),
+                patch.get("processed_at"),
+                bool(patch.get("obsidian_noted", False)),
+                action_id,
+            ),
+        )
+    conn.commit()
+
+
+def _store_load_channels() -> list[dict[str, Any]]:
+    conn, _ = _legacy_pg_connection()
+    if conn is not None:
+        return _legacy_load_channels(conn)
+    return local_db.load_channels()
+
+
+def _store_replace_channels(channels: list[dict[str, Any]]) -> None:
+    conn, _ = _legacy_pg_connection()
+    if conn is not None:
+        _legacy_replace_channels(conn, channels)
+        return
+    local_db.replace_channels(channels)
+
+
+def _store_update_channels(channels: list[dict[str, Any]]) -> None:
+    conn, _ = _legacy_pg_connection()
+    if conn is not None:
+        _legacy_update_channels(conn, channels)
+        return
+    local_db.replace_channels(channels)
+
+
+def _store_load_dashboard_actions() -> list[dict[str, Any]]:
+    conn, _ = _legacy_pg_connection()
+    if conn is not None:
+        return _legacy_load_dashboard_actions(conn)
+    return local_db.load_dashboard_actions()
+
+
+def _store_replace_dashboard_actions(actions: list[dict[str, Any]]) -> None:
+    conn, _ = _legacy_pg_connection()
+    if conn is not None:
+        _legacy_replace_dashboard_actions(conn, actions)
+        return
+    local_db.replace_dashboard_actions(actions)
+
+
+def _store_get_dashboard_action(action_id: str) -> dict[str, Any] | None:
+    actions = _store_load_dashboard_actions()
+    return next((action for action in actions if action.get("id") == action_id), None)
+
+
+def _store_update_dashboard_action(action_id: str, patch: dict[str, Any]) -> None:
+    conn, _ = _legacy_pg_connection()
+    if conn is not None:
+        _legacy_update_dashboard_action(conn, action_id, patch)
+        return
+    local_db.update_dashboard_action(action_id, patch)
+
+
+def load_channels_config() -> list[dict[str, Any]]:
+    """Charge les canaux depuis Postgres canonique, puis importe config.yaml si vide."""
+    local_channels = _store_load_channels()
+    if local_channels:
+        return local_channels
+
+    local_channels = _load_local_channels_config()
+    if local_channels:
+        _store_replace_channels(local_channels)
+    return local_channels
 
 
 def _load_local_channels_config() -> list[dict[str, Any]]:
@@ -152,54 +372,12 @@ def _load_local_channels_config() -> list[dict[str, Any]]:
 
 
 def save_channels_config(channels: list[dict[str, Any]]) -> None:
-    """Enregistre les canaux dans ~/.config/zab/config.yaml ET dans PostgreSQL si disponible."""
-    # 1. Sauvegarde locale (fallback obligatoire)
+    """Enregistre les canaux dans Postgres canonique et config.yaml."""
+    _store_replace_channels(channels)
+
     cfg = load_user_config()
     cfg["communication_channels"] = channels
     save_user_config(cfg)
-
-    # 2. Sauvegarde PostgreSQL si disponible
-    conn, _ = get_pg_connection()
-    if conn:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    for c in channels:
-                        cur.execute("""
-                            INSERT INTO zab_communication_channels (id, label, type, connector, org, email_address, enabled)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (id) DO UPDATE SET
-                                label = EXCLUDED.label,
-                                type = EXCLUDED.type,
-                                connector = EXCLUDED.connector,
-                                org = EXCLUDED.org,
-                                email_address = EXCLUDED.email_address,
-                                enabled = EXCLUDED.enabled
-                        """, (
-                            c.get("id"),
-                            c.get("label"),
-                            c.get("type"),
-                            c.get("connector"),
-                            c.get("org", "personal"),
-                            c.get("email_address"),
-                            c.get("enabled", True)
-                        ))
-                    
-                    # Supprimer de Postgres les canaux supprimés de la config
-                    active_ids = [c.get("id") for c in channels if c.get("id")]
-                    if active_ids:
-                        cur.execute(
-                            "DELETE FROM zab_communication_channels WHERE id NOT IN %s",
-                            (tuple(active_ids),)
-                        )
-                    conn.commit()
-        except Exception as e:
-            print(f"[Channels PG] Erreur lors de l'écriture des canaux Postgres : {e}")
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 
 def add_channel_config(
@@ -281,11 +459,24 @@ def get_channels_cache_path() -> Path:
 
 def fetch_channels_cache() -> dict[str, Any]:
     """Charge le cache de synchronisation ou déclenche une synchro si absent."""
+    db_actions = _store_load_dashboard_actions()
+    if db_actions:
+        db_channels = _store_load_channels()
+        return {
+            "generated_at_utc": _iso_now(),
+            "channels": db_channels,
+            "action_items": db_actions,
+            "total_actions_count": len([a for a in db_actions if a.get("status") == "pending"]),
+        }
     p = get_channels_cache_path()
     if p.is_file():
         try:
             with p.open("r", encoding="utf-8") as f:
-                return json.load(f)
+                cache = json.load(f)
+            if isinstance(cache, dict):
+                _store_replace_channels([x for x in cache.get("channels", []) if isinstance(x, dict)])
+                _store_replace_dashboard_actions([x for x in cache.get("action_items", []) if isinstance(x, dict)])
+                return cache
         except Exception:
             pass
     return sync_communication_channels()
@@ -334,76 +525,11 @@ def sync_communication_channels() -> dict[str, Any]:
     demo_mode = os.environ.get("ZAB_DEMO_CHANNELS", "").strip() == "1"
 
     # 2. Charger les anciennes actions pour fusionner proprement
-    old_actions = []
-    conn, _ = get_pg_connection()
-    if conn:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT id, channel_id, channel_label, type, sender, subject, content, date, url, org, status, processed_at, obsidian_noted
-                        FROM zab_dashboard_actions
-                    """)
-                    rows = cur.fetchall()
-                    for r in rows:
-                        dt_val = r[7]
-                        dt_str = dt_val.isoformat() if isinstance(dt_val, datetime) else str(dt_val)
-                        proc_val = r[11]
-                        proc_str = proc_val.isoformat() if isinstance(proc_val, datetime) else (str(proc_val) if proc_val else None)
-                        
-                        old_actions.append({
-                            "id": r[0],
-                            "channel_id": r[1],
-                            "channel_label": r[2],
-                            "type": r[3],
-                            "sender": r[4],
-                            "subject": r[5],
-                            "content": r[6],
-                            "date": dt_str,
-                            "url": r[8],
-                            "org": r[9],
-                            "status": r[10],
-                            "processed_at": proc_str,
-                            "obsidian_noted": r[12] or False,
-                        })
-        except Exception as e:
-            print(f"[Channels PG] Erreur lecture des actions Postgres durant sync : {e}")
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-    else:
-        # Fallback local
-        p = get_channels_cache_path()
-        if p.is_file():
-            try:
-                with p.open("r", encoding="utf-8") as f:
-                    old_cache = json.load(f)
-                    old_actions = old_cache.get("action_items", [])
-            except Exception:
-                pass
+    old_actions = _store_load_dashboard_actions()
 
     # Purger les items mockés hérités d'avant le passage aux fetchers réels.
     if old_actions and not demo_mode:
         old_actions = [a for a in old_actions if a.get("id") not in _LEGACY_MOCK_ACTION_IDS]
-        conn_purge, _ = get_pg_connection()
-        if conn_purge:
-            try:
-                with conn_purge:
-                    with conn_purge.cursor() as cur:
-                        cur.execute(
-                            "DELETE FROM zab_dashboard_actions WHERE id = ANY(%s)",
-                            (list(_LEGACY_MOCK_ACTION_IDS),),
-                        )
-                        conn_purge.commit()
-            except Exception as e:
-                print(f"[Channels PG] Erreur purge legacy mock actions : {e}")
-            finally:
-                try:
-                    conn_purge.close()
-                except Exception:
-                    pass
 
     pending_actions = {a["id"]: a for a in old_actions if a.get("status") == "pending"}
 
@@ -482,111 +608,6 @@ def sync_communication_channels() -> dict[str, Any]:
         if not any(x["id"] == aid for x in final_actions):
             final_actions.append(act)
 
-    # Si connecté à Postgres, on enregistre les modifications
-    conn, _ = get_pg_connection()
-    if conn:
-        try:
-            from psycopg.types.json import Jsonb
-            with conn:
-                with conn.cursor() as cur:
-                    # 1. Enregistrer l'état des canaux synchronisés
-                    for s in synced_channels:
-                        cur.execute("""
-                            UPDATE zab_communication_channels SET
-                                status = %s,
-                                reason = %s,
-                                last_synced_at = %s,
-                                sync_summary = %s
-                            WHERE id = %s
-                        """, (
-                            s.get("status"),
-                            s.get("reason"),
-                            s.get("last_synced_at"),
-                            Jsonb(s.get("sync_summary") or {}),
-                            s.get("id")
-                        ))
-
-                    # 2. Insérer les messages d'actions dans zab_dashboard_actions (sans écraser le statut utilisateur)
-                    for a in final_actions:
-                        # S'assurer que le canal existe en DB pour respecter la contrainte de clé étrangère
-                        cur.execute("SELECT 1 FROM zab_communication_channels WHERE id = %s", (a["channel_id"],))
-                        if not cur.fetchone():
-                            cur.execute("""
-                                INSERT INTO zab_communication_channels (id, label, type, connector, org, enabled)
-                                VALUES (%s, %s, %s, %s, %s, %s)
-                                ON CONFLICT NOTHING
-                            """, (
-                                a["channel_id"],
-                                a["channel_label"],
-                                a["type"],
-                                "gmail" if a["type"] == "email" else a["type"],
-                                a["org"],
-                                True
-                            ))
-
-                        try:
-                            dt_obj = datetime.fromisoformat(a["date"])
-                        except Exception:
-                            dt_obj = now_dt
-
-                        cur.execute("""
-                            INSERT INTO zab_dashboard_actions (id, channel_id, channel_label, type, sender, subject, content, date, url, org, status, processed_at, obsidian_noted)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (id) DO NOTHING
-                        """, (
-                            a["id"],
-                            a["channel_id"],
-                            a["channel_label"],
-                            a["type"],
-                            a["sender"],
-                            a.get("subject"),
-                            a["content"],
-                            dt_obj,
-                            a.get("url"),
-                            a["org"],
-                            a.get("status", "pending"),
-                            datetime.fromisoformat(a["processed_at"]) if a.get("processed_at") else None,
-                            a.get("obsidian_noted", False)
-                        ))
-
-                    conn.commit()
-
-                    # Recharger depuis la DB pour assurer une cohérence absolue
-                    cur.execute("""
-                        SELECT id, channel_id, channel_label, type, sender, subject, content, date, url, org, status, processed_at, obsidian_noted
-                        FROM zab_dashboard_actions
-                    """)
-                    rows = cur.fetchall()
-                    final_actions = []
-                    for r in rows:
-                        dt_val = r[7]
-                        dt_str = dt_val.isoformat() if isinstance(dt_val, datetime) else str(dt_val)
-                        proc_val = r[11]
-                        proc_str = proc_val.isoformat() if isinstance(proc_val, datetime) else (str(proc_val) if proc_val else None)
-
-                        final_actions.append({
-                            "id": r[0],
-                            "channel_id": r[1],
-                            "channel_label": r[2],
-                            "type": r[3],
-                            "sender": r[4],
-                            "subject": r[5],
-                            "content": r[6],
-                            "date": dt_str,
-                            "url": r[8],
-                            "org": r[9],
-                            "status": r[10],
-                            "processed_at": proc_str,
-                            "obsidian_noted": r[12] or False,
-                        })
-        except Exception as e:
-            print(f"[Channels PG] Erreur d'écriture/lecture durant sync : {e}")
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
     result = {
         "generated_at_utc": _iso_now(),
         "channels": synced_channels,
@@ -594,39 +615,19 @@ def sync_communication_channels() -> dict[str, Any]:
         "total_actions_count": len([a for a in final_actions if a.get("status") == "pending"]),
     }
 
-    # Toujours écrire dans le cache local (cohérence + repli instantané)
+    # Export de compatibilité pour debug; Postgres reste canonique.
     p = get_channels_cache_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+        json.dump(result, f, ensure_ascii=False, indent=2, default=str)
+    _store_update_channels(synced_channels)
+    _store_replace_dashboard_actions(final_actions)
 
     return result
 
 
 def dismiss_action_item(action_id: str) -> dict[str, Any]:
     """Marque une action à mener comme traitée (dismissed)."""
-    # 1. Mise à jour dans PostgreSQL si disponible
-    conn, _ = get_pg_connection()
-    if conn:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        UPDATE zab_dashboard_actions SET
-                            status = 'dismissed',
-                            processed_at = %s
-                        WHERE id = %s
-                    """, (datetime.now(timezone.utc), action_id))
-                    conn.commit()
-        except Exception as e:
-            print(f"[Channels PG] Erreur de dismiss Postgres : {e}")
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    # 2. Mise à jour dans le cache local
     cache = fetch_channels_cache()
     actions = cache.get("action_items", [])
     
@@ -637,8 +638,13 @@ def dismiss_action_item(action_id: str) -> dict[str, Any]:
             a["processed_at"] = _iso_now()
             found = True
             break
+    if found:
+        _store_update_dashboard_action(
+            action_id,
+            {"status": "dismissed", "processed_at": _iso_now()},
+        )
             
-    if not found and not conn:
+    if not found:
         raise KeyError(f"Action {action_id} inconnue")
         
     cache["total_actions_count"] = len([a for a in actions if a.get("status") == "pending"])
@@ -646,7 +652,8 @@ def dismiss_action_item(action_id: str) -> dict[str, Any]:
     # Sauvegarder
     p = get_channels_cache_path()
     with p.open("w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2)
+        json.dump(cache, f, ensure_ascii=False, indent=2, default=str)
+    _store_replace_dashboard_actions([x for x in actions if isinstance(x, dict)])
         
     return cache
 
@@ -663,38 +670,10 @@ def convert_action_to_obsidian_task(action_id: str) -> dict[str, Any]:
             break
             
     if target_action is None:
-        # Tenter de charger depuis la DB si présent
-        conn, _ = get_pg_connection()
-        if conn:
-            try:
-                with conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            SELECT id, channel_id, channel_label, type, sender, subject, content, date, url, org, status
-                            FROM zab_dashboard_actions WHERE id = %s
-                        """, (action_id,))
-                        row = cur.fetchone()
-                        if row:
-                            target_action = {
-                                "id": row[0],
-                                "channel_id": row[1],
-                                "channel_label": row[2],
-                                "type": row[3],
-                                "sender": row[4],
-                                "subject": row[5],
-                                "content": row[6],
-                                "date": row[7].isoformat() if isinstance(row[7], datetime) else str(row[7]),
-                                "url": row[8],
-                                "org": row[9],
-                                "status": row[10]
-                            }
-            except Exception as e:
-                print(f"[Channels PG] Erreur chargement action convert : {e}")
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+        target_action = _store_get_dashboard_action(action_id)
+
+    if target_action is None:
+        target_action = _store_get_dashboard_action(action_id)
 
     if target_action is None:
         raise KeyError(f"Action {action_id} inconnue")
@@ -725,42 +704,24 @@ def convert_action_to_obsidian_task(action_id: str) -> dict[str, Any]:
     if not daily_note_written:
         raise RuntimeError(f"Erreur d'écriture dans le coffre Obsidian : {error_msg or 'vault_not_configured'}")
 
-    # 1. Mettre à jour PostgreSQL si disponible
-    conn, _ = get_pg_connection()
-    if conn:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        UPDATE zab_dashboard_actions SET
-                            status = 'converted',
-                            processed_at = %s,
-                            obsidian_noted = TRUE
-                        WHERE id = %s
-                    """, (datetime.now(timezone.utc), action_id))
-                    conn.commit()
-        except Exception as e:
-            print(f"[Channels PG] Erreur de convert Postgres : {e}")
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    # 2. Mettre à jour le cache local
     for a in actions:
         if a.get("id") == action_id:
             a["status"] = "converted"
             a["processed_at"] = _iso_now()
             a["obsidian_noted"] = True
             break
+    _store_update_dashboard_action(
+        action_id,
+        {"status": "converted", "processed_at": _iso_now(), "obsidian_noted": True},
+    )
             
     cache["total_actions_count"] = len([a for a in actions if a.get("status") == "pending"])
     
     # Sauvegarder le cache local
     p = get_channels_cache_path()
     with p.open("w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2)
+        json.dump(cache, f, ensure_ascii=False, indent=2, default=str)
+    _store_replace_dashboard_actions([x for x in actions if isinstance(x, dict)])
         
     return {
         "cache": cache,

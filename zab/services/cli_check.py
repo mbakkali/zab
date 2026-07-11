@@ -12,15 +12,53 @@ import re
 import shlex
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from zab.paths import config_dir
+import yaml
+
+from zab.paths import config_dir, local_tools_config_path
 from zab.services.secrets_scan import scan_secret_presence
 from zab.system_open import open_command_in_terminal
+from zab.user_config import cli_watchlist_from_user_config, load_user_config, save_user_config
 
 Status = str
+
+_LEGACY_DEFAULT_CHECK_IDS = {
+    "gog-gmail-work",
+    "composio-connections",
+    "fireflies-via-composio",
+    "hubspot-live",
+    "gitlab-client-project-zab",
+    "pennylane",
+    "qonto",
+    "evolution-api-whatsapp",
+}
+
+_LOGIN_COMMANDS: dict[str, list[str]] = {
+    "claude": ["claude", "auth", "login"],
+    "codex": ["codex", "login"],
+    "opencode": ["opencode", "providers", "login"],
+    "qwen": ["qwen", "auth", "qwen-oauth"],
+    "kimi": ["kimi", "login"],
+    "gh": ["gh", "auth", "login"],
+    "glab": ["glab", "auth", "login"],
+    "composio": ["composio", "login"],
+    "gcloud": ["gcloud", "auth", "login"],
+    "aws": ["aws", "configure"],
+    "docker": ["docker", "login"],
+    "npm": ["npm", "login"],
+    "pnpm": ["pnpm", "login"],
+    "yarn": ["yarn", "npm", "login"],
+    "vercel": ["vercel", "login"],
+    "supabase": ["supabase", "login"],
+    "firebase": ["firebase", "login"],
+    "flyctl": ["flyctl", "auth", "login"],
+    "ngrok": ["ngrok", "config", "add-authtoken"],
+    "stripe": ["stripe", "login"],
+}
 
 
 def cli_checks_config_path() -> Path:
@@ -28,120 +66,151 @@ def cli_checks_config_path() -> Path:
     return config_dir() / "cli-checks.json"
 
 
+def _merged_cli_watchlist_names() -> list[str]:
+    names: list[str] = []
+    p = local_tools_config_path()
+    if p.is_file():
+        try:
+            doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            raw = doc.get("cli_watchlist") if isinstance(doc, dict) else None
+            if isinstance(raw, list):
+                for item in raw:
+                    name = str(item).strip()
+                    if name and name not in names:
+                        names.append(name)
+        except (OSError, yaml.YAMLError):
+            pass
+    for item in cli_watchlist_from_user_config():
+        name = item.strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _watchlist_check(name: str) -> dict[str, Any]:
+    slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", name).strip("-").lower() or name
+    row = {
+        "id": f"cli-{slug}",
+        "label": name,
+        "category": "cli-watchlist",
+        "binary": name,
+        "command": [name, "--version"],
+        "timeout_seconds": 5,
+        "success": {"exit_codes": [0]},
+        "failure_note": f"CLI {name} introuvable ou non exécutable depuis PATH.",
+    }
+    login_command = _LOGIN_COMMANDS.get(name)
+    if login_command:
+        row["login_command"] = login_command
+    return row
+
+
 def default_cli_checks_config() -> dict[str, Any]:
     """Return the example config used to bootstrap ``cli-checks.json``."""
+    watchlist = _merged_cli_watchlist_names()
     return {
         "version": 1,
-        "description": "Checks declaratifs pour valider les authentifications CLI locales.",
-        "checks": [
-            {
-                "id": "gog-gmail-flowmetrik",
-                "label": "gog / Gmail Flowmetrik",
-                "category": "messaging",
-                "url": "https://mail.google.com/mail/u/mehdi@flowmetrik.com",
-                "command": [
-                    "gog",
-                    "gmail",
-                    "labels",
-                    "list",
-                    "--account",
-                    "mehdi@flowmetrik.com",
-                    "--json",
-                    "--no-input",
-                ],
-                "timeout_seconds": 8,
-                "success": {
-                    "exit_codes": [0],
-                    "combined_contains_any": ["\"labels\"", "INBOX"],
-                    "combined_not_contains_any": ["no auth", "unauthorized", "not authenticated", "forbidden", "invalid_grant"],
-                },
-                "failure_note": "Echec d'auth: no auth for gmail mehdi@flowmetrik.com.",
-            },
-            {
-                "id": "composio-connections",
-                "label": "Composio",
-                "category": "connectors",
-                "url": "https://app.composio.dev/connections",
-                "command": ["composio", "connections", "list"],
-                "timeout_seconds": 8,
-                "success": {
-                    "exit_codes": [0],
-                    "combined_contains_any": ["ACTIVE", "active"],
-                    "combined_not_contains_any": ["0 active", "no connections", "aucune connexion"],
-                },
-                "failure_note": "Aucune connexion lisible, 0 active; Gmail/Google Calendar/Fireflies/HubSpot via Composio inutilisables.",
-            },
-            {
-                "id": "fireflies-via-composio",
-                "label": "Fireflies via Composio",
-                "category": "meetings",
-                "command": ["composio", "connections", "list"],
-                "timeout_seconds": 8,
-                "success": {
-                    "exit_codes": [0],
-                    "combined_contains_any": ["fireflies", "FIREFLIES"],
-                    "combined_not_contains_any": ["0 active", "no connections", "aucune connexion"],
-                },
-                "failure_note": "Pas verifie live si Composio n'est pas connecte.",
-            },
-            {
-                "id": "hubspot-live",
-                "label": "HubSpot",
-                "category": "crm",
-                "env_any": ["HUBSPOT_ACCESS_TOKEN", "HUBSPOT_API_KEY"],
-                "command": ["composio", "connections", "list"],
-                "timeout_seconds": 8,
-                "success": {
-                    "exit_codes": [0],
-                    "combined_contains_any": ["hubspot", "HUBSPOT"],
-                    "combined_not_contains_any": ["0 active", "no connections", "aucune connexion"],
-                },
-                "failure_note": "Credentials possibles, mais aucun appel live HubSpot confirme cote Zab.",
-            },
-            {
-                "id": "gitlab-carrefour-danmdata-zab",
-                "label": "GitLab Carrefour/Danmdata via Zab",
-                "category": "project-management",
-                "zab_task_source": "danmdata-gitlab",
-                "success_message": "Source GitLab Carrefour lisible via Zab.",
-                "failure_note": "Source GitLab Carrefour non lisible via Zab.",
-            },
-            {
-                "id": "pennylane",
-                "label": "Pennylane",
-                "category": "finance",
-                "env_all": ["PENNYLANE_API_KEY"],
-                "failure_note": "PENNYLANE_API_KEY manque cote Zab ou smoke reseau Pennylane non abouti.",
-            },
-            {
-                "id": "qonto",
-                "label": "Qonto",
-                "category": "finance",
-                "env_any": ["QONTO_API_KEY", "QONTO_LOGIN", "QONTO_SECRET_KEY"],
-                "failure_note": "Credentials presents possibles, mais paiement/transactions non verifies live.",
-            },
-            {
-                "id": "evolution-api-whatsapp",
-                "label": "Evolution API / WhatsApp",
-                "category": "messaging",
-                "env_any": ["EVOLUTION_API_KEY", "EVOLUTION_API_URL", "EVOLUTION_INSTANCE"],
-                "failure_note": "Credentials presents possibles, mais non utilises pour lire/chercher les echanges.",
-            },
-        ],
+        "description": "Checks declaratifs generes depuis cli_watchlist. Modifiez les entrees pour ajouter des validations d'auth plus precises.",
+        "source": "cli_watchlist",
+        "checks": [_watchlist_check(name) for name in watchlist],
     }
+
+
+def _check_binary_name(raw: dict[str, Any]) -> str:
+    binary = str(raw.get("binary") or "").strip()
+    if binary:
+        return binary
+    command = _command_list(raw.get("command"))
+    if command:
+        return Path(command[0]).name
+    return str(raw.get("label") or raw.get("id") or "").strip()
+
+
+def _sync_cli_watchlist_config(raw: dict[str, Any]) -> dict[str, Any]:
+    """Return a cli-check config whose checks mirror the merged CLI watchlist."""
+    by_binary: dict[str, dict[str, Any]] = {}
+    existing = raw.get("checks")
+    if isinstance(existing, list):
+        for item in existing:
+            if not isinstance(item, dict):
+                continue
+            binary = _check_binary_name(item)
+            if binary and binary not in by_binary:
+                by_binary[binary] = item
+
+    checks: list[dict[str, Any]] = []
+    for name in _merged_cli_watchlist_names():
+        base = _watchlist_check(name)
+        previous = by_binary.get(name)
+        if previous:
+            merged = {**base, **previous, "binary": name}
+            if not _command_list(merged.get("command")):
+                merged["command"] = base["command"]
+            checks.append(merged)
+        else:
+            checks.append(base)
+
+    return {
+        **raw,
+        "version": raw.get("version") or 1,
+        "description": raw.get("description") or "Checks declaratifs generes depuis cli_watchlist.",
+        "source": "cli_watchlist",
+        "checks": checks,
+    }
+
+
+def _mutate_user_cli_watchlist(*, add: str | None = None, remove: str | None = None, replace: tuple[str, str] | None = None) -> Path:
+    cfg = dict(load_user_config())
+    cfg.pop("_error", None)
+    raw = cfg.get("cli_watchlist")
+    names = [str(item).strip() for item in raw if isinstance(item, str) and str(item).strip()] if isinstance(raw, list) else []
+
+    if remove:
+        names = [name for name in names if name != remove]
+    if replace:
+        old, new = replace
+        names = [new if name == old else name for name in names]
+    if add and add not in names:
+        names.append(add)
+
+    deduped: list[str] = []
+    for name in names:
+        if name and name not in deduped:
+            deduped.append(name)
+    cfg["cli_watchlist"] = deduped
+    return save_user_config(cfg)
+
+
+def _looks_like_legacy_default(raw: dict[str, Any]) -> bool:
+    checks = raw.get("checks")
+    if not isinstance(checks, list):
+        return False
+    ids = {str(item.get("id") or "").strip() for item in checks if isinstance(item, dict)}
+    return len(ids & _LEGACY_DEFAULT_CHECK_IDS) >= 3
 
 
 def ensure_default_cli_checks_config(*, overwrite: bool = False, path: Path | None = None) -> Path:
     """Create the default JSON config if missing, or overwrite it when requested."""
     target = (path or cli_checks_config_path()).expanduser().resolve()
     if target.is_file() and not overwrite:
+        try:
+            raw = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return target
+        if isinstance(raw, dict) and _looks_like_legacy_default(raw):
+            target.write_text(json.dumps(_sync_cli_watchlist_config({}), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(default_cli_checks_config(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return target
 
 
-def load_cli_checks_config(path: Path | None = None, *, create_default: bool = True) -> tuple[Path, dict[str, Any]]:
+def load_cli_checks_config(
+    path: Path | None = None,
+    *,
+    create_default: bool = True,
+    sync_watchlist: bool = True,
+) -> tuple[Path, dict[str, Any]]:
     """Load a CLI check config, bootstrapping the default file when needed."""
     target = (path or cli_checks_config_path()).expanduser().resolve()
     if not target.is_file() and create_default:
@@ -157,7 +226,90 @@ def load_cli_checks_config(path: Path | None = None, *, create_default: bool = T
     checks = raw.get("checks")
     if not isinstance(checks, list):
         raise ValueError("le fichier cli-check doit contenir une liste checks[]")
+    if sync_watchlist and (raw.get("source") == "cli_watchlist" or _looks_like_legacy_default(raw)):
+        synced = _sync_cli_watchlist_config(raw if raw.get("source") == "cli_watchlist" else {})
+        if synced != raw:
+            save_cli_checks_config(synced, target)
+            raw = synced
     return target, raw
+
+
+def save_cli_checks_config(cfg: dict[str, Any], path: Path | None = None) -> Path:
+    """Persist a complete CLI check config."""
+    target = (path or cli_checks_config_path()).expanduser().resolve()
+    checks = cfg.get("checks")
+    if not isinstance(checks, list):
+        raise ValueError("le fichier cli-check doit contenir une liste checks[]")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
+def _check_id(raw: dict[str, Any]) -> str:
+    return str(raw.get("id") or raw.get("label") or "").strip()
+
+
+def upsert_cli_check_config(check: dict[str, Any], *, previous_id: str | None = None, path: Path | None = None) -> dict[str, Any]:
+    """Add or replace one check entry in ``checks[]`` and persist the config."""
+    if not isinstance(check, dict):
+        raise ValueError("le check doit etre un objet JSON")
+    cid = _check_id(check)
+    if not cid:
+        raise ValueError("le check doit contenir id ou label")
+    config_path, cfg = load_cli_checks_config(path)
+    sync_watchlist = path is None and cfg.get("source") == "cli_watchlist"
+    checks = cfg.get("checks")
+    if not isinstance(checks, list):
+        raise ValueError("le fichier cli-check doit contenir une liste checks[]")
+
+    wanted = (previous_id or cid).strip()
+    replace_index: int | None = None
+    previous: dict[str, Any] | None = None
+    for idx, raw in enumerate(checks):
+        if isinstance(raw, dict) and _check_id(raw) == wanted:
+            replace_index = idx
+            previous = raw
+            break
+
+    for idx, raw in enumerate(checks):
+        if idx != replace_index and isinstance(raw, dict) and _check_id(raw) == cid:
+            raise ValueError(f"check deja existant: {cid}")
+
+    if replace_index is None:
+        checks.append(check)
+    else:
+        checks[replace_index] = check
+    save_cli_checks_config(cfg, config_path)
+    if sync_watchlist:
+        new_name = _check_binary_name(check)
+        old_name = _check_binary_name(previous) if previous else ""
+        if previous and old_name and new_name and old_name != new_name:
+            _mutate_user_cli_watchlist(replace=(old_name, new_name))
+        elif new_name:
+            _mutate_user_cli_watchlist(add=new_name)
+    return {"path": str(config_path), "config": cfg, "check": check}
+
+
+def delete_cli_check_config(check_id: str, path: Path | None = None) -> dict[str, Any]:
+    """Remove one check entry from ``checks[]`` and persist the config."""
+    wanted = check_id.strip()
+    if not wanted:
+        raise ValueError("check_id vide")
+    config_path, cfg = load_cli_checks_config(path)
+    sync_watchlist = path is None and cfg.get("source") == "cli_watchlist"
+    checks = cfg.get("checks")
+    if not isinstance(checks, list):
+        raise ValueError("le fichier cli-check doit contenir une liste checks[]")
+    for idx, raw in enumerate(checks):
+        if isinstance(raw, dict) and _check_id(raw) == wanted:
+            removed = checks.pop(idx)
+            save_cli_checks_config(cfg, config_path)
+            if sync_watchlist:
+                name = _check_binary_name(removed)
+                if name:
+                    _mutate_user_cli_watchlist(remove=name)
+            return {"path": str(config_path), "config": cfg, "removed": removed}
+    raise KeyError(wanted)
 
 
 def _find_check_config(check_id: str, path: Path | None = None) -> tuple[Path, dict[str, Any]]:
@@ -210,6 +362,23 @@ def command_for_check(check_id: str, path: Path | None = None) -> dict[str, Any]
     }
 
 
+def login_command_for_check(check_id: str, path: Path | None = None) -> dict[str, Any]:
+    """Return the configured login command for one check without executing it."""
+    config_path, raw = _find_check_config(check_id, path)
+    command = _command_list(raw.get("login_command"))
+    if not command:
+        raise ValueError(f"aucune commande de login configurée pour {check_id}")
+    cwd_raw = str(raw.get("cwd") or "").strip()
+    cwd = str(Path(cwd_raw).expanduser().resolve()) if cwd_raw else str(Path.home())
+    return {
+        "id": str(raw.get("id") or check_id),
+        "label": str(raw.get("label") or check_id),
+        "command": command,
+        "cwd": cwd,
+        "config_path": str(config_path),
+    }
+
+
 def open_check_command_terminal(check_id: str, path: Path | None = None) -> dict[str, Any]:
     """Open a new terminal running the command configured for one CLI check."""
     payload = command_for_check(check_id, path)
@@ -217,6 +386,17 @@ def open_check_command_terminal(check_id: str, path: Path | None = None) -> dict
         list(payload["command"]),
         cwd=Path(str(payload["cwd"])),
         title=f"zab: {payload['label']}",
+    )
+    return {**payload, "opened": True, "opened_with": opened_with}
+
+
+def open_check_login_terminal(check_id: str, path: Path | None = None) -> dict[str, Any]:
+    """Open a new terminal running the configured login command for one CLI check."""
+    payload = login_command_for_check(check_id, path)
+    opened_with = open_command_in_terminal(
+        list(payload["command"]),
+        cwd=Path(str(payload["cwd"])),
+        title=f"zab login: {payload['label']}",
     )
     return {**payload, "opened": True, "opened_with": opened_with}
 
@@ -320,6 +500,9 @@ def _check_one(raw: Any, *, env_presence: dict[str, dict[str, Any]] | None = Non
         "description": raw.get("description"),
         "failure_note": raw.get("failure_note"),
     }
+    login_command = _command_list(raw.get("login_command"))
+    if login_command:
+        detail["login_command"] = login_command
 
     if raw.get("enabled") is False:
         return _item(id=cid, label=label, category=category, status="skipped", message="Check desactive", detail=detail, url=url)
@@ -542,20 +725,29 @@ def run_cli_checks(
     config_path, cfg = load_cli_checks_config(path, create_default=create_default)
     wanted = {item.strip() for item in (only or []) if item.strip()}
     checks_raw = cfg.get("checks") if isinstance(cfg.get("checks"), list) else []
-    env_names: list[str] = []
+    selected_raw: list[Any] = []
     for raw in checks_raw:
-        if isinstance(raw, dict):
-            env_names.extend(_string_list(raw.get("env_all")))
-            env_names.extend(_string_list(raw.get("env_any")))
-    env_presence = _env_presence_map(env_names)
-    rows: list[dict[str, Any]] = []
-    for raw in checks_raw:
-        if wanted and isinstance(raw, dict):
+        if wanted:
+            if not isinstance(raw, dict):
+                continue
             rid = str(raw.get("id") or "").strip()
             label = str(raw.get("label") or "").strip()
             if rid not in wanted and label not in wanted:
                 continue
-        rows.append(_check_one(raw, env_presence=env_presence))
+        selected_raw.append(raw)
+
+    env_names: list[str] = []
+    for raw in selected_raw:
+        if isinstance(raw, dict):
+            env_names.extend(_string_list(raw.get("env_all")))
+            env_names.extend(_string_list(raw.get("env_any")))
+    env_presence = _env_presence_map(env_names)
+    if len(selected_raw) <= 1:
+        rows = [_check_one(raw, env_presence=env_presence) for raw in selected_raw]
+    else:
+        max_workers = min(8, len(selected_raw))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            rows = list(executor.map(lambda raw: _check_one(raw, env_presence=env_presence), selected_raw))
 
     counts = _status_counts(rows)
     weights = {"ok": 1.0, "warn": 0.5, "fail": 0.0, "skipped": 0.0}

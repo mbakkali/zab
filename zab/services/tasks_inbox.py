@@ -14,6 +14,7 @@ from dotenv import dotenv_values
 
 from zab.paths import data_dir
 from zab.services.env_token_locate import candidate_env_files_for_task_source, fallbacks_for_backend
+from zab.services import postgres_store as local_db
 from zab.services.pm_env_sync import PM_SCAN_KEYS, apply_pm_tokens_from_user_dotenv
 from zab.user_config import task_sources_from_user_config
 
@@ -537,15 +538,22 @@ def sync_tasks_inbox() -> dict[str, Any]:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with cache_path.open("w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
+    local_db.replace_tasks_cache(result)
 
     return result
 
 def fetch_tasks_inbox() -> dict[str, Any]:
+    cached_db = local_db.load_tasks_cache()
+    if cached_db is not None:
+        return cached_db
     cache_path = data_dir() / "tasks_cache.json"
     if cache_path.exists():
         try:
             with cache_path.open("r", encoding="utf-8") as f:
-                return json.load(f)
+                cached = json.load(f)
+            if isinstance(cached, dict):
+                local_db.replace_tasks_cache(cached)
+                return cached
         except Exception:
             pass
     return sync_tasks_inbox()

@@ -92,10 +92,10 @@ def _provider_status(
 
     if slug == PROVIDER_HERMES:
         detected = bool(loc.get("state_db_present"))
-        if not detected:
-            st = "missing"
-        elif pg_count > 0:
+        if pg_count > 0:
             st = "synced"
+        elif not detected:
+            st = "missing"
         elif (loc.get("session_rows_estimate") or 0) > 0:
             st = "ready"
         else:
@@ -151,8 +151,11 @@ def build_providers_payload() -> dict[str, Any]:
     for provider in providers:
         err = failed_providers.get(provider["id"])
         if isinstance(err, str) and err:
-            provider["status"] = "error"
-            provider["local"] = {**provider.get("local", {}), "last_sync_error": err}
+            if int(provider.get("postgres_documents") or 0) > 0:
+                provider["local"] = {**provider.get("local", {}), "last_sync_warning": err}
+            else:
+                provider["status"] = "error"
+                provider["local"] = {**provider.get("local", {}), "last_sync_error": err}
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "providers": providers,
@@ -172,7 +175,10 @@ def build_health_payload() -> dict[str, Any]:
 
     if not st.get("configured"):
         severity = "fail"
-        recs.append({"id": "configure_postgres", "message": "Définir MEHDI_MEMORY_DATABASE_URL (skills .env ou process)."})
+        recs.append({
+            "id": "configure_postgres",
+            "message": "Définir ZAB_MEMORY_DATABASE_URL (ou l’alias legacy MEHDI_MEMORY_DATABASE_URL).",
+        })
     elif not st.get("psycopg_available"):
         severity = "fail"
         recs.append({"id": "install_memory_extra", "message": "Installer psycopg : uv sync --extra memory"})
@@ -230,8 +236,12 @@ def build_health_payload() -> dict[str, Any]:
 
         failed = idx.get("summary", {}).get("failed_providers", {})
         if isinstance(failed, dict) and failed:
-            severity = "warn" if severity == "ok" else severity
+            pg_counts = _postgres_counts_by_slug()
             for provider, message in sorted(failed.items()):
+                pg_count = int(pg_counts.get(str(provider), 0) or 0)
+                if pg_count > 0:
+                    continue
+                severity = "warn" if severity == "ok" else severity
                 recs.append(
                     {
                         "id": f"provider_sync_failed_{provider}",

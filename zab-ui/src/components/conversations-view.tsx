@@ -9,6 +9,8 @@ import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
   Copy01Icon,
+  CheckListIcon,
+  AiSettingIcon,
 } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -195,7 +197,7 @@ export function ConversationsView() {
   const [loading, setLoading] = useState(false)
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
-  const [providerFilter, setProviderFilter] = useState<string>('')
+  const [providerFilters, setProviderFilters] = useState<string[]>([])
   const [searchRows, setSearchRows] = useState<SearchRow[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [browseRows, setBrowseRows] = useState<BrowseRow[]>([])
@@ -252,7 +254,7 @@ export function ConversationsView() {
         limit: '20',
         offset: '0',
       })
-      if (providerFilter) params.set('provider', providerFilter)
+      if (providerFilters.length > 0) params.set('providers', providerFilters.join(','))
       const j = await apiJson<{ results: SearchRow[] }>(`/api/conversations/search?${params.toString()}`)
       setSearchRows(j.results ?? [])
     } catch (e) {
@@ -261,7 +263,7 @@ export function ConversationsView() {
     } finally {
       setSearchLoading(false)
     }
-  }, [debouncedQ, providerFilter, health])
+  }, [debouncedQ, providerFilters, health])
 
   useEffect(() => {
     void runSearch()
@@ -282,7 +284,7 @@ export function ConversationsView() {
         limit: String(browsePageSize),
         offset: String(browseOffset),
       })
-      if (providerFilter) params.set('provider', providerFilter)
+      if (providerFilters.length > 0) params.set('providers', providerFilters.join(','))
       const j = await apiJson<BrowsePayload>(`/api/conversations/documents?${params.toString()}`)
       setBrowseRows(j.items ?? [])
       setBrowseTotal(j.total ?? 0)
@@ -295,7 +297,7 @@ export function ConversationsView() {
     } finally {
       setBrowseLoading(false)
     }
-  }, [browseOffset, providerFilter, health])
+  }, [browseOffset, providerFilters, health])
 
   useEffect(() => {
     void loadBrowse()
@@ -303,7 +305,7 @@ export function ConversationsView() {
 
   useEffect(() => {
     setBrowseOffset(0)
-  }, [providerFilter])
+  }, [providerFilters])
 
   const startSyncJob = useCallback(
     async (dryRun: boolean) => {
@@ -378,6 +380,31 @@ export function ConversationsView() {
   const recs = useMemo(() => health?.recommendations ?? [], [health])
   const showingSearch = debouncedQ.length > 0
   const visibleRows: Array<SearchRow | BrowseRow> = showingSearch ? searchRows : browseRows
+  const providerRows = providers?.providers ?? []
+  const providerIds = useMemo(() => providerRows.map((p) => p.id), [providerRows])
+  const effectiveProviderFilters = providerFilters.length > 0 ? providerFilters : providerIds
+  const activeProviderSet = useMemo(() => new Set(effectiveProviderFilters), [effectiveProviderFilters])
+  const allSourcesLabel = t('conversationsView.filters.allSources')
+  const providerFilterSummary =
+    providerFilters.length > 0 ? `${providerFilters.length}/${providerIds.length || providerFilters.length} sources` : allSourcesLabel
+
+  const setProviderFilterChecked = useCallback(
+    (id: string, checked: boolean) => {
+      setProviderFilters((current) => {
+        const base = current.length > 0 ? current : providerIds
+        const next = checked
+          ? Array.from(new Set([...base, id]))
+          : base.filter((x) => x !== id)
+        if (next.length === 0 || next.length === providerIds.length) return []
+        return next
+      })
+    },
+    [providerIds],
+  )
+
+  const openAiProviderConfig = useCallback(() => {
+    window.location.hash = 'config'
+  }, [])
 
   const detailIndex = useMemo(() => {
     if (!detailId) return -1
@@ -514,6 +541,16 @@ export function ConversationsView() {
               <HugeiconsIcon icon={PlayCircleIcon} size={16} strokeWidth={2} className="mr-1.5" />
               {t('conversationsView.actions.sync')}
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={openAiProviderConfig}
+              data-testid="conversations-add-ai-provider"
+            >
+              <HugeiconsIcon icon={AiSettingIcon} size={16} strokeWidth={2} className="mr-1.5" />
+              {t('conversationsView.actions.addAiProvider')}
+            </Button>
           </div>
           {jobLines.length > 0 ? (
             <pre className="bg-muted max-h-40 overflow-auto rounded-md p-2 text-[11px] leading-snug whitespace-pre-wrap">
@@ -523,30 +560,66 @@ export function ConversationsView() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="conversations-provider-cards">
-        {(providers?.providers ?? []).map((p) => (
-          <Card key={p.id} data-testid={`conversation-provider-${p.id}`}>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-sm font-medium">{p.label}</CardTitle>
-                <span
-                  className={cn(
-                    'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
-                    conversationProviderBadgeClass(p.id),
-                  )}
-                >
-                  {conversationStatusLabel(p.status, t)}
-                </span>
-              </div>
-              <CardDescription className="text-xs">
-                Docs Postgres :{' '}
-                <strong>{p.postgres_documents}</strong>
-                {' '}
-                <span className="text-muted-foreground">(import sync)</span>
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-muted-foreground text-xs" data-testid="conversations-provider-filter-summary">
+            {providerFilterSummary}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={providerFilters.length === 0}
+            onClick={() => setProviderFilters([])}
+            data-testid="conversations-provider-filter-all"
+          >
+            <HugeiconsIcon icon={CheckListIcon} size={14} strokeWidth={2} className="mr-1" />
+            {t('conversationsView.filters.allSources')}
+          </Button>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="conversations-provider-cards">
+          {providerRows.map((p) => {
+            const checked = activeProviderSet.has(p.id)
+            return (
+              <Card
+                key={p.id}
+                className={cn(
+                  'transition',
+                  checked ? 'bg-primary/5 ring-primary/50' : 'opacity-75',
+                )}
+                data-testid={`conversation-provider-${p.id}`}
+              >
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex min-w-0 cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(ev) => setProviderFilterChecked(p.id, ev.currentTarget.checked)}
+                        aria-label={`Filtrer ${p.label}`}
+                        data-testid={`conversations-provider-filter-${p.id}`}
+                        className="border-input text-primary size-4 rounded"
+                      />
+                      <CardTitle className="truncate text-sm font-medium">{p.label}</CardTitle>
+                    </label>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
+                        conversationProviderBadgeClass(p.id),
+                      )}
+                    >
+                      {conversationStatusLabel(p.status, t)}
+                    </span>
+                  </div>
+                  <CardDescription className="text-xs">
+                    Docs Postgres : <strong>{p.postgres_documents}</strong>{' '}
+                    <span className="text-muted-foreground">(import sync)</span>
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            )
+          })}
+        </div>
       </div>
 
       <Card>
@@ -589,20 +662,12 @@ export function ConversationsView() {
                 data-testid="conversations-search"
               />
             </div>
-            <select
-              className="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 rounded-md border px-2 text-sm shadow-xs focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
-              value={providerFilter}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => setProviderFilter(e.target.value)}
+            <div
+              className="border-input bg-muted/30 text-muted-foreground flex h-9 shrink-0 items-center rounded-md border px-3 text-xs"
               data-testid="conversations-provider-filter"
             >
-              <option value="">Tous les providers</option>
-              <option value="cursor">Cursor</option>
-              <option value="claude">Claude Code</option>
-              <option value="codex">Codex</option>
-              <option value="hermes">Hermes</option>
-              <option value="gemini">Gemini CLI</option>
-              <option value="kimi">Kimi</option>
-            </select>
+              {providerFilterSummary}
+            </div>
           </div>
           {showingSearch ? null : (
             <div className="text-muted-foreground flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -649,7 +714,7 @@ export function ConversationsView() {
           {!showingSearch && !browseLoading && browseRows.length === 0 ? (
             <p className="text-muted-foreground text-sm" data-testid="conversations-empty-history">
               {browseStorage === 'error'
-                ? 'Impossible de lire Postgres (historique ou archive). Revérifiez MEHDI_MEMORY_DATABASE_URL puis les migrations.'
+                ? 'Impossible de lire Postgres (historique ou archive). Revérifiez ZAB_MEMORY_DATABASE_URL puis les migrations.'
                 : browseStorage === 'index_fallback'
                   ? 'Aucun document conversationnel dans Postgres. Les providers ci-dessus sont « prêts » sur le poste mais rien n’a encore été importé : exécutez Synchroniser (sync réelle).'
                   : browseStorage === 'archive'

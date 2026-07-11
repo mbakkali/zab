@@ -66,6 +66,15 @@ def delete_all_archive_conversations(cur: Any) -> int:
     return cur.rowcount
 
 
+def _sanitize_nul(obj: Any) -> Any:
+    if isinstance(obj, str):
+        return obj.replace("\x00", "")
+    elif isinstance(obj, dict):
+        return {k: _sanitize_nul(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_nul(x) for x in obj]
+    return obj
+
 def upsert_conversation_archive(
     cur: Any,
     *,
@@ -84,6 +93,9 @@ def upsert_conversation_archive(
     synced_at: Any,
 ) -> uuid.UUID:
     """Upsert une conversation par `source_hash`, retourne l'id archive."""
+    raw_events = _sanitize_nul(raw_events)
+    messages = _sanitize_nul(messages)
+    metadata = _sanitize_nul(metadata)
     cur.execute(
         """
         INSERT INTO zab_conversations (

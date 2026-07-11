@@ -24,6 +24,33 @@ export type { OverviewProject }
 
 const columnHelper = createColumnHelper<OverviewProject>()
 
+function activityTime(p: OverviewProject): number {
+  const raw = p.last_activity_at_utc
+  if (!raw) return 0
+  const ts = Date.parse(raw)
+  return Number.isNaN(ts) ? 0 : ts
+}
+
+function formatActivityDate(value?: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(d)
+}
+
+function activitySourceLabel(value?: string | null): string {
+  if (value === 'git_commit') return 'git'
+  if (value === 'git_metadata') return 'git meta'
+  if (value === 'files') return 'fichiers'
+  return 'activité'
+}
+
+function projectMatchesRoute(p: OverviewProject, routeId: string): boolean {
+  const id = routeId.trim().toLowerCase()
+  if (!id) return false
+  return [p.id, p.name, p.path].some((value) => typeof value === 'string' && value.toLowerCase() === id)
+}
+
 function SortIcon({ dir }: { dir: false | 'asc' | 'desc' }) {
   if (dir === 'asc') return <ArrowUp className="ml-1 inline size-3.5 opacity-60" />
   if (dir === 'desc') return <ArrowDown className="ml-1 inline size-3.5 opacity-60" />
@@ -33,6 +60,8 @@ function SortIcon({ dir }: { dir: false | 'asc' | 'desc' }) {
 export function ProjectsTable({
   projects,
   shortenHome,
+  activeProjectId,
+  onOpenOrg,
   onOpenSkill,
   miningProjectPath,
   onMineMemory,
@@ -40,12 +69,14 @@ export function ProjectsTable({
 }: {
   projects: OverviewProject[]
   shortenHome: (path: string) => string
+  activeProjectId?: string | null
+  onOpenOrg: (org: string) => void
   onOpenSkill: (path: string) => void
   miningProjectPath?: string | null
   onMineMemory?: (path: string, name: string) => void | Promise<void>
   onRunSecurityScan?: (preset: string, path: string) => void
 }) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }])
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'activity', desc: true }])
 
   const columns = useMemo(
     () => [
@@ -82,9 +113,13 @@ export function ProjectsTable({
       columnHelper.accessor('org', {
         header: 'Org',
         cell: ({ getValue }) => (
-          <span className="bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium">
+          <button
+            type="button"
+            onClick={() => onOpenOrg(getValue())}
+            className="bg-zinc-100 text-zinc-700 transition hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium"
+          >
             {getValue()}
-          </span>
+          </button>
         ),
       }),
       columnHelper.accessor(
@@ -130,6 +165,22 @@ export function ProjectsTable({
           </button>
         ),
       }),
+      columnHelper.accessor((row) => activityTime(row), {
+        id: 'activity',
+        header: 'MàJ',
+        cell: ({ row }) => (
+          <div className="flex min-w-[7rem] flex-col gap-0.5">
+            <span className="text-xs" title={row.original.last_activity_at_utc || undefined}>
+              {formatActivityDate(row.original.last_activity_at_utc)}
+            </span>
+            {row.original.last_activity_source ? (
+              <span className="text-muted-foreground text-[10px]">
+                {activitySourceLabel(row.original.last_activity_source)}
+              </span>
+            ) : null}
+          </div>
+        ),
+      }),
       columnHelper.accessor('path', {
         header: 'Chemin',
         cell: ({ getValue }) => (
@@ -152,7 +203,7 @@ export function ProjectsTable({
         ),
       }),
     ],
-    [shortenHome, miningProjectPath, onMineMemory, onRunSecurityScan],
+    [shortenHome, miningProjectPath, onMineMemory, onRunSecurityScan, onOpenOrg],
   )
 
   const table = useReactTable({
@@ -211,6 +262,7 @@ export function ProjectsTable({
                       className={cn(
                         cell.column.id === 'path' && 'whitespace-normal',
                         cell.column.id === 'actions' && 'whitespace-normal',
+                        activeProjectId && projectMatchesRoute(row.original, activeProjectId) && 'bg-zinc-50 dark:bg-zinc-950',
                       )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}

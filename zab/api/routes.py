@@ -22,6 +22,8 @@ from zab.paths import skills_root_from_config_file_only
 from zab.services import (
     agent_context,
     agents_registry,
+    cli_check,
+    command_center_context,
     config_snapshots,
     connectors_aggregate,
     connectors_check,
@@ -38,11 +40,14 @@ from zab.services import (
     state_index,
     system_check,
     system_check_persist,
+    tool_catalog,
+    tool_checks,
     tools_probe,
     tools_scan,
     vertex_openai_proxy,
     workstation,
 )
+from zab.services.capabilities import get_capabilities
 from zab.services.feature_catalog import agent_guide, catalog
 from zab.services.pm_env_sync import sync_pm_tokens_to_user_dotenv
 from zab.services import mcp_sync_status, skills_sync_status
@@ -67,6 +72,34 @@ from zab.user_config import (
 )
 
 router = APIRouter()
+
+_INVENTORY_SECTION_ALIASES: dict[str, str] = {
+    "skills": "skills",
+    "connectors": "connectors",
+    "tools": "tools",
+    "code-tools": "code_tools",
+    "code_tools": "code_tools",
+    "models": "models",
+    "memory": "memory_sources",
+    "memory-sources": "memory_sources",
+    "memory_sources": "memory_sources",
+    "knowledge": "knowledge_sources",
+    "knowledge-sources": "knowledge_sources",
+    "security": "security",
+    "policies": "policies",
+    "subscriptions": "subscriptions",
+    "projects": "projects",
+    "orgs": "orgs",
+    "organizations": "orgs",
+}
+
+
+def _resolve_inventory_section_api(raw: str) -> str:
+    section = _INVENTORY_SECTION_ALIASES.get(raw.strip().lower())
+    if not section:
+        choices = ", ".join(sorted(_INVENTORY_SECTION_ALIASES))
+        raise HTTPException(status_code=400, detail=f"section inconnue: {raw!r}. Choix: {choices}")
+    return section
 
 
 def _dashboard_skills_root() -> Path | None:
@@ -111,6 +144,75 @@ def _require_skills_anchor_or_project_path(path: str) -> None:
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "zab"}
+
+
+@router.get("/capabilities")
+def capabilities_api(response: Response) -> dict[str, Any]:
+    """AI-native Core/CLI/MCP/API/UI capability manifest."""
+    response.headers["Cache-Control"] = "no-store"
+    return get_capabilities()
+
+
+@router.head("/capabilities")
+def capabilities_head() -> Response:
+    """Cheap smoke check for the capability manifest contract."""
+    return Response(status_code=200, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/source-health")
+def source_health_api(response: Response, refresh: bool = Query(False)) -> dict[str, Any]:
+    """Source availability, freshness and masked auth readiness for agent-grade outputs."""
+    response.headers["Cache-Control"] = "no-store"
+    return agent_context.source_health(refresh=refresh)
+
+
+@router.head("/source-health")
+def source_health_head() -> Response:
+    """Cheap smoke check for the Source Health contract."""
+    return Response(status_code=200, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/command-center/context")
+def command_center_context_api(
+    response: Response,
+    refresh: bool = Query(False),
+    write: bool = Query(False),
+) -> dict[str, Any]:
+    """Daily context-intelligence packet for Hermes Command Center."""
+    response.headers["Cache-Control"] = "no-store"
+    payload = (
+        command_center_context.write_context_packet(refresh=refresh)
+        if write
+        else command_center_context.build_context_packet(refresh=refresh)
+    )
+    return {k: v for k, v in payload.items() if k != "markdown"}
+
+
+@router.head("/command-center/context")
+def command_center_context_head() -> Response:
+    """Cheap smoke check for the Command Center context packet contract."""
+    return Response(status_code=200, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+class ResearchBody(BaseModel):
+    query: str = Field(..., min_length=1, description="Question or mission to research")
+    project: str | None = Field(None, description="Project name or path")
+    mode: str = Field("plan", description="plan|debug|review|briefing|handoff")
+    max_tokens: int = Field(6000, ge=500, le=50000)
+    refresh: bool = Field(False, description="Explicitly refresh supported external reads")
+
+
+@router.post("/research")
+def research_api(body: ResearchBody, response: Response) -> dict[str, Any]:
+    """Build a deterministic, cited, freshness-aware research packet."""
+    response.headers["Cache-Control"] = "no-store"
+    return agent_context.research(
+        body.query,
+        project=body.project,
+        mode=body.mode,
+        max_tokens=body.max_tokens,
+        refresh=body.refresh,
+    )
 
 
 @router.get("/system/check")
@@ -194,6 +296,97 @@ def system_check_save_api(body: SystemCheckPersistBody) -> dict[str, Any]:
         "saved_at_utc": loaded.get("saved_at_utc"),
         "generated_at_utc": loaded.get("generated_at_utc"),
     }
+
+
+@router.get("/cli-check")
+def cli_check_api(
+    response: Response,
+    only: list[str] | None = Query(None, description="Limiter à un ou plusieurs ids/labels de checks"),
+) -> dict[str, Any]:
+    """Checks déclaratifs d'auth CLI depuis ~/.config/zab/cli-checks.json."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return cli_check.run_cli_checks(only=only)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/cli-check/config")
+def cli_check_config_api(response: Response) -> dict[str, Any]:
+    """Retourne le chemin et le contenu du fichier JSON cli-check courant."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        path, cfg = cli_check.load_cli_checks_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"path": str(path), "config": cfg}
+
+
+@router.post("/cli-check/config/checks")
+def cli_check_create_config_check_api(
+    check: dict[str, Any] = Body(..., description="Objet JSON du check CLI à ajouter"),
+) -> dict[str, Any]:
+    """Ajoute un check dans ~/.config/zab/cli-checks.json sans l'exécuter."""
+    try:
+        return cli_check.upsert_cli_check_config(check)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/cli-check/config/checks/{check_id}")
+def cli_check_update_config_check_api(
+    check_id: str,
+    check: dict[str, Any] = Body(..., description="Objet JSON du check CLI à remplacer"),
+) -> dict[str, Any]:
+    """Remplace un check dans ~/.config/zab/cli-checks.json sans l'exécuter."""
+    try:
+        return cli_check.upsert_cli_check_config(check, previous_id=check_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/cli-check/config/checks/{check_id}")
+def cli_check_delete_config_check_api(check_id: str) -> dict[str, Any]:
+    """Supprime un check dans ~/.config/zab/cli-checks.json."""
+    try:
+        return cli_check.delete_cli_check_config(check_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Check inconnu : {check_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/cli-check/init")
+def cli_check_init_api() -> dict[str, Any]:
+    """Crée le fichier cli-checks.json d'exemple si absent."""
+    path = cli_check.ensure_default_cli_checks_config()
+    return {"written": True, "path": str(path)}
+
+
+@router.post("/cli-check/{check_id}/open-terminal")
+def cli_check_open_terminal_api(check_id: str) -> dict[str, Any]:
+    """Ouvre un nouveau terminal avec la commande déclarée pour ce check."""
+    try:
+        return cli_check.open_check_command_terminal(check_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Check inconnu : {check_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/cli-check/{check_id}/open-login-terminal")
+def cli_check_open_login_terminal_api(check_id: str) -> dict[str, Any]:
+    """Ouvre un nouveau terminal avec la commande de login déclarée pour ce check."""
+    try:
+        return cli_check.open_check_login_terminal(check_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Check inconnu : {check_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/memory/status")
@@ -294,6 +487,7 @@ def conversations_search(
     limit: int = Query(20, ge=1, le=50),
     offset: int = Query(0, ge=0, le=5000),
     provider: str | None = Query(None, description="cursor|claude|codex|kimi|hermes|gemini"),
+    providers: str | None = Query(None, description="Liste CSV de providers conversationnels"),
     wing: str | None = Query(None),
     source: str | None = Query(None, description="Filtre source SQL exact"),
 ) -> dict[str, Any]:
@@ -304,9 +498,10 @@ def conversations_search(
         raise HTTPException(status_code=503, detail=st.get("error") or "psycopg_manquant")
     if not st.get("connected"):
         raise HTTPException(status_code=503, detail=st.get("error") or "postgres_inaccessible")
+    provider_filter = providers or provider
     return {
         "results": memory_db.search_conversations(
-            q, limit=limit, offset=offset, provider=provider, wing=wing, source=source
+            q, limit=limit, offset=offset, provider=provider_filter, wing=wing, source=source
         )
     }
 
@@ -316,6 +511,7 @@ def conversations_documents(
     limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0, le=5000),
     provider: str | None = Query(None, description="cursor|claude|codex|kimi|hermes|gemini"),
+    providers: str | None = Query(None, description="Liste CSV de providers conversationnels"),
     wing: str | None = Query(None),
     source: str | None = Query(None, description="Filtre source SQL exact"),
 ) -> dict[str, Any]:
@@ -327,10 +523,11 @@ def conversations_documents(
         raise HTTPException(status_code=503, detail=st.get("error") or "psycopg_manquant")
     if not st.get("connected"):
         raise HTTPException(status_code=503, detail=st.get("error") or "postgres_inaccessible")
+    provider_filter = providers or provider
     return memory_db.fetch_conversation_documents(
         limit=limit,
         offset=offset,
-        provider=provider,
+        provider=provider_filter,
         wing=wing,
         source=source,
     )
@@ -600,6 +797,14 @@ def channels_sync(response: Response) -> dict[str, Any]:
     return communication_channels.sync_communication_channels()
 
 
+@router.get("/channels/hermes")
+def channels_hermes(response: Response) -> dict[str, Any]:
+    """Snapshot read-only de la configuration Channels Hermes locale."""
+    response.headers["Cache-Control"] = "no-store"
+    from zab.services import communication_channels
+    return communication_channels.hermes_channels_snapshot()
+
+
 @router.post("/channels/add")
 def channels_add(body: ChannelAddBody) -> dict[str, Any]:
     """Ajoute un canal de communication."""
@@ -674,8 +879,8 @@ def dashboard_stats(response: Response) -> dict[str, Any]:
     total_tasks = tasks_data.get("total_count", 0)
     
     # Mémoire Postgres
-    from zab.services.memory_scan import resolve_mehdi_memory_database_url
-    has_memory_db = bool(resolve_mehdi_memory_database_url(_dashboard_skills_root()))
+    from zab.services.postgres_dsn import resolve_postgres_dsn
+    has_memory_db = bool(resolve_postgres_dsn())
     
     return {
         "unread_emails_count": unread_emails,
@@ -970,6 +1175,15 @@ def search_api(
     return agent_context.search(q, limit=limit, sections=section, refresh=refresh)
 
 
+@router.get("/inspect/{section}/{key:path}")
+def inspect_item_api(section: str, key: str) -> dict[str, Any]:
+    state_section = _resolve_inventory_section_api(section)
+    row = state_index.get_section_item(state_section, key)
+    if not row:
+        raise HTTPException(status_code=404, detail={"section": state_section, "key": key, "found": False})
+    return {"section": state_section, "key": key, "found": True, "item": row}
+
+
 @router.get("/connectors")
 def connectors_api(
     page: int = Query(1, ge=1),
@@ -979,6 +1193,19 @@ def connectors_api(
     tag: str | None = Query(None),
 ) -> dict[str, Any]:
     return connectors_aggregate.list_connectors(page=page, limit=limit, q=q, kind=kind, tag=tag)
+
+
+@router.get("/composio/connections")
+def composio_connections_api(
+    toolkit: str | None = Query(None),
+    active_only: bool = Query(True),
+    resolve_identities: bool = Query(False),
+) -> dict[str, Any]:
+    return agent_context.composio_connections(
+        toolkit=toolkit,
+        active_only=active_only,
+        resolve_identities=resolve_identities,
+    )
 
 
 @router.get("/connectors/{slug}")
@@ -1621,6 +1848,51 @@ def scan_last() -> dict[str, Any]:
     return {"present": True, **prev}
 
 
+@router.get("/tools/catalog")
+def tools_catalog_api() -> dict[str, Any]:
+    return tool_catalog.build_tools_catalog()
+
+
+@router.get("/tools")
+def tools_list_api(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    q: str = "",
+    kind: str | None = Query(None),
+    status: str | None = Query(None),
+    provider: str | None = Query(None),
+) -> dict[str, Any]:
+    return tool_catalog.list_tools(page=page, limit=limit, q=q, kind=kind, status=status, provider=provider)
+
+
+@router.get("/tools/search")
+def tools_search_api(
+    q: str = Query(..., description="Requête de recherche"),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict[str, Any]:
+    return tool_catalog.search_tools(q, limit=limit)
+
+
+@router.get("/tools/validate")
+def tools_validate_api(strict: bool = Query(False)) -> dict[str, Any]:
+    return tool_catalog.validate_tools(strict=strict)
+
+
+@router.get("/tools/check")
+def tools_check_api(
+    tool_id: str | None = Query(None),
+    all: bool = Query(False),
+) -> dict[str, Any]:
+    if all and tool_id:
+        raise HTTPException(status_code=400, detail="all et tool_id sont incompatibles")
+    if not all and not tool_id:
+        raise HTTPException(status_code=400, detail="tool_id ou all requis")
+    payload = tool_checks.check_tools() if all else tool_checks.check_tool(str(tool_id or ""))
+    if not payload:
+        raise HTTPException(status_code=404, detail="tool inconnu")
+    return payload
+
+
 @router.get("/tools/local")
 def tools_local() -> dict[str, Any]:
     return tools_probe.local_tools_public()
@@ -1647,6 +1919,14 @@ def tools_probe_route(kind: str = Query(...)) -> dict[str, Any]:
     if kind not in ("litellm", "openrouter"):
         raise HTTPException(status_code=400, detail="kind doit être litellm ou openrouter")
     return tools_probe.probe_models(kind)
+
+
+@router.get("/tools/{tool_id}")
+def tools_detail_api(tool_id: str) -> dict[str, Any]:
+    payload = tool_catalog.get_tool(tool_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="tool inconnu")
+    return payload
 
 
 @router.get("/exports/hints")
@@ -1752,13 +2032,13 @@ async def vertex_openai_chat_completions(request: Request) -> Response:
 
 @router.get("/crons")
 def get_crons_api() -> dict[str, Any]:
-    """Récupère la liste des crons (Hermes, GCP, etc.) depuis le cache local."""
+    """Récupère la liste des crons (Hermes, launchd, GCP, etc.) depuis le cache local."""
     return {"crons": crons.load_cached_crons()}
 
 
 @router.post("/crons/sync")
 def sync_crons_api() -> dict[str, Any]:
-    """Force un scan actif des crons (Hermes + GCP) et renvoie la liste à jour."""
+    """Force un scan actif des crons (Hermes + launchd + GCP) et renvoie la liste à jour."""
     list_crons = crons.scan_and_save_crons()
     return {"crons": list_crons}
 
@@ -1775,4 +2055,3 @@ def trigger_cron_api(cron_id: str) -> dict[str, Any]:
     """Déclenche immédiatement l'exécution d'un cron."""
     res = crons.run_cron_now(cron_id)
     return res
-

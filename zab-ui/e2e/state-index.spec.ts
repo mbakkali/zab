@@ -17,6 +17,7 @@ test.describe('zab state index / configs', () => {
   })
 
   test('POST /api/sync writes the state index and refreshes counts', async ({ request }) => {
+    test.setTimeout(60_000)
     const res = await request.post('/api/sync')
     expect(res.ok()).toBeTruthy()
     const j = (await res.json()) as {
@@ -89,7 +90,7 @@ test.describe('zab dashboard configs UI', () => {
     const card = page.locator('text=Local-first index').first()
     await expect(card).toBeVisible()
     const cardContainer = page.locator('div', { has: page.getByText('Local-first index', { exact: true }) }).first()
-    for (const key of ['skills', 'mcp_servers', 'connectors', 'code_tools', 'memory_sources']) {
+    for (const key of ['skills', 'mcp_servers', 'connectors', 'code_tools', 'tools', 'memory_sources']) {
       await expect(cardContainer.getByText(key, { exact: true }).first()).toBeVisible()
     }
     await expect(page.getByRole('button', { name: /^Sync/i })).toBeVisible()
@@ -138,6 +139,16 @@ test.describe('zab dashboard configs UI', () => {
     await expect(page.getByRole('columnheader', { name: 'Provider' })).toBeVisible()
     await expect(page.getByRole('columnheader', { name: 'State' })).toBeVisible()
     await expect(page.getByRole('columnheader', { name: 'Binary' })).toBeVisible()
+  })
+
+  test('Tools tab — actionable catalog renders and opens details', async ({ page }) => {
+    await page.goto('/#catalog')
+    await expect(page.getByRole('heading', { name: 'Tools Catalog' })).toBeVisible()
+    await expect(page.locator('[data-testid="tools-catalog-view"]')).toBeVisible()
+    await expect(page.getByText('gmail-search')).toBeVisible({ timeout: 45_000 })
+    await expect(page.getByRole('columnheader', { name: 'Tool' })).toBeVisible()
+    await page.getByText('gmail-search').first().click()
+    await expect(page.getByRole('dialog')).toBeVisible()
   })
 
   test('Skills tab — frontmatter description and badges render when present', async ({ page, request }) => {

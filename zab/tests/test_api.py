@@ -168,7 +168,7 @@ def test_features_and_agent_guide_api():
 def test_index_sections_and_context_pack():
     client = TestClient(create_app())
     assert client.post("/api/sync").status_code == 200
-    for path in ("/api/skills?limit=5", "/api/code-tools?limit=5", "/api/models?limit=5"):
+    for path in ("/api/skills?limit=5", "/api/code-tools?limit=5", "/api/tools?limit=5", "/api/models?limit=5"):
         r = client.get(path)
         assert r.status_code == 200
         payload = r.json()
@@ -178,6 +178,38 @@ def test_index_sections_and_context_pack():
     data = cp.json()
     assert data["bytes"] > 0
     assert "zab Context Pack" in data["preview"]
+    assert "## Tools Catalog" in data["preview"]
+
+
+def test_tools_catalog_api():
+    client = TestClient(create_app())
+    catalog = client.get("/api/tools/catalog")
+    assert catalog.status_code == 200
+    catalog_payload = catalog.json()
+    assert catalog_payload["contract"] == "tools-catalog"
+    assert isinstance(catalog_payload["tools"], list)
+    assert catalog_payload["summary"]["total"] == len(catalog_payload["tools"])
+    assert any(tool["id"] == "gmail-search" for tool in catalog_payload["tools"])
+
+    detail = client.get("/api/tools/gmail-search")
+    assert detail.status_code == 200
+    assert detail.json()["tool"]["id"] == "gmail-search"
+
+    search = client.get("/api/tools/search?q=gmail&limit=5")
+    assert search.status_code == 200
+    assert search.json()["contract"] == "tools-catalog-search"
+
+    validate = client.get("/api/tools/validate")
+    assert validate.status_code == 200
+    validate_payload = validate.json()
+    assert validate_payload["contract"] == "tools-catalog-validation"
+    assert validate_payload["summary"]["total_tools"] >= 1
+
+    check = client.get("/api/tools/check?tool_id=gmail-search")
+    assert check.status_code == 200
+    check_payload = check.json()
+    assert check_payload["contract"] == "tools-check"
+    assert check_payload["tool_id"] == "gmail-search"
 
 
 def test_agent_search_and_security_api():

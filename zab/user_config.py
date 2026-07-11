@@ -12,6 +12,8 @@ import yaml
 from zab.paths import config_dir
 
 CONFIG_FILENAME = "config.yaml"
+_USER_CONFIG_CACHE: tuple[str, int, int, dict[str, Any]] | None = None
+DEFAULT_ORGANIZATION_SLUGS: tuple[str, ...] = ()
 
 # Modèle écrit par ensure_user_config_exists() si ~/.config/zab/config.yaml est absent.
 DEFAULT_USER_CONFIG_YAML = """# Configuration zab — fichier créé au premier lancement ou par install-zab-shell.sh
@@ -46,6 +48,13 @@ cli_watchlist: []
 # Liste vide [] = désactiver la découverte par projets.
 # projects_roots:
 #   - ~/projects
+
+# Organisations métier fixes affichées dans le dashboard. Le scan rattache les projets à ces slugs,
+# mais ne crée pas de nouvelles organisations depuis les catégories de skills.
+# organizations:
+#   - work
+#   - personal
+#   - clients
 
 # Création/synchronisation optionnelle d'un dépôt personnel de skills.
 # Par défaut, les opérations réseau restent explicites (`zab skill sync --push`).
@@ -94,28 +103,28 @@ tracked_env_extra: []
 #     label: WhatsApp (Evolution API)
 #     type: whatsapp
 #     connector: evolution-api
-#     org: flowmetrik
+#     org: work
 #     enabled: true
 #     documentation: https://doc.evolution-api.com/
 #     credentials:
 #       evolution_api_url: https://wa.example.com
 #       evolution_api_key: VOTRE_CLE
 #       evolution_instance: mon-instance
-#   - id: slack-carrefour
-#     label: Slack Carrefour
+#   - id: slack-clients
+#     label: Slack Clients
 #     type: slack
 #     connector: slack
-#     org: carrefour
+#     org: clients
 #     enabled: true
 #     documentation: https://api.slack.com/authentication/token-types#bot
 #     credentials:
 #       slack_bot_token: xoxb-...
 #       slack_channel_id: C01234567
 #   - id: work-email
-#     label: Flowmetrik (E-mail Pro)
+#     label: Work Email
 #     type: email
 #     connector: outlook
-#     org: flowmetrik
+#     org: work
 #     enabled: true
 #     email_address: you@example.com
 #     documentation: https://docs.composio.dev
@@ -136,17 +145,36 @@ def ensure_user_config_exists() -> Path | None:
         return None
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(DEFAULT_USER_CONFIG_YAML.strip() + "\n", encoding="utf-8")
+    clear_user_config_cache()
     return p
 
 
+def clear_user_config_cache() -> None:
+    global _USER_CONFIG_CACHE
+    _USER_CONFIG_CACHE = None
+
+
 def load_user_config() -> dict[str, Any]:
+    global _USER_CONFIG_CACHE
     p = user_config_path()
     if not p.is_file():
+        _USER_CONFIG_CACHE = None
         return {}
     try:
+        st = p.stat()
+        cache_key = (str(p.resolve()), st.st_mtime_ns, st.st_size)
+    except OSError:
+        _USER_CONFIG_CACHE = None
+        return {"_error": "yaml_invalid", "path": str(p)}
+    if _USER_CONFIG_CACHE is not None and _USER_CONFIG_CACHE[:3] == cache_key:
+        return dict(_USER_CONFIG_CACHE[3])
+    try:
         raw = yaml.safe_load(p.read_text(encoding="utf-8"))
-        return raw if isinstance(raw, dict) else {}
+        data = raw if isinstance(raw, dict) else {}
+        _USER_CONFIG_CACHE = (*cache_key, data)
+        return dict(data)
     except (yaml.YAMLError, OSError):
+        _USER_CONFIG_CACHE = None
         return {"_error": "yaml_invalid", "path": str(p)}
 
 
@@ -154,6 +182,7 @@ def save_user_config(data: dict[str, Any]) -> Path:
     p = user_config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    clear_user_config_cache()
     return p
 
 
@@ -193,6 +222,42 @@ def projects_roots_resolved() -> list[Path]:
             seen.add(k)
             out.append(p)
     return out
+
+
+def organization_slugs_from_user_config() -> list[str]:
+    """
+    Organisations métier canoniques.
+
+    La clé ``organizations`` accepte soit une liste de slugs, soit une liste
+    d'objets ``{"slug": "..."}``. Si elle est absente, aucune organisation
+    canonique n'est imposée. Les catégories du dépôt de skills ne sont pas
+    des organisations.
+    """
+    cfg = load_user_config()
+    raw = cfg.get("organizations")
+    if raw is None:
+        raw = cfg.get("workspace_orgs")
+    if raw is None:
+        return list(DEFAULT_ORGANIZATION_SLUGS)
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        slug = ""
+        if isinstance(item, str):
+            slug = item
+        elif isinstance(item, dict):
+            raw_slug = item.get("slug") or item.get("id") or item.get("name")
+            if isinstance(raw_slug, str):
+                slug = raw_slug
+        slug = slug.strip().lower().replace(" ", "-")
+        if slug and slug not in out:
+            out.append(slug)
+    return out
+
+
+def organization_slug_set_from_user_config() -> set[str]:
+    return set(organization_slugs_from_user_config())
 
 
 def skills_roots_strings_ordered() -> list[str]:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from zab.paths import config_dir
+from zab.services import postgres_store as local_db
 
 REGISTRY_VERSION = 1
 DEFAULT_FILENAME = "mcp-registry.json"
@@ -19,21 +20,38 @@ def registry_path() -> Path:
     return (config_dir() / DEFAULT_FILENAME).resolve()
 
 
-def load_registry_document() -> dict[str, Any]:
+def _empty_document() -> dict[str, Any]:
+    return {"version": REGISTRY_VERSION, "updated_at": "", "servers": {}}
+
+
+def _load_registry_document_from_file() -> dict[str, Any]:
     p = registry_path()
     if not p.is_file():
-        return {"version": REGISTRY_VERSION, "updated_at": "", "servers": {}}
+        return _empty_document()
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {"version": REGISTRY_VERSION, "updated_at": "", "servers": {}}
+        return _empty_document()
     if not isinstance(raw, dict):
-        return {"version": REGISTRY_VERSION, "updated_at": "", "servers": {}}
+        return _empty_document()
     raw.setdefault("version", REGISTRY_VERSION)
     raw.setdefault("servers", {})
     if not isinstance(raw.get("servers"), dict):
         raw["servers"] = {}
     return raw
+
+
+def load_registry_document(*, prefer_db: bool = True) -> dict[str, Any]:
+    if prefer_db:
+        doc = local_db.load_mcp_registry_document(_empty_document())
+        if doc.get("servers"):
+            doc.setdefault("version", REGISTRY_VERSION)
+            doc.setdefault("updated_at", "")
+            return doc
+    doc = _load_registry_document_from_file()
+    if prefer_db and doc.get("servers"):
+        local_db.save_mcp_registry_document(doc)
+    return doc
 
 
 def save_registry_document(doc: dict[str, Any]) -> None:
@@ -42,6 +60,7 @@ def save_registry_document(doc: dict[str, Any]) -> None:
     doc["version"] = REGISTRY_VERSION
     doc["updated_at"] = datetime.now(timezone.utc).isoformat()
     p.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    local_db.save_mcp_registry_document(doc)
 
 
 def get_server_entry(doc: dict[str, Any], slug: str) -> dict[str, Any]:

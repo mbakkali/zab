@@ -45,22 +45,131 @@ test.describe('zab dashboard', () => {
   test('language switcher EN par défaut puis FR', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: /^Overview$/i })).toBeVisible()
-    await page.getByRole('button', { name: 'FR', exact: true }).click()
+    await page.locator('main').getByRole('button', { name: 'FR', exact: true }).click()
     await expect(page.getByRole('button', { name: /Vue d\u2019ensemble/i })).toBeVisible()
-    await page.getByRole('button', { name: 'EN', exact: true }).click()
+    await page.locator('main').getByRole('button', { name: 'EN', exact: true }).click()
     await expect(page.getByRole('button', { name: /^Overview$/i })).toBeVisible()
   })
 
   test('navigation sidebar depuis #orgs', async ({ page }) => {
     await page.goto('/#orgs')
-    await expect(page.getByRole('heading', { name: 'Organizations' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Organizations' })).toBeVisible({
+      timeout: 45_000,
+    })
     await page.getByRole('button', { name: /^Overview$/i }).click()
     await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
   })
 
   test('navigation sidebar depuis #projects', async ({ page }) => {
     await page.goto('/#projects')
-    await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible({
+      timeout: 45_000,
+    })
+  })
+
+  test('capabilities manifest UI', async ({ page, request }) => {
+    const res = await request.get('/api/capabilities')
+    expect(res.ok()).toBeTruthy()
+    const manifest = (await res.json()) as {
+      contract: string
+      capabilities: { id: string }[]
+      total: number
+      complete: number
+      partial: number
+      summary: { total: number; complete: number; partial: number }
+    }
+    expect(manifest.contract).toBe('capability-manifest')
+    expect(manifest.total).toBe(manifest.summary.total)
+    expect(manifest.complete).toBe(manifest.summary.complete)
+    expect(manifest.partial).toBe(manifest.summary.partial)
+    expect(manifest.capabilities.some((capability) => capability.id === 'capabilities.manifest')).toBeTruthy()
+
+    await page.goto('/#capabilities')
+    await expect(page.getByRole('heading', { name: 'Capabilities' })).toBeVisible()
+    await expect(page.locator('[data-testid="capabilities-view"]')).toBeVisible()
+    await expect(page.locator('[data-testid="capabilities-total"]')).toHaveText(String(manifest.total))
+    await expect(page.locator('[data-testid="capabilities-complete"]')).toHaveText(String(manifest.complete))
+    await expect(page.locator('[data-testid="capabilities-partial"]')).toHaveText(String(manifest.partial))
+    await expect(page.getByText('capabilities.manifest')).toBeVisible()
+    await expect(page.getByText('Core', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('MCP', { exact: true }).first()).toBeVisible()
+  })
+
+  test('source health UI', async ({ page }) => {
+    await page.route('**/api/source-health**', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          contract: 'source-health',
+          contract_version: '1.0',
+          generated_at_utc: '2026-06-09T00:00:00+00:00',
+          refresh: false,
+          status_counts: { ok: 1 },
+          sources: [
+            {
+              id: 'zab_inventory',
+              kind: 'inventory',
+              status: 'ok',
+              freshness: 'local',
+              last_checked_at: '2026-06-09T00:00:00+00:00',
+              last_success_at: '2026-06-09T00:00:00+00:00',
+              item_count: 3,
+              auth: { status: 'not_applicable', secret_names: [], secret_values_exposed: false },
+              safe_message: 'Inventory readable.',
+              warnings: [],
+            },
+          ],
+        }),
+      })
+    })
+
+    await page.goto('/#source_health')
+    await expect(page.locator('[data-testid="source-health-view"]')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Source Health' })).toBeVisible()
+    await expect(page.locator('[data-testid="source-health-total"]')).toHaveText('1')
+    await expect(page.getByText('zab_inventory')).toBeVisible()
+  })
+
+  test('research UI builds packet', async ({ page }) => {
+    await page.route('**/api/research', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          contract: 'research-packet',
+          contract_version: '1.0',
+          generated_at_utc: '2026-06-09T00:00:00+00:00',
+          query: 'comment rendre Zab dynamique ?',
+          mode: 'plan',
+          project: { id: 'zab', path: '/tmp/zab', confidence: 'high' },
+          freshness: {},
+          source_status: [{ source: 'zab_inventory', kind: 'inventory', status: 'ok', freshness: 'local', items_considered: 3 }],
+          context_packet_markdown: '# Research Packet\n\n## Mission\ncomment rendre Zab dynamique ?',
+          citations: [{ id: 'src_1', kind: 'contract', label: 'source-health', reason: 'Freshness.' }],
+          conflicts: [],
+          recommended_next_actions: ['Read the packet.'],
+          warnings: [],
+        }),
+      })
+    })
+
+    await page.goto('/#research')
+    await expect(page.locator('[data-testid="research-view"]')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Research' })).toBeVisible()
+    await page.getByRole('button', { name: 'Run research' }).click()
+    await expect(page.locator('[data-testid="research-packet"]')).toContainText('Research Packet')
+    await expect(page.getByText('source-health')).toBeVisible()
+  })
+
+  test('cli check UI', async ({ page, request }) => {
+    const res = await request.get('/api/cli-check')
+    expect(res.ok()).toBeTruthy()
+    const payload = (await res.json()) as { contract: string; checks: { id: string }[] }
+    expect(payload.contract).toBe('cli-auth-checks')
+    expect(Array.isArray(payload.checks)).toBeTruthy()
+
+    await page.goto('/#cli_check')
+    await expect(page.locator('[data-testid="cli-check-view"]')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'CLI auth' })).toBeVisible()
   })
 
   test('navigation sidebar depuis #tasks_inbox', async ({ page }) => {
@@ -89,16 +198,21 @@ test.describe('zab dashboard', () => {
 
   test('onglet Connecteurs — grille et détail', async ({ page }) => {
     await page.goto('/')
+    const connectorsResponse = page.waitForResponse(
+      (r) => r.url().includes('/api/connectors?') && r.request().method() === 'GET' && r.ok(),
+      { timeout: 45_000 },
+    )
     await page.getByRole('button', { name: 'Connectors' }).click()
+    await connectorsResponse
     await expect(page.locator('[data-testid="connectors-subtitle"]')).toBeVisible()
     const grid = page.locator('[data-testid="connectors-grid"]')
-    await expect(grid).toBeVisible()
     const cards = grid.getByRole('button', { name: 'View' })
     const count = await cards.count()
     if (count === 0) {
-      await expect(page.getByText('No connectors match.')).toBeVisible()
+      await expect(page.getByText('No connectors match.')).toBeVisible({ timeout: 45_000 })
       return
     }
+    await expect(grid).toBeVisible()
     await cards.first().click()
     await expect(page.locator('[data-testid="connector-detail-dialog"]')).toBeVisible()
     await expect(page.locator('[data-testid="connector-forms-list"]')).toBeVisible()

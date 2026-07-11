@@ -4,6 +4,10 @@ import type { NavId } from '@/components/sidebar-nav'
 export const NAV_I18N_KEY: Record<NavId, string> = {
   overview: 'nav.overview',
   system_check: 'nav.systemCheck',
+  cli_check: 'nav.cliCheck',
+  capabilities: 'nav.capabilities',
+  source_health: 'nav.sourceHealth',
+  research: 'nav.research',
   orgs: 'nav.orgs',
   projects: 'nav.projects',
   tasks_inbox: 'nav.tasksInbox',
@@ -11,6 +15,7 @@ export const NAV_I18N_KEY: Record<NavId, string> = {
   conversations: 'nav.conversations',
   plugins: 'nav.plugins',
   connectors: 'nav.connectors',
+  catalog: 'nav.catalog',
   config: 'nav.config',
   tests: 'nav.tests',
   security: 'nav.security',

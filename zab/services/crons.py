@@ -1,15 +1,17 @@
-"""Service de gestion et d'agrégation de crons multi-sources (Hermes, GCP, etc.) avec support Postgres."""
+"""Service de gestion et d'agrégation de crons multi-sources (Hermes, launchd, GCP, etc.) avec support Postgres."""
 
 from __future__ import annotations
 
 import json
 import os
+import plistlib
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from zab.paths import config_dir, user_home
+from zab.services import postgres_store as local_db
 from zab.services.memory_db import _url_or_none, _pg_connect_timeout, memory_psycopg_available
 
 DEFAULT_GCP_PROJECT = ""
@@ -35,6 +37,169 @@ def _write_json_atomic(path: Path, data: Any) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _launchd_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
+def _launchctl_print(label: str) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            ["launchctl", "print", f"{_launchd_domain()}/{label}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:
+        return {"loaded": False, "error": str(exc)}
+
+    data: dict[str, Any] = {
+        "loaded": result.returncode == 0,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+    if result.returncode != 0:
+        return data
+
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("state = "):
+            data["state"] = line.split("=", 1)[1].strip()
+        elif line.startswith("runs = "):
+            value = line.split("=", 1)[1].strip()
+            data["runs"] = int(value) if value.isdigit() else value
+        elif line.startswith("last exit code = "):
+            data["last_exit_code"] = line.split("=", 1)[1].strip()
+        elif line.startswith("run interval = "):
+            data["run_interval"] = line.split("=", 1)[1].strip()
+    return data
+
+
+def _format_duration(seconds: int) -> str:
+    if seconds % 3600 == 0:
+        return f"every {seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"every {seconds // 60}m"
+    return f"every {seconds}s"
+
+
+def _format_launchd_calendar(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(_format_launchd_calendar(item) for item in value)
+    if not isinstance(value, dict):
+        return str(value)
+
+    hour = value.get("Hour")
+    minute = value.get("Minute")
+    weekday = value.get("Weekday")
+    day = value.get("Day")
+    month = value.get("Month")
+    if hour is not None and minute is not None and not any(x is not None for x in (weekday, day, month)):
+        return f"daily {int(hour):02d}:{int(minute):02d}"
+
+    parts = []
+    for key in ("Minute", "Hour", "Weekday", "Day", "Month"):
+        if key in value:
+            parts.append(f"{key}={value[key]}")
+    return "calendar " + " ".join(parts)
+
+
+def _format_launchd_schedule(plist: dict[str, Any]) -> str:
+    parts: list[str] = []
+    interval = plist.get("StartInterval")
+    if isinstance(interval, int):
+        parts.append(_format_duration(interval))
+    if "StartCalendarInterval" in plist:
+        parts.append(_format_launchd_calendar(plist["StartCalendarInterval"]))
+    if plist.get("RunAtLoad"):
+        parts.append("run at load")
+    return " + ".join(parts) if parts else "manual"
+
+
+def _read_launchd_run_status(job_arg: str) -> dict[str, Any]:
+    path = user_home() / ".local" / "share" / "zab" / "launchd-runs" / f"{job_arg}.json"
+    data = _read_json(path)
+    if data:
+        data["status_path"] = str(path)
+    return data
+
+
+def _scan_launchd_zab_crons() -> list[dict[str, Any]]:
+    launch_agents = user_home() / "Library" / "LaunchAgents"
+    crons: list[dict[str, Any]] = []
+    for plist_path in sorted(launch_agents.glob("ai.zab.*.plist")):
+        try:
+            with plist_path.open("rb") as fh:
+                plist = plistlib.load(fh)
+        except Exception as exc:
+            crons.append({
+                "id": f"launchd-{plist_path.stem}",
+                "name": plist_path.stem,
+                "source": "launchd",
+                "schedule": "unknown",
+                "enabled": False,
+                "status": "error",
+                "last_run": None,
+                "next_run": None,
+                "details": {"plist_path": str(plist_path), "error": str(exc)},
+            })
+            continue
+
+        label = str(plist.get("Label") or plist_path.stem)
+        args = [str(x) for x in plist.get("ProgramArguments") or []]
+        job_arg = args[1] if len(args) > 1 and args[0].endswith("zab_launchd_run.sh") else label
+        launchd = _launchctl_print(label)
+        run_status = _read_launchd_run_status(job_arg)
+        last_exit_code = str(launchd.get("last_exit_code") or "")
+
+        enabled = bool(launchd.get("loaded"))
+        status = "paused"
+        if enabled:
+            status = "active"
+            if run_status.get("result") == "ok":
+                status = "ok"
+            if run_status.get("result") == "error" or (
+                last_exit_code and last_exit_code not in {"0", "(never exited)"}
+            ):
+                status = "error"
+
+        crons.append({
+            "id": f"launchd-{label}",
+            "name": label,
+            "source": "launchd",
+            "schedule": _format_launchd_schedule(plist),
+            "enabled": enabled,
+            "status": status,
+            "last_run": run_status.get("finished_at"),
+            "next_run": None,
+            "details": {
+                "label": label,
+                "job_arg": job_arg,
+                "plist_path": str(plist_path),
+                "program_arguments": args,
+                "working_directory": plist.get("WorkingDirectory"),
+                "stdout_path": run_status.get("stdout_path") or plist.get("StandardOutPath"),
+                "stderr_path": run_status.get("stderr_path") or plist.get("StandardErrorPath"),
+                "status_path": run_status.get("status_path"),
+                "launchd_state": launchd.get("state"),
+                "launchd_runs": launchd.get("runs"),
+                "launchd_last_exit_code": launchd.get("last_exit_code"),
+            },
+        })
+    return crons
+
+
+def _tail_text(path: str | None, *, lines: int = 80) -> str:
+    if not path:
+        return ""
+    p = Path(path).expanduser()
+    if not p.is_file():
+        return ""
+    try:
+        return "\n".join(p.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+    except Exception as exc:
+        return f"(unable to read {p}: {exc})"
 
 
 # ==========================================
@@ -230,22 +395,25 @@ def load_cron_runs_from_postgres(cron_id: str) -> list[dict[str, Any]]:
 # ==========================================
 
 def load_cached_crons() -> list[dict[str, Any]]:
-    """Charge les crons depuis Postgres ou le registre local (cache/fallback)."""
-    # Tenter d'abord de charger depuis Postgres
-    pg_crons = load_crons_from_postgres()
-    if pg_crons is not None:
-        return pg_crons
-        
-    # Fallback sur le registre local
+    """Charge les crons depuis Postgres canonique, puis importe le registre legacy si vide."""
+    local_crons = local_db.load_crons()
+    if local_crons:
+        return local_crons
+
     reg = registry_path()
     if not reg.is_file():
         return scan_and_save_crons()
     doc = _read_json(reg)
-    return doc.get("crons", [])
+    crons = doc.get("crons", [])
+    if isinstance(crons, list):
+        clean = [x for x in crons if isinstance(x, dict)]
+        local_db.replace_crons(clean)
+        return clean
+    return []
 
 
 def scan_and_save_crons() -> list[dict[str, Any]]:
-    """Scanne les sources de crons (Hermes, GCP Cloud Scheduler) et met à jour les caches (JSON + Postgres)."""
+    """Scanne les sources de crons (Hermes, launchd, GCP Cloud Scheduler) et met à jour Postgres."""
     crons: list[dict[str, Any]] = []
 
     # 1) Scan Hermes Crons
@@ -287,7 +455,13 @@ def scan_and_save_crons() -> list[dict[str, Any]]:
         except Exception as e:
             print(f"[Crons Scan] Erreur lors du scan Hermes : {e}")
 
-    # 2) Scan GCP Cloud Scheduler Crons
+    # 2) Scan launchd LaunchAgents Zab
+    try:
+        crons.extend(_scan_launchd_zab_crons())
+    except Exception as e:
+        print(f"[Crons Scan] Erreur lors du scan launchd : {e}")
+
+    # 3) Scan GCP Cloud Scheduler Crons
     try:
         cmd = [
             "gcloud", "scheduler", "jobs", "list",
@@ -343,17 +517,14 @@ def scan_and_save_crons() -> list[dict[str, Any]]:
         "crons": crons
     }
     _write_json_atomic(registry_path(), payload)
-
-    # Sauvegarde dans Postgres (si disponible)
-    save_crons_to_postgres(crons)
+    local_db.replace_crons(crons)
 
     return crons
 
 
 def get_cron_logs(cron_id: str) -> list[dict[str, Any]]:
-    """Récupère l'historique et le contenu des logs pour un cron spécifique depuis Postgres, fichiers locaux et GCP."""
-    # Charger les runs interactifs sauvegardés dans Postgres
-    runs = load_cron_runs_from_postgres(cron_id)
+    """Récupère l'historique et le contenu des logs pour un cron spécifique."""
+    runs = local_db.load_cron_runs(cron_id)
     
     other_runs: list[dict[str, Any]] = []
 
@@ -377,6 +548,42 @@ def get_cron_logs(cron_id: str) -> list[dict[str, Any]]:
                         })
             except Exception as e:
                 print(f"[Crons Logs] Erreur lecture logs Hermes {job_id} : {e}")
+
+    elif cron_id.startswith("launchd-"):
+        label = cron_id.replace("launchd-", "", 1)
+        cron = next((c for c in load_cached_crons() if c.get("id") == cron_id), None)
+        details = cron.get("details", {}) if cron else {}
+        job_arg = str(details.get("job_arg") or label)
+        run_status = _read_launchd_run_status(job_arg)
+        stdout_tail = _tail_text(details.get("stdout_path") or run_status.get("stdout_path"))
+        stderr_tail = _tail_text(details.get("stderr_path") or run_status.get("stderr_path"))
+        status = str((run_status.get("result") or (cron or {}).get("status") or "unknown"))
+        timestamp = str(run_status.get("finished_at") or datetime.now(timezone.utc).isoformat())
+        content = (
+            f"# launchd Zab Cron: {label}\n\n"
+            f"**Status:** {status.upper()}\n"
+            f"**Schedule:** {(cron or {}).get('schedule', 'unknown')}\n"
+            f"**Last Run:** {run_status.get('finished_at') or 'never'}\n"
+            f"**Exit Code:** {run_status.get('exit_code', 'n/a')}\n"
+            f"**Plist:** {details.get('plist_path', 'unknown')}\n\n"
+            "## Last Status JSON\n\n"
+            "```json\n"
+            + json.dumps(run_status or {}, indent=2, ensure_ascii=False)
+            + "\n```\n\n"
+            "## stdout tail\n\n"
+            "```text\n"
+            + (stdout_tail or "(empty)")
+            + "\n```\n\n"
+            "## stderr tail\n\n"
+            "```text\n"
+            + (stderr_tail or "(empty)")
+            + "\n```\n"
+        )
+        other_runs.append({
+            "timestamp": timestamp,
+            "status": status,
+            "content": content,
+        })
 
     elif cron_id.startswith("gcp-"):
         # Source GCP Cloud Run : exécution de gcloud logging read
@@ -496,14 +703,43 @@ def run_cron_now(cron_id: str) -> dict[str, Any]:
                 f"## Error Output (stderr)\n```text\n{r.stderr or '(vide)'}\n```\n"
             )
             
-            # Sauvegarder dans Postgres
-            save_cron_run_to_postgres(cron_id, status, content, r.stdout, r.stderr)
+            local_db.save_cron_run(cron_id, status, content, r.stdout, r.stderr)
             
             if r.returncode == 0:
                 scan_and_save_crons()
                 return {"success": True, "stdout": r.stdout, "stderr": r.stderr}
             else:
                 return {"success": False, "error": f"Exit code {r.returncode}", "stdout": r.stdout, "stderr": r.stderr}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    elif cron_id.startswith("launchd-"):
+        label = cron_id.replace("launchd-", "", 1)
+        try:
+            crons = load_cached_crons()
+            cron = next((c for c in crons if c.get("id") == cron_id), None)
+            details = cron.get("details", {}) if cron else {}
+            job_arg = str(details.get("job_arg") or "")
+            if not job_arg:
+                return {"success": False, "error": f"Impossible de trouver l'argument job launchd pour {label}"}
+
+            script = user_home() / ".hermes" / "scripts" / "zab_launchd_run.sh"
+            r = subprocess.run([str(script), job_arg], capture_output=True, text=True, timeout=900)
+
+            status = "ok" if r.returncode == 0 else "error"
+            content = (
+                f"# Manual launchd-compatible Zab Run: {label}\n\n"
+                f"**Triggered At:** {datetime.now(timezone.utc).isoformat()}\n"
+                f"**Job Arg:** {job_arg}\n"
+                f"**Status:** {status.upper()}\n\n"
+                f"## Standard Output (stdout)\n```text\n{r.stdout or '(vide)'}\n```\n\n"
+                f"## Error Output (stderr)\n```text\n{r.stderr or '(vide)'}\n```\n"
+            )
+            local_db.save_cron_run(cron_id, status, content, r.stdout, r.stderr)
+            scan_and_save_crons()
+            if r.returncode == 0:
+                return {"success": True, "stdout": r.stdout, "stderr": r.stderr}
+            return {"success": False, "error": f"Exit code {r.returncode}", "stdout": r.stdout, "stderr": r.stderr}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -526,8 +762,7 @@ def run_cron_now(cron_id: str) -> dict[str, Any]:
                 f"## Subprocess Error Output (stderr)\n```text\n{r.stderr or '(vide)'}\n```\n"
             )
             
-            # Sauvegarder dans Postgres
-            save_cron_run_to_postgres(cron_id, status, content, r.stdout, r.stderr)
+            local_db.save_cron_run(cron_id, status, content, r.stdout, r.stderr)
             
             if r.returncode == 0:
                 scan_and_save_crons()

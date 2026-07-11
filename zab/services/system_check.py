@@ -250,8 +250,16 @@ def _check_models_agents() -> dict[str, Any]:
     except Exception:
         agents_data = {}
     agents_list = agents_data.get("agents") or []
-    agents_ok = [a for a in agents_list if isinstance(a, dict) and a.get("on_path")]
-    agents_missing = [str(a.get("id", "?")) for a in agents_list if isinstance(a, dict) and not a.get("on_path")]
+    agents_requiring_cli = [
+        a for a in agents_list
+        if isinstance(a, dict) and a.get("requires_cli", True)
+    ]
+    agents_ok = [a for a in agents_requiring_cli if isinstance(a, dict) and a.get("on_path")]
+    agents_missing = [
+        str(a.get("id", "?"))
+        for a in agents_requiring_cli
+        if isinstance(a, dict) and not a.get("on_path")
+    ]
 
     parts = []
     if coding_models:

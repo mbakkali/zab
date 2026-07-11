@@ -172,6 +172,11 @@ def dashboard_local_tools_config_path() -> Path:
     return (config_dir() / "local-tools.yaml").expanduser().resolve()
 
 
+def tools_catalog_config_path() -> Path:
+    """Fichier d'annotations du Tools Catalog : ~/.config/zab/tools.yaml."""
+    return (config_dir() / "tools.yaml").expanduser().resolve()
+
+
 def orgs_dir() -> Path:
     return skills_root() / "orgs"
 

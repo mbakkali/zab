@@ -11,12 +11,12 @@ from typing import Any
 import yaml
 
 from zab.paths import config_dir, data_dir
-from zab.services import connectors_aggregate, discovery, memory_db, skills_registry
+from zab.services import connectors_aggregate, discovery, memory_db, postgres_store as local_db, skills_registry, tool_catalog
 from zab.services.skill_env_vars import build_env_index, env_vars_for_skill
 from zab.services.workspace_projects import discover_projects
-from zab.user_config import load_user_config, user_config_path
+from zab.user_config import load_user_config, organization_slug_set_from_user_config, user_config_path
 
-STATE_VERSION = "2.0"
+STATE_VERSION = "2.1"
 
 
 def state_path() -> Path:
@@ -113,6 +113,32 @@ def _string_list(value: Any) -> list[str]:
         if isinstance(item, str) and item.strip() and item.strip() not in out:
             out.append(item.strip())
     return out
+
+
+def _flatten_text(value: Any) -> str:
+    parts: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            parts.append(str(key))
+            parts.append(_flatten_text(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            parts.append(_flatten_text(nested))
+    elif isinstance(value, (str, int, float, bool)):
+        parts.append(str(value))
+    return " ".join(part for part in parts if part).lower()
+
+
+def _query_matches_text(query: str | None, text: str) -> bool:
+    if not query:
+        return True
+    q = query.strip().lower()
+    if not q:
+        return True
+    if q in text:
+        return True
+    terms = [term for term in q.split() if term]
+    return bool(terms) and any(term in text for term in terms)
 
 
 def _path_under_any_projects_root(p: Path, roots: list[Path]) -> bool:
@@ -423,8 +449,93 @@ def _collect_memory() -> dict[str, Any]:
     return out
 
 
+def _collect_knowledge_sources(user_cfg: dict[str, Any]) -> dict[str, Any]:
+    from zab.services import obsidian_vault
+
+    out: dict[str, Any] = {}
+    obsidian_cfg = user_cfg.get("obsidian") if isinstance(user_cfg.get("obsidian"), dict) else {}
+    try:
+        doctor = obsidian_vault.doctor_payload()
+    except Exception as exc:  # noqa: BLE001 - knowledge source discovery must not block sync.
+        doctor = {
+            "vault_path": obsidian_cfg.get("vault_path") or str(Path.home() / "ObsidianVault"),
+            "exists": False,
+            "error": str(exc),
+        }
+    configured = bool(obsidian_cfg) or bool(doctor.get("exists"))
+    out["obsidian"] = {
+        "id": "obsidian",
+        "display_name": "Obsidian Vault",
+        "kind": "local_markdown_vault",
+        "configured": configured,
+        "connected": bool(doctor.get("exists")),
+        "path": doctor.get("vault_path"),
+        "notes_count": doctor.get("notes_count"),
+        "validation": doctor.get("validation"),
+        "aliases": ["obsidian", "vault", "second brain", "secondbrain", "knowledge base"],
+        "tags": ["obsidian", "second-brain", "knowledge", "local-first"],
+        "agent_hints": {
+            "search_tool": "vault_search",
+            "read_tool": "vault_read",
+            "list_tool": "vault_list",
+            "append_tools": ["daily_append", "inbox_create"],
+            "secrets_policy": "local paths only; note content is returned only by explicit vault_read/vault_search",
+        },
+    }
+    return out
+
+
+def _collect_orgs(projects: list[dict[str, Any]]) -> dict[str, Any]:
+    orgs = {
+        str(o.get("org") or "hors-org"): dict(o)
+        for o in discovery.list_orgs_with_skills()
+        if isinstance(o, dict)
+    }
+    canonical = organization_slug_set_from_user_config()
+    if canonical:
+        canonical.add("hors-org")
+    for project in projects:
+        raw_org = str(project.get("org") or "hors-org")
+        org = raw_org if not canonical or raw_org in canonical else "hors-org"
+        row = orgs.setdefault(
+            org,
+            {
+                "org": org,
+                "name": org,
+                "skills": [],
+                "projects": [],
+                "sources": [],
+            },
+        )
+        projects_list = row.setdefault("projects", [])
+        if isinstance(projects_list, list):
+            project_ref = {
+                "id": project.get("id"),
+                "name": project.get("name"),
+                "path": project.get("path"),
+                "workspace_parent": project.get("workspace_parent"),
+                "skills_count": len(project.get("skills") or []),
+                "org": raw_org,
+                "git_repo": project.get("git_repo"),
+                "git_branch": project.get("git_branch"),
+                "remote_host": project.get("remote_host"),
+                "last_activity_at_utc": project.get("last_activity_at_utc"),
+                "last_activity_source": project.get("last_activity_source"),
+                "last_activity_path": project.get("last_activity_path"),
+            }
+            if project_ref not in projects_list:
+                projects_list.append(project_ref)
+        sources = row.setdefault("sources", [])
+        if isinstance(sources, list) and "workspace_projects" not in sources:
+            sources.append("workspace_projects")
+        row["projects_count"] = len(row.get("projects") or [])
+        row["project_names"] = [p.get("name") for p in row.get("projects") or [] if isinstance(p, dict)]
+        row["aliases"] = sorted({org, org.replace("-", "_"), org.replace("_", "-")})
+    return dict(sorted(orgs.items(), key=lambda x: x[0].casefold()))
+
+
 def _apply_overrides(state: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
-    for section in ("connectors", "skills", "models", "code_tools", "memory_sources"):
+    for section in ("connectors", "skills", "models", "code_tools", "memory_sources", "knowledge_sources", "projects", "orgs"):
         target = state.get(section)
         source = overrides.get(section)
         if not isinstance(target, dict) or not isinstance(source, dict):
@@ -443,7 +554,6 @@ def _apply_overrides(state: dict[str, Any], overrides: dict[str, Any]) -> dict[s
 def build_state(*, include_overrides: bool = True) -> dict[str, Any]:
     skills_registry.refresh_registry_from_disk()
     user_cfg = load_user_config()
-    orgs = discovery.list_orgs_with_skills()
     projects = discover_projects()
     state: dict[str, Any] = {
         "version": STATE_VERSION,
@@ -454,7 +564,7 @@ def build_state(*, include_overrides: bool = True) -> dict[str, Any]:
             "state_path": str(state_path().resolve()),
             "overrides_path": str(overrides_path().resolve()),
         },
-        "orgs": {str(o.get("org") or "hors-org"): o for o in orgs},
+        "orgs": _collect_orgs(projects),
         "projects": {str(p.get("path") or p.get("name")): p for p in projects},
         "skills": _collect_skills(user_cfg),
         "mcps": _collect_mcps(),
@@ -462,7 +572,7 @@ def build_state(*, include_overrides: bool = True) -> dict[str, Any]:
         "code_tools": _collect_code_tools(user_cfg),
         "models": _collect_models(user_cfg),
         "memory_sources": _collect_memory(),
-        "knowledge_sources": {},
+        "knowledge_sources": _collect_knowledge_sources(user_cfg),
         "security": {
             "env_tracked_count": len(user_cfg.get("tracked_env_extra") or []),
             "reports_path": str((data_dir() / "security-last").resolve()),
@@ -470,7 +580,8 @@ def build_state(*, include_overrides: bool = True) -> dict[str, Any]:
         },
         "policies": {
             "secrets": "never_print_raw_values",
-            "state_yaml": "generated_cache",
+            "state_store": "postgres:zab_core",
+            "state_yaml": "legacy_export_only",
             "config_yaml": "user_intent",
             "overrides_yaml": "user_intent",
         },
@@ -483,6 +594,12 @@ def build_state(*, include_overrides: bool = True) -> dict[str, Any]:
             }
         ],
     }
+    tools_catalog_payload = tool_catalog.build_tools_catalog(state=state)
+    state["tools"] = {
+        str(tool.get("id") or tool.get("key") or f"tool-{idx}"): tool
+        for idx, tool in enumerate(tools_catalog_payload.get("tools") or [])
+        if isinstance(tool, dict) and (tool.get("id") or tool.get("key"))
+    }
     if include_overrides:
         state = _apply_overrides(state, _read_yaml(overrides_path()))
     return state
@@ -490,12 +607,37 @@ def build_state(*, include_overrides: bool = True) -> dict[str, Any]:
 
 def sync_state() -> tuple[Path, dict[str, Any]]:
     state = build_state(include_overrides=True)
+    local_db.replace_state(state)
     return _write_yaml_atomic(state_path(), state), state
 
 
 def load_state() -> dict[str, Any]:
+    if local_db.has_state():
+        state = local_db.load_state()
+        if state:
+            if state.get("version") != STATE_VERSION or "tools" not in state:
+                state = build_state(include_overrides=True)
+                try:
+                    local_db.replace_state(state)
+                except Exception:
+                    pass
+                return _apply_overrides(state, _read_yaml(overrides_path()))
+            return _apply_overrides(state, _read_yaml(overrides_path()))
     raw = _read_yaml(state_path())
     if raw:
+        raw = local_db.json_safe(raw)
+        try:
+            local_db.replace_state(raw)
+        except Exception:
+            # Legacy YAML import is a compatibility path. Runtime storage is
+            # Postgres; if that is unavailable, the store error should surface.
+            pass
+        if raw.get("version") != STATE_VERSION or "tools" not in raw:
+            raw = build_state(include_overrides=True)
+            try:
+                local_db.replace_state(raw)
+            except Exception:
+                pass
         return _apply_overrides(raw, _read_yaml(overrides_path()))
     return build_state(include_overrides=True)
 
@@ -507,6 +649,7 @@ def state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "version": state.get("version"),
         "last_sync_at": state.get("last_sync_at"),
         "path": str(state_path().resolve()),
+        "database_path": str(local_db.database_path()),
         "counts": {
             "orgs": len(state.get("orgs") or {}),
             "projects": len(state.get("projects") or {}),
@@ -514,6 +657,7 @@ def state_summary(state: dict[str, Any]) -> dict[str, Any]:
             "mcp_servers": len(mcps_servers),
             "connectors": len(state.get("connectors") or {}),
             "code_tools": len(state.get("code_tools") or {}),
+            "tools": len(state.get("tools") or {}),
             "models": len(state.get("models") or {}),
             "memory_sources": len(state.get("memory_sources") or {}),
             "knowledge_sources": len(state.get("knowledge_sources") or {}),
@@ -553,12 +697,11 @@ def list_section(
         if section == "skills" and rs_n:
             if str(row.get("registry_status") or "").lower() != rs_n:
                 continue
-        if section == "skills" and org_n:
+        if section in ("skills", "projects", "orgs") and org_n:
             if str(row.get("org") or "").lower() != org_n:
                 continue
-        if section == "skills" and proj_n:
-            hay = f"{row.get('project') or ''} {row.get('path') or ''}".lower()
-            if proj_n not in hay:
+        if section in ("skills", "projects") and proj_n:
+            if not _query_matches_text(proj_n, _flatten_text(row)):
                 continue
         if tag_n:
             tags = [str(x).lower() for x in row.get("tags") or []]
@@ -567,22 +710,7 @@ def list_section(
         if installed is not None and bool(row.get("installed")) is not installed:
             continue
         if qn:
-            hay = " ".join(
-                str(row.get(k) or "")
-                for k in (
-                    "key",
-                    "id",
-                    "display_name",
-                    "description",
-                    "org",
-                    "path",
-                    "provider",
-                    "kind",
-                    "registry_key",
-                    "registry_status",
-                )
-            ).lower()
-            if qn not in hay:
+            if not _query_matches_text(qn, _flatten_text(row)):
                 continue
         filtered.append(row)
     total = len(filtered)
@@ -630,33 +758,60 @@ def build_context_pack(
     org_n = org.strip().lower() if org else None
     project_n = project.strip().lower() if project else None
     query_n = query.strip().lower() if query else None
-    include_set = set(include or ["skills", "connectors", "code_tools", "memory_sources"])
+    include_set = set(include or ["orgs", "projects", "skills", "connectors", "code_tools", "tools", "memory_sources", "knowledge_sources"])
+    orgs_raw = state.get("orgs") if isinstance(state.get("orgs"), dict) else {}
+    orgs: list[dict[str, Any]] = []
+    for key, value in orgs_raw.items():
+        if not isinstance(value, dict):
+            continue
+        row = {"key": str(key), **value}
+        text = _flatten_text(row)
+        if org_n and str(row.get("org") or row.get("key") or "").lower() != org_n:
+            continue
+        if project_n and not _query_matches_text(project_n, text):
+            continue
+        if query_n and not (org_n or project_n) and not _query_matches_text(query_n, text):
+            continue
+        orgs.append(row)
+    orgs = sorted(orgs, key=lambda x: str(x.get("key") or "").lower())[: max(1, min(100, limit))]
+
+    projects_raw = state.get("projects") if isinstance(state.get("projects"), dict) else {}
+    projects: list[dict[str, Any]] = []
+    for key, value in projects_raw.items():
+        if not isinstance(value, dict):
+            continue
+        row = {"key": str(key), **value}
+        text = _flatten_text(row)
+        if org_n and str(row.get("org") or "").lower() != org_n:
+            continue
+        if project_n and not _query_matches_text(project_n, text):
+            continue
+        if query_n and not (org_n or project_n) and not _query_matches_text(query_n, text):
+            continue
+        projects.append(row)
+    projects = sorted(projects, key=lambda x: (str(x.get("org") or ""), str(x.get("name") or "")))[: max(1, min(100, limit))]
+
     skills_raw = state.get("skills") if isinstance(state.get("skills"), dict) else {}
     skills: list[dict[str, Any]] = []
     for key, value in skills_raw.items():
         if not isinstance(value, dict):
             continue
         row = {"key": str(key), **value}
+        text = _flatten_text(row)
         if org_n and str(row.get("org") or "").lower() != org_n:
             continue
-        if project_n:
-            hay = " ".join(str(row.get(k) or "") for k in ("project", "path", "source")).lower()
-            if project_n not in hay:
-                continue
-        if query_n:
-            hay = " ".join(
-                str(row.get(k) or "")
-                for k in ("key", "id", "description", "org", "path", "source")
-            ).lower()
-            tags = " ".join(str(x) for x in row.get("tags") or []).lower()
-            if query_n not in hay and query_n not in tags:
-                continue
+        if project_n and not _query_matches_text(project_n, text):
+            continue
+        if query_n and not _query_matches_text(query_n, text):
+            continue
         skills.append(row)
     skills = sorted(skills, key=lambda x: str(x.get("key") or "").lower())[: max(1, min(300, limit))]
 
     connectors = state.get("connectors") if isinstance(state.get("connectors"), dict) else {}
     code_tools = state.get("code_tools") if isinstance(state.get("code_tools"), dict) else {}
+    tools = state.get("tools") if isinstance(state.get("tools"), dict) else {}
     memory = state.get("memory_sources") if isinstance(state.get("memory_sources"), dict) else {}
+    knowledge = state.get("knowledge_sources") if isinstance(state.get("knowledge_sources"), dict) else {}
 
     lines: list[str] = [
         "# zab Context Pack",
@@ -669,15 +824,48 @@ def build_context_pack(
         "",
         "## Summary",
         "",
+        f"- Orgs included: {len(orgs)}",
+        f"- Projects included: {len(projects)}",
         f"- Skills included: {len(skills)}",
         f"- Connectors indexed: {len(connectors)}",
         f"- Code tools indexed: {len(code_tools)}",
+        f"- Tools catalog indexed: {len(tools)}",
         f"- Memory sources indexed: {len(memory)}",
-        "",
-        "## Skills",
+        f"- Knowledge sources indexed: {len(knowledge)}",
         "",
     ]
+    if "orgs" in include_set:
+        lines.extend(["## Orgs", ""])
+        if not orgs:
+            lines.append("- No orgs matched the selected filters.")
+        for org_row in orgs:
+            name = org_row.get("name") or org_row.get("org") or org_row.get("key")
+            projects_count = org_row.get("projects_count")
+            if projects_count is None:
+                projects_count = len(org_row.get("projects") or [])
+            lines.append(f"- {name}: projects={projects_count}, skills={len(org_row.get('skills') or [])}")
+        lines.append("")
+
+    if "projects" in include_set:
+        lines.extend(["## Projects", ""])
+        if not projects:
+            lines.append("- No projects matched the selected filters.")
+        for project_row in projects:
+            lines.append(f"### {project_row.get('name') or project_row.get('key')}")
+            lines.append("")
+            lines.append(f"- Org: {project_row.get('org') or 'unknown'}")
+            lines.append(f"- Path: {project_row.get('path') or ''}")
+            if project_row.get("workspace_parent"):
+                lines.append(f"- Workspace parent: {project_row.get('workspace_parent')}")
+            if project_row.get("detection_reasons"):
+                lines.append(f"- Detected by: {', '.join(project_row['detection_reasons'])}")
+            if project_row.get("project_markers"):
+                lines.append(f"- Markers: {', '.join(project_row['project_markers'][:8])}")
+            lines.append(f"- Workspace skills: {len(project_row.get('skills') or [])}")
+            lines.append("")
+
     if "skills" in include_set:
+        lines.extend(["## Skills", ""])
         if not skills:
             lines.append("- No skills matched the selected filters.")
         for skill in skills:
@@ -730,12 +918,49 @@ def build_context_pack(
             state_word = "installed" if tool.get("installed") else "missing"
             lines.append(f"- {tool.get('display_name') or key}: {state_word} ({tool.get('binary') or 'no binary'})")
 
+    if "tools" in include_set or "tool-catalog" in include_set or "tools_catalog" in include_set:
+        lines.extend(["", "## Tools Catalog", ""])
+        if not tools:
+            lines.append("- No tools catalog entries matched the selected filters.")
+        for key, tool in sorted(tools.items(), key=lambda x: x[0])[:120]:
+            if not isinstance(tool, dict):
+                continue
+            status = str(tool.get("status") or "skipped")
+            primary = str(tool.get("primary") or "—")
+            fallback = str(tool.get("fallback") or "—")
+            origin = str(tool.get("origin") or "local")
+            lines.append(
+                f"- {tool.get('label') or key}: status={status}, primary={primary}, fallback={fallback}, origin={origin}"
+            )
+            skill_refs = [str(x) for x in tool.get("skill_refs") or [] if str(x).strip()]
+            if skill_refs:
+                lines.append(f"  Skills: {', '.join(skill_refs)}")
+            if tool.get("status_reason"):
+                lines.append(f"  Reason: {tool.get('status_reason')}")
+
     if "memory_sources" in include_set or "memory" in include_set:
         lines.extend(["", "## Memory", ""])
         for key, src in sorted(memory.items(), key=lambda x: x[0]):
             if not isinstance(src, dict):
                 continue
             lines.append(f"- {key}: configured={bool(src.get('configured'))}, connected={bool(src.get('connected'))}")
+
+    if "knowledge_sources" in include_set or "knowledge" in include_set:
+        lines.extend(["", "## Knowledge Sources", ""])
+        for key, src in sorted(knowledge.items(), key=lambda x: x[0]):
+            if not isinstance(src, dict):
+                continue
+            lines.append(
+                f"- {src.get('display_name') or key}: "
+                f"configured={bool(src.get('configured'))}, connected={bool(src.get('connected'))}"
+            )
+            if src.get("path"):
+                lines.append(f"  Path: {src.get('path')}")
+            hints = src.get("agent_hints") if isinstance(src.get("agent_hints"), dict) else {}
+            tools = [hints.get("search_tool"), hints.get("read_tool"), hints.get("list_tool")]
+            tools = [str(tool) for tool in tools if tool]
+            if tools:
+                lines.append(f"  Tools: {', '.join(tools)}")
 
     text = "\n".join(lines).rstrip() + "\n"
     name_parts = ["context-pack"]

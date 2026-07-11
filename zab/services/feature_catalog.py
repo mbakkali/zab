@@ -17,10 +17,10 @@ FEATURES: list[dict[str, Any]] = [
     {
         "id": "sync-state",
         "category": "foundation",
-        "summary": "Reconstruit l'index local-first régénérable de l'univers IA.",
+        "summary": "Reconstruit l'index Postgres régénérable de l'univers IA.",
         "cli": ["zab sync", "zab sync --json", "zab agent bootstrap --json"],
         "api": ["POST /api/sync", "GET /api/state", "GET /api/state/full"],
-        "files": ["~/.local/share/zab/state.yaml", "~/.config/zab/overrides.yaml"],
+        "files": ["Postgres schema zab_core", "~/.config/zab/overrides.yaml"],
     },
     {
         "id": "skills",
@@ -37,6 +37,14 @@ FEATURES: list[dict[str, Any]] = [
         "cli": ["zab inventory connectors --json", "zab inspect connectors <slug> --json", "zab add mcp", "zab add api"],
         "api": ["GET /api/connectors", "GET /api/connectors/{slug}"],
         "files": ["configs/cursor-mcp.json", "configs/claude-desktop-mcp.json", "local-tools.yaml"],
+    },
+    {
+        "id": "tools-catalog",
+        "category": "context",
+        "summary": "Catalogue les capacités actionnables Zab: recherche, inspect, validation et checks read-only.",
+        "cli": ["zab tools list --json", "zab tools search <query> --json", "zab tools inspect <tool-id> --json"],
+        "api": ["GET /api/tools/catalog", "GET /api/tools/{tool_id}", "GET /api/tools/validate"],
+        "files": ["~/.config/zab/tools.yaml"],
     },
     {
         "id": "code-tools",
@@ -132,7 +140,7 @@ FEATURES: list[dict[str, Any]] = [
 def catalog() -> dict[str, Any]:
     return {
         "product": "zab",
-        "positioning": "local-first AI context command center",
+        "positioning": "Postgres-backed AI context command center",
         "features": FEATURES,
     }
 
@@ -143,6 +151,7 @@ def agent_guide() -> dict[str, Any]:
         "bootstrap_commands": [
             "zab agent bootstrap --json",
             "zab agent skills --json",
+            "zab tools list --json",
             "zab features --json",
             "zab mempalace doctor --json",
             "zab memory search <topic> --json",
@@ -165,6 +174,14 @@ def agent_guide() -> dict[str, Any]:
                     "zab agent skills --json",
                     "zab search <topic> --section skills --json",
                     "zab inspect skills <skill-id> --json",
+                ],
+            },
+            {
+                "goal": "Discover actionable tools before choosing an implementation",
+                "commands": [
+                    "zab tools list --json",
+                    "zab tools search <topic> --json",
+                    "zab tools inspect <tool-id> --json",
                 ],
             },
             {
@@ -199,7 +216,7 @@ def agent_guide() -> dict[str, Any]:
             "Prefer JSON commands for automation.",
             "Run `zab sync --json` before relying on inventory.",
             "Do not read or print raw secret values; use security/env API or masked dashboard views.",
-            "Treat state.yaml as generated cache and config.yaml/overrides.yaml as user-controlled intent.",
+            "Treat Postgres zab_core as generated state and config.yaml/overrides.yaml as user-controlled intent.",
         ],
     }
 

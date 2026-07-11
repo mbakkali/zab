@@ -10,6 +10,7 @@ from zab.paths import (
     data_dir,
     dashboard_local_tools_config_path,
     primary_repo_base_for_mcp_files,
+    tools_catalog_config_path,
     skills_roots_resolved_from_config,
     zab_package_dir,
 )
@@ -21,6 +22,7 @@ MaxBytes = 400_000
 ConfigKey = Literal[
     "local_tools_actual",
     "local_tools_example",
+    "tools_catalog_annotations",
     "user_zab_config",
     "skills_registry",
     "cursor_mcp_json",
@@ -102,6 +104,7 @@ def resolve_config_path(key: ConfigKey | str) -> Path | None:
     mapping: dict[str, Path] = {
         "local_tools_actual": dashboard_local_tools_config_path(),
         "local_tools_example": pkg / "local-tools.example.yaml",
+        "tools_catalog_annotations": tools_catalog_config_path(),
         "user_zab_config": user_config_path(),
         "skills_registry": skills_registry.registry_path(),
         "cursor_mcp_json": (sr / "configs" / "cursor-mcp.json") if sr is not None else Path("/nonexistent-zab-cursor-mcp"),
@@ -161,6 +164,12 @@ def list_config_history() -> list[dict[str, Any]]:
             title="local-tools.yaml actuel",
             kind="current",
         ),
+        _file_history_row(
+            tools_catalog_config_path(),
+            key="tools_catalog_annotations",
+            title="tools.yaml d'intention",
+            kind="current",
+        ),
         _file_history_row(data_dir() / "scan-last.yaml", key="scan_last", title="Dernier scan persisté", kind="scan"),
         _file_history_row(
             data_dir() / "system-check-last.json",
@@ -187,7 +196,7 @@ def list_config_history() -> list[dict[str, Any]]:
     return rows
 
 
-WRITABLE_CONFIG_KEYS: frozenset[str] = frozenset({"local_tools_actual", "user_zab_config", "skills_registry"})
+WRITABLE_CONFIG_KEYS: frozenset[str] = frozenset({"local_tools_actual", "tools_catalog_annotations", "user_zab_config", "skills_registry"})
 
 
 def write_config_snapshot(key: ConfigKey | str, content: str) -> Path:

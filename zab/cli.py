@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import webbrowser
-from typing import Any
+from typing import Any, Optional
 
 import typer
 import uvicorn
@@ -50,9 +50,12 @@ from zab.services.memory_scan import resolve_mehdi_memory_database_url
 from zab.services import mempalace_mcp_snippet as mempalace_mcp_snippet
 from zab.services.scanner import resolve_optional_scan_root, workspace_scan
 from zab.services.pm_env_sync import sync_pm_tokens_to_user_dotenv
+from zab.services.capabilities import get_capabilities
+from zab.services.command_center_context import build_context_packet, write_context_packet
 from zab.services.feature_catalog import agent_guide, agent_guide_markdown, catalog
 from zab.services.state_index import build_context_pack, get_section_item, list_section, state_summary, sync_state
-from zab.services import agent_context, composio_connectors as composio_svc
+from zab.services import agent_context, cli_check as cli_check_svc, cli_update_status as cli_update_svc, composio_connectors as composio_svc
+from zab.services import tool_catalog, tool_checks
 from zab.services.hermes_config import update_external_dirs
 from zab.services.skill_ai_router import choose_skill_placement
 from zab.services.skills_git_sync import commit_and_push, ensure_remote_origin, ensure_repo_initialized
@@ -85,6 +88,10 @@ composio_app = typer.Typer(
 app.add_typer(composio_app, name="composio")
 skill_app = typer.Typer(help="Créer, synchroniser et exposer des Agent Skills.", no_args_is_help=True)
 app.add_typer(skill_app, name="skill")
+tools_app = typer.Typer(help="Catalogue des tools actionnables Zab.", no_args_is_help=True)
+app.add_typer(tools_app, name="tools")
+db_app = typer.Typer(help="Base Postgres canonique Zab.", no_args_is_help=True)
+app.add_typer(db_app, name="db")
 ws_app = typer.Typer(help="Cloud Workstation : sync bidirectionnelle env/CLIs.", no_args_is_help=True)
 ws_sync_app = typer.Typer(help="Sync Mac ↔ GCS ↔ Workstation par profils.", no_args_is_help=True)
 ws_app.add_typer(ws_sync_app, name="sync")
@@ -92,6 +99,12 @@ app.add_typer(ws_app, name="ws")
 
 tasks_app = typer.Typer(help="Gestion des tâches unifiée (GitLab, Linear, Notion, GitHub).", no_args_is_help=True)
 app.add_typer(tasks_app, name="tasks")
+
+brain_app = typer.Typer(help="Zab-as-GBrain status et schema.", no_args_is_help=True)
+app.add_typer(brain_app, name="brain")
+
+command_center_app = typer.Typer(help="Packets Command Center pour Hermes.", no_args_is_help=True)
+app.add_typer(command_center_app, name="command-center")
 
 @tasks_app.command(name="sync")
 def tasks_sync() -> None:
@@ -105,14 +118,48 @@ def tasks_sync() -> None:
     data = sync_tasks_inbox()
     console.print(f"[green]✔ Synchro terminée.[/green] {data.get('total_count', 0)} tâches trouvées parmi {len(data.get('sources', []))} sources.")
 
+
+@command_center_app.command("context")
+def command_center_context_cmd(
+    *,
+    refresh: bool = typer.Option(False, "--refresh", help="Relit explicitement les sources supportées avant le packet"),
+    write: bool = typer.Option(False, "--write", help="Ecrit le packet latest + historique dans ~/.local/share/zab"),
+    markdown: bool = typer.Option(False, "--markdown", help="Affiche le Markdown du packet"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Produit le packet de contexte daily lu par Hermes Command Center."""
+    payload = write_context_packet(refresh=refresh) if write else build_context_packet(refresh=refresh)
+    if markdown:
+        typer.echo(str(payload.get("markdown") or "").rstrip())
+        return
+    clean = {k: v for k, v in payload.items() if k != "markdown"}
+    if json_out:
+        typer.echo(json.dumps(clean, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Zab Command Center context packet", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  freshness : {payload.get('freshness', {}).get('global_score')}/100")
+    typer.echo(f"  quality   : {payload.get('quality_gate', {}).get('status')}")
+    typer.echo(f"  gaps      : {len(payload.get('context_gaps') or [])}")
+    if write:
+        paths = payload.get("paths") or {}
+        typer.echo(f"  json      : {paths.get('latest_json')}")
+        typer.echo(f"  markdown  : {paths.get('latest_markdown')}")
+
 @tasks_app.command(name="list")
-def tasks_list() -> None:
+def tasks_list(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
     """Liste les tâches depuis le cache local (unifié)."""
     from zab.services.tasks_inbox import fetch_tasks_inbox
+
+    data = fetch_tasks_inbox()
+    if json_out:
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+        return
     from rich.console import Console
     from rich.table import Table
 
-    data = fetch_tasks_inbox()
     console = Console()
 
     total = data.get('total_count', 0)
@@ -133,6 +180,81 @@ def tasks_list() -> None:
         )
 
     console.print(table)
+
+
+@db_app.command("status")
+def db_status_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Affiche le statut de la base Postgres canonique."""
+    from zab.services import postgres_store
+
+    payload = postgres_store.status()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).rstrip())
+
+
+@db_app.command("migrate")
+def db_migrate_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Crée ou migre le schéma Postgres canonique."""
+    from zab.services import postgres_store
+
+    payload = postgres_store.migrate_schema()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).rstrip())
+
+
+@db_app.command("export")
+def db_export_cmd(
+    *,
+    fmt: str = typer.Option("json", "--format", help="json ou yaml"),
+) -> None:
+    """Exporte le contenu Postgres pour debug/backup."""
+    from zab.services import postgres_store
+
+    normalized = fmt.strip().lower()
+    if normalized not in ("json", "yaml"):
+        typer.echo("--format doit être json ou yaml", err=True)
+        raise typer.Exit(1)
+    typer.echo(postgres_store.export_database(fmt=normalized).rstrip())
+
+
+@db_app.command("import-legacy")
+def db_import_legacy_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Importe SQLite legacy et fichiers JSON/YAML dans Postgres."""
+    from zab.services import postgres_store
+
+    payload = postgres_store.import_legacy()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).rstrip())
+
+
+@db_app.command("vacuum")
+def db_vacuum_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Lance la maintenance Postgres (ANALYZE) sur le schéma Zab."""
+    from zab.services import postgres_store
+
+    payload = postgres_store.vacuum()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).rstrip())
 
 
 channels_app = typer.Typer(help="Gestion des canaux de communication (emails, WhatsApp, Slack, Telegram).", no_args_is_help=True)
@@ -240,12 +362,16 @@ def channels_setup() -> None:
 _INVENTORY_SECTIONS: dict[str, str] = {
     "skills": "skills",
     "connectors": "connectors",
+    "tools": "tools",
     "code-tools": "code_tools",
     "code_tools": "code_tools",
     "models": "models",
     "memory": "memory_sources",
     "memory-sources": "memory_sources",
+    "memory_sources": "memory_sources",
     "knowledge": "knowledge_sources",
+    "knowledge-sources": "knowledge_sources",
+    "knowledge_sources": "knowledge_sources",
     "security": "security",
     "policies": "policies",
     "subscriptions": "subscriptions",
@@ -441,6 +567,161 @@ def doctor() -> None:
     )
 
 
+@app.command("cli-check")
+def cli_check_cmd(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Fichier JSON de checks CLI auth (défaut: ~/.config/zab/cli-checks.json).",
+    ),
+    init: bool = typer.Option(False, "--init", help="Créer le fichier JSON d'exemple puis quitter."),
+    force: bool = typer.Option(False, "--force", help="Avec --init, remplace le fichier existant."),
+    open_config: bool = typer.Option(False, "--open", help="Ouvrir le fichier JSON dans l'application par défaut."),
+    only: Optional[list[str]] = typer.Option(None, "--only", help="Limiter à un id ou label de check (répétable)."),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts."),
+    strict: bool = typer.Option(False, "--strict", help="Quitter avec code 1 si au moins un check est KO."),
+) -> None:
+    """Valide les authentifications CLI depuis un fichier JSON déclaratif."""
+    target = config_path.expanduser() if config_path else None
+    if init:
+        path = cli_check_svc.ensure_default_cli_checks_config(overwrite=force, path=target)
+        if open_config:
+            _open_path(path)
+        payload = {"written": True, "path": str(path)}
+        if json_out:
+            typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            typer.echo(typer.style("Fichier cli-check prêt", fg=typer.colors.GREEN, bold=True))
+            typer.echo(f"  {path}")
+        return
+
+    if open_config:
+        path = cli_check_svc.ensure_default_cli_checks_config(path=target)
+        _open_path(path)
+
+    try:
+        payload = cli_check_svc.run_cli_checks(target, only=only)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(typer.style("zab — CLI auth checks", bold=True))
+        typer.echo(f"  config : {payload['config_path']}")
+        typer.echo(
+            f"  score  : {payload['percentage']}% · "
+            f"{payload['ok']} OK · {payload['warn']} warn · {payload['fail']} KO"
+        )
+        for row in payload.get("checks") or []:
+            status = str(row.get("status") or "?")
+            color = (
+                typer.colors.GREEN
+                if status == "ok"
+                else typer.colors.YELLOW
+                if status in {"warn", "skipped"}
+                else typer.colors.RED
+            )
+            typer.echo("")
+            typer.echo(f"  [{typer.style(status.upper(), fg=color)}] {row.get('label') or row.get('id')}")
+            typer.echo(f"      {row.get('message')}")
+            url = row.get("url")
+            if url:
+                typer.echo(typer.style(f"      {url}", dim=True))
+            detail = row.get("detail") if isinstance(row.get("detail"), dict) else {}
+            cmd = detail.get("command")
+            if isinstance(cmd, list) and cmd:
+                typer.echo(typer.style("      $ " + " ".join(str(x) for x in cmd), dim=True))
+
+    if strict and int(payload.get("fail") or 0) > 0:
+        raise typer.Exit(1)
+
+
+@app.command("cli-update-status")
+def cli_update_status_cmd(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Fichier JSON de checks CLI (défaut: ~/.config/zab/cli-checks.json).",
+    ),
+    only: Optional[list[str]] = typer.Option(None, "--only", help="Limiter à un id, label ou binaire (répétable)."),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts."),
+    markdown_out: bool = typer.Option(False, "--markdown", help="Afficher le rapport Markdown."),
+    write_path: Optional[Path] = typer.Option(None, "--write", "-w", help="Écrire le rapport Markdown à cet emplacement."),
+    network: bool = typer.Option(True, "--network/--no-network", help="Autoriser les sources réseau (npm, PyPI, GitHub, URL)."),
+    timeout_seconds: float = typer.Option(8.0, "--timeout", help="Timeout par probe, en secondes."),
+    strict: bool = typer.Option(False, "--strict", help="Quitter avec code 1 si un statut n'est pas vérifiable ou à jour."),
+) -> None:
+    """Documente pour chaque CLI suivi s'il est à jour, en retard, absent ou indéterminé."""
+    target = config_path.expanduser() if config_path else None
+    try:
+        payload = cli_update_svc.run_cli_update_status(
+            target,
+            only=only,
+            network=network,
+            timeout_seconds=timeout_seconds,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if write_path is not None:
+        report_path = write_path.expanduser().resolve()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(cli_update_svc.render_cli_update_markdown(payload), encoding="utf-8")
+        payload["markdown_path"] = str(report_path)
+
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif markdown_out:
+        typer.echo(cli_update_svc.render_cli_update_markdown(payload).rstrip())
+    else:
+        counts = payload.get("counts") or {}
+        typer.echo(typer.style("zab — CLI update status", bold=True))
+        typer.echo(f"  config : {payload['config_path']}")
+        typer.echo(
+            f"  statut : {counts.get('up_to_date', 0)}/{payload.get('total', 0)} à jour · "
+            f"{counts.get('outdated', 0)} à mettre à jour · "
+            f"{counts.get('missing', 0)} absents · "
+            f"{counts.get('unknown_latest', 0) + counts.get('unknown_local', 0)} indéterminés"
+        )
+        if payload.get("markdown_path"):
+            typer.echo(f"  rapport: {payload['markdown_path']}")
+        for row in payload.get("items") or []:
+            status = str(row.get("status") or "?")
+            color = (
+                typer.colors.GREEN
+                if status == "up_to_date"
+                else typer.colors.RED
+                if status in {"outdated", "missing"}
+                else typer.colors.YELLOW
+            )
+            local = row.get("local_version") or row.get("local_version_raw") or "?"
+            latest = row.get("latest_version") or "?"
+            source = row.get("latest_source") or "unknown"
+            typer.echo("")
+            typer.echo(f"  [{typer.style(status.upper(), fg=color)}] {row.get('label') or row.get('binary')}")
+            typer.echo(f"      local {local} · latest {latest} · source {source}")
+            typer.echo(f"      {row.get('message')}")
+            path = row.get("binary_path")
+            if path:
+                typer.echo(typer.style(f"      {path}", dim=True))
+
+    if strict:
+        counts = payload.get("counts") or {}
+        not_verified_or_stale = (
+            int(counts.get("outdated") or 0)
+            + int(counts.get("missing") or 0)
+            + int(counts.get("unknown_local") or 0)
+            + int(counts.get("unknown_latest") or 0)
+        )
+        if not_verified_or_stale > 0:
+            raise typer.Exit(1)
+
+
 @app.command("dashboard")
 def dashboard_cmd(
     host: str = typer.Option("127.0.0.1", help="Bind API"),
@@ -535,7 +816,8 @@ def sync_cmd(
         return
     counts = summary["counts"]
     typer.echo(typer.style("Index zab synchronisé", fg=typer.colors.GREEN, bold=True))
-    typer.echo(f"  Fichier : {path}")
+    typer.echo(f"  Base    : {summary.get('database_path')}")
+    typer.echo(f"  Export  : {path}")
     typer.echo(f"  Version : {summary.get('version')}")
     typer.echo(f"  Orgs    : {counts['orgs']}")
     typer.echo(f"  Projets : {counts['projects']}")
@@ -547,10 +829,10 @@ def sync_cmd(
 @app.command("context-pack")
 def context_pack_cmd(
     *,
-    org: str | None = typer.Option(None, "--org", help="Filtrer sur une organisation"),
-    project: str | None = typer.Option(None, "--project", help="Filtrer sur un projet ou chemin"),
-    query: str | None = typer.Option(None, "--query", "-q", help="Filtrer sur une requête simple"),
-    include: list[str] | None = typer.Option(None, "--include", help="Section à inclure (répétable)"),
+    org: Optional[str] = typer.Option(None, "--org", help="Filtrer sur une organisation"),
+    project: Optional[str] = typer.Option(None, "--project", help="Filtrer sur un projet ou chemin"),
+    query: Optional[str] = typer.Option(None, "--query", "-q", help="Filtrer sur une requête simple"),
+    include: Optional[list[str]] = typer.Option(None, "--include", help="Section à inclure (répétable)"),
     limit: int = typer.Option(80, "--limit", min=1, max=300, help="Nombre maximal de skills"),
     stdout: bool = typer.Option(False, "--stdout", help="Écrire le Markdown complet sur stdout"),
     json_out: bool = typer.Option(False, "--json", help="Affiche le résumé JSON"),
@@ -575,6 +857,60 @@ def context_pack_cmd(
     typer.echo(typer.style("Context Pack généré", fg=typer.colors.GREEN, bold=True))
     typer.echo(f"  Fichier : {path}")
     typer.echo(f"  Taille  : {payload['bytes']} bytes")
+
+
+@app.command("capabilities")
+def capabilities_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Expose le manifeste AI-native Core/CLI/MCP/API/UI de Zab."""
+    payload = get_capabilities()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("zab — capability manifest", bold=True))
+    typer.echo(f"  total    : {payload['summary']['total']}")
+    typer.echo(f"  complete : {payload['summary']['complete']} · partial: {payload['summary']['partial']}")
+    typer.echo("  json     : zab capabilities --json")
+    for cap in payload.get("capabilities") or []:
+        typer.echo(f"  · {cap.get('id')} [{cap.get('status')}] {cap.get('summary')}")
+
+
+@app.command("source-health")
+def source_health_cmd(
+    *,
+    refresh: bool = typer.Option(False, "--refresh", help="Relit explicitement les sources externes supportées"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Expose le Source Health unifié de Zab."""
+    payload = agent_context.source_health(refresh=refresh)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    counts = payload.get("status_counts") or {}
+    typer.echo(typer.style("zab source health", bold=True))
+    typer.echo(f"  sources : {len(payload.get('sources') or [])}")
+    typer.echo("  status  : " + " · ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
+    typer.echo("  json    : zab source-health --json")
+
+
+@app.command("research")
+def research_cmd(
+    query: str = typer.Argument(..., help="Question ou mission à transformer en research packet"),
+    *,
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Nom ou chemin de projet"),
+    mode: str = typer.Option("plan", "--mode", help="plan|debug|review|briefing|handoff"),
+    max_tokens: int = typer.Option(6000, "--max-tokens", min=500, max=50000),
+    refresh: bool = typer.Option(False, "--refresh", help="Relit explicitement les sources externes supportées"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Construit un research packet déterministe, sourcé et freshness-aware."""
+    payload = agent_context.research(query, project=project, mode=mode, max_tokens=max_tokens, refresh=refresh)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(payload.get("context_packet_markdown", "").rstrip())
 
 
 @app.command("features")
@@ -616,11 +952,11 @@ def agent_guide_cmd(
 
 @app.command("inventory")
 def inventory_cmd(
-    section: str = typer.Argument(..., help="skills|connectors|code-tools|models|projects|orgs|memory"),
+    section: str = typer.Argument(..., help="skills|connectors|tools|code-tools|models|projects|orgs|memory"),
     *,
     q: str = typer.Option("", "--q", help="Recherche simple"),
-    tag: str | None = typer.Option(None, "--tag", help="Filtrer par tag quand disponible"),
-    installed: bool | None = typer.Option(None, "--installed/--any-installed", help="Filtrer code-tools installés"),
+    tag: Optional[str] = typer.Option(None, "--tag", help="Filtrer par tag quand disponible"),
+    installed: Optional[bool] = typer.Option(None, "--installed/--any-installed", help="Filtrer code-tools installés"),
     limit: int = typer.Option(50, "--limit", min=1, max=200),
     page: int = typer.Option(1, "--page", min=1),
     refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant de lire l'inventaire"),
@@ -650,7 +986,7 @@ def inventory_cmd(
 
 @app.command("inspect")
 def inspect_cmd(
-    section: str = typer.Argument(..., help="skills|connectors|code-tools|models|projects|orgs|memory"),
+    section: str = typer.Argument(..., help="skills|connectors|tools|code-tools|models|projects|orgs|memory"),
     key: str = typer.Argument(..., help="Identifiant dans l'index"),
     *,
     refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant l'inspection"),
@@ -687,7 +1023,7 @@ def inspect_cmd(
 def search_cmd(
     query: str = typer.Argument("", help="Requête à chercher dans l'index zab"),
     *,
-    section: list[str] | None = typer.Option(None, "--section", help="Section à chercher (répétable)"),
+    section: Optional[list[str]] = typer.Option(None, "--section", help="Section à chercher (répétable)"),
     limit: int = typer.Option(20, "--limit", min=1, max=100),
     refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant la recherche"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
@@ -705,11 +1041,126 @@ def search_cmd(
         typer.echo(f"  · [{row.get('section')}] {name}  {typer.style(str(extra), dim=True)}")
 
 
+@tools_app.command("list")
+def tools_list_cmd(
+    *,
+    q: str = typer.Option("", "--q", help="Recherche simple"),
+    kind: Optional[str] = typer.Option(None, "--kind", help="Filtrer par kind"),
+    status: Optional[str] = typer.Option(None, "--status", help="Filtrer par statut"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="Filtrer par provider"),
+    limit: int = typer.Option(50, "--limit", min=1, max=200),
+    page: int = typer.Option(1, "--page", min=1),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Liste le catalogue des tools actionnables Zab."""
+    payload = tool_catalog.list_tools(page=page, limit=limit, q=q, kind=kind, status=status, provider=provider)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("Catalogue tools", bold=True))
+    typer.echo(
+        f"page {payload['pagination']['page']} · total {payload['pagination']['total']} · limit {payload['pagination']['limit']}"
+    )
+    for row in payload.get("data") or []:
+        typer.echo(
+            f"  · {row.get('id')}  {row.get('status')}  {row.get('primary') or '—'}"
+            f"  {typer.style(str(row.get('availability_tag') or ''), dim=True)}"
+        )
+
+
+@tools_app.command("search")
+def tools_search_cmd(
+    query: str = typer.Argument(..., help="Requête à chercher dans le catalogue tools"),
+    *,
+    limit: int = typer.Option(20, "--limit", min=1, max=100),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Recherche les tools par intention, exemples, commandes et skills liés."""
+    payload = tool_catalog.search_tools(query, limit=limit)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Recherche tools: {query}", bold=True))
+    typer.echo(f"total {payload['total']} · limit {limit}")
+    for row in payload.get("data") or []:
+        typer.echo(f"  · {row.get('id')}  {row.get('status')}  {row.get('label')}")
+
+
+@tools_app.command("inspect")
+def tools_inspect_cmd(
+    tool_id: str = typer.Argument(..., help="Identifiant du tool"),
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Affiche le détail d'un tool actionnable."""
+    payload = tool_catalog.get_tool(tool_id)
+    if not payload:
+        typer.echo(f"tool introuvable: {tool_id}", err=True)
+        raise typer.Exit(1)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).rstrip())
+
+
+@tools_app.command("validate")
+def tools_validate_cmd(
+    *,
+    strict: bool = typer.Option(False, "--strict", help="Retourne un code erreur si les refs sont cassées"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Valide les IDs, mots-clés, références de skills et commandes déclaratives."""
+    payload = tool_catalog.validate_tools(strict=strict)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(typer.style("Validation tools", bold=True))
+        typer.echo(
+            f"total {payload['summary']['total_tools']} · errors {payload['summary']['errors']} · warnings {payload['summary']['warnings']}"
+        )
+        for issue in payload.get("issues") or []:
+            typer.echo(f"  · {issue.get('severity')} {issue.get('tool_id')}: {issue.get('code')} — {issue.get('message')}")
+    if strict and int(payload.get("summary", {}).get("exit_status") or 0) != 0:
+        raise typer.Exit(1)
+
+
+@tools_app.command("check")
+def tools_check_cmd(
+    tool_id: Optional[str] = typer.Argument(None, help="Identifiant du tool à vérifier"),
+    *,
+    all: bool = typer.Option(False, "--all", help="Vérifie tous les tools"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Teste les implementations read-only disponibles pour un tool ou tout le catalogue."""
+    if all and tool_id:
+        typer.echo("--all ne peut pas être combiné avec un tool_id", err=True)
+        raise typer.Exit(1)
+    if not all and not tool_id:
+        typer.echo("précisez un tool_id ou utilisez --all", err=True)
+        raise typer.Exit(1)
+    payload = tool_checks.check_tools() if all else tool_checks.check_tool(str(tool_id or ""))
+    if not payload:
+        typer.echo("tool introuvable", err=True)
+        raise typer.Exit(1)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if all:
+        typer.echo(typer.style("Checks tools", bold=True))
+        typer.echo(
+            f"total {payload['summary']['total']} · ok {payload['summary']['ok']} · warn {payload['summary']['warn']} · fail {payload['summary']['fail']}"
+        )
+        for row in payload.get("tools") or []:
+            typer.echo(f"  · {row.get('tool_id')}  {row.get('status')}  {row.get('status_reason') or ''}")
+    else:
+        typer.echo(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False).rstrip())
+
+
 @skill_app.command("new")
 def skill_new_cmd(
     name: str = typer.Argument(..., help="Slug de la skill ([a-z0-9-])"),
     *,
-    org: str | None = typer.Option(None, "--org", help="Organisation logique (défaut: common)"),
+    org: Optional[str] = typer.Option(None, "--org", help="Organisation logique (défaut: common)"),
     description: str = typer.Option("", "--description", "-d", help="Description courte pour le frontmatter"),
     force: bool = typer.Option(False, "--force", "-f", help="Remplacer un SKILL.md existant"),
     sync: bool = typer.Option(False, "--sync", help="Créer un commit local après création"),
@@ -766,7 +1217,7 @@ def skill_new_cmd(
 def skill_new_global_cmd(
     name: str = typer.Argument(..., help="Slug de la skill globale ([a-z0-9-])"),
     *,
-    org: str | None = typer.Option(None, "--org", help="Organisation logique (défaut: common)"),
+    org: Optional[str] = typer.Option(None, "--org", help="Organisation logique (défaut: common)"),
     description: str = typer.Option("", "--description", "-d", help="Description courte pour le frontmatter"),
     force: bool = typer.Option(False, "--force", "-f", help="Remplacer un SKILL.md existant"),
     sync: bool = typer.Option(False, "--sync", help="Créer un commit local après création"),
@@ -822,9 +1273,9 @@ def skill_new_global_cmd(
 @skill_app.command("list")
 def skill_list_cmd(
     *,
-    org: str | None = typer.Option(None, "--org", help="Filtrer par organisation"),
-    project: str | None = typer.Option(None, "--project", help="Filtrer par projet/source"),
-    query: str | None = typer.Option(None, "--query", "-q", help="Filtrer par texte"),
+    org: Optional[str] = typer.Option(None, "--org", help="Filtrer par organisation"),
+    project: Optional[str] = typer.Option(None, "--project", help="Filtrer par projet/source"),
+    query: Optional[str] = typer.Option(None, "--query", "-q", help="Filtrer par texte"),
     limit: int = typer.Option(200, "--limit", min=1, max=500),
     refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant de lire"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
@@ -940,8 +1391,8 @@ def skill_broadcast_cmd(
 def scan(
     *,
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON (machine)"),
-    root: str | None = typer.Option(None, "--root", help="Sous-chemin sous ~ (HOME), ou chemin absolu contenu dans ~"),
-    dir_path: str | None = typer.Option(
+    root: Optional[str] = typer.Option(None, "--root", help="Sous-chemin sous ~ (HOME), ou chemin absolu contenu dans ~"),
+    dir_path: Optional[str] = typer.Option(
         None,
         "--dir",
         help="Dossier quelconque à scanner (SKILL.md + CLIs + Agentpipe/Codexbar)",
@@ -1006,7 +1457,7 @@ def scan(
         typer.echo("")
         typer.echo(
             typer.style(
-                "ℹ Ce scan n’écrit pas config.yaml. Lancez « zab sync » pour régénérer state.yaml.",
+                "ℹ Ce scan n’écrit pas config.yaml. Lancez « zab sync » pour régénérer l’index Postgres.",
                 fg=typer.colors.CYAN,
             )
         )
@@ -1040,7 +1491,7 @@ def scan(
 def skill_adopt_cmd(
     key: str = typer.Argument(..., help="Clé registre (ex. flowmetrik:ma-skill)"),
     *,
-    canonical: str | None = typer.Option(None, "--canonical", help="Chemin SKILL.md canonique (optionnel)"),
+    canonical: Optional[str] = typer.Option(None, "--canonical", help="Chemin SKILL.md canonique (optionnel)"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
     """Marque une skill comme adoptée dans skills-registry.json."""
@@ -1122,7 +1573,7 @@ def skill_resolve_conflict_cmd(
 @skill_app.command("registry-show")
 def skill_registry_show_cmd(
     *,
-    status: str | None = typer.Option(None, "--status", help="Filtrer par statut registre"),
+    status: Optional[str] = typer.Option(None, "--status", help="Filtrer par statut registre"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
     rows = skills_registry.query_registry(status=status)
@@ -1158,9 +1609,9 @@ def _parse_mcp_target(raw: str) -> McpTarget:
 def add_mcp_cmd(
     name: str = typer.Argument(..., help="Nom du serveur (clé dans mcpServers)"),
     target: str = typer.Option("cursor", "--target", "-t", help="cursor ou desktop (claude-desktop-mcp.json)"),
-    url: str | None = typer.Option(None, "--url", help="URL du serveur MCP (HTTP)"),
-    command: str | None = typer.Option(None, "--command", "-c", help="Commande stdio (ex. npx)"),
-    args: str | None = typer.Option(None, "--args", help="Arguments (quoting shell, ex. -y @scope/mcp)"),
+    url: Optional[str] = typer.Option(None, "--url", help="URL du serveur MCP (HTTP)"),
+    command: Optional[str] = typer.Option(None, "--command", "-c", help="Commande stdio (ex. npx)"),
+    args: Optional[str] = typer.Option(None, "--args", help="Arguments (quoting shell, ex. -y @scope/mcp)"),
     env: list[str] = typer.Option([], "--env", "-e", help="KEY=value pour le bloc env (stdio)"),
     force: bool = typer.Option(False, "--force", "-f", help="Remplacer une entrée existante"),
 ) -> None:
@@ -1222,7 +1673,7 @@ def mempalace_doctor_cmd(
 @mempalace_app.command("mcp-json")
 def mempalace_mcp_json_cmd(
     *,
-    palace: str | None = typer.Option(None, "--palace", help="Répertoire palace explicite"),
+    palace: Optional[str] = typer.Option(None, "--palace", help="Répertoire palace explicite"),
     server_name: str = typer.Option("mempalace", "--name", "-n", help="Clé dans mcpServers"),
     target: str = typer.Option(
         "cursor",
@@ -1260,7 +1711,7 @@ def mempalace_mcp_install_cmd(
     *,
     target: str = typer.Option("cursor", "--target", "-t", help="cursor ou desktop (claude-desktop-mcp.json)"),
     name: str = typer.Option("mempalace", "--name", "-n", help="Clé dans mcpServers"),
-    palace: str | None = typer.Option(None, "--palace", help="Répertoire palace explicite"),
+    palace: Optional[str] = typer.Option(None, "--palace", help="Répertoire palace explicite"),
     force: bool = typer.Option(False, "--force", "-f", help="Remplacer une entrée existante"),
 ) -> None:
     """Enregistre mempalace-mcp dans configs/cursor-mcp.json ou claude-desktop-mcp.json du dépôt skills."""
@@ -1371,13 +1822,110 @@ def conversations_sync_cmd(
     typer.echo(f"  Insérés     : {summary.get('inserted_documents')} docs / {summary.get('inserted_chunks')} chunks")
 
 
+@conversations_app.command("digest")
+def conversations_digest_cmd(
+    *,
+    days: int = typer.Option(1, "--days", min=1, max=14, help="Fenetre locale en jours"),
+    providers: str = typer.Option(
+        "",
+        "--providers",
+        help="Liste virgule : cursor,claude,codex,kimi,hermes,gemini",
+    ),
+    limit: int = typer.Option(80, "--limit", min=1, max=300, help="Nombre maximal d'items affiches"),
+    include_subagents: bool = typer.Option(False, "--include-subagents", help="Inclure les conversations de subagents"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Digest local des conversations recentes, annote avec projets/orgs Zab."""
+    from zab.services.conversation_digest import build_conversation_digest, format_conversation_digest_markdown
+    from zab.services.conversations import parse_providers_arg
+
+    prov_list = [p.strip() for p in providers.split(",") if p.strip()] or None
+    try:
+        prov_set = parse_providers_arg(prov_list)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from e
+
+    payload = build_conversation_digest(
+        days=days,
+        providers=prov_set,
+        limit=limit,
+        include_subagents=include_subagents,
+    )
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(format_conversation_digest_markdown(payload).rstrip())
+
+
+@conversations_app.command("obsidian-daily")
+def conversations_obsidian_daily_cmd(
+    *,
+    date: Optional[str] = typer.Option(None, "--date", help="Jour local YYYY-MM-DD a traiter"),
+    yesterday: bool = typer.Option(False, "--yesterday", help="Traiter la veille dans le fuseau donne"),
+    timezone_name: str = typer.Option("Europe/Paris", "--timezone", help="Fuseau pour la journee locale"),
+    providers: str = typer.Option(
+        "",
+        "--providers",
+        help="Liste virgule : cursor,claude,codex,kimi,hermes,gemini",
+    ),
+    limit: int = typer.Option(200, "--limit", min=1, max=300, help="Nombre maximal de conversations detaillees"),
+    batch_size: int = typer.Option(10, "--batch-size", min=1, max=50, help="Taille des paquets d'analyse locale"),
+    include_subagents: bool = typer.Option(False, "--include-subagents", help="Inclure les conversations de subagents"),
+    once_per_day: bool = typer.Option(False, "--once-per-day", help="No-op si la date cible a deja ete ecrite"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Construit le resultat sans ecrire dans Obsidian"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour hooks/scripts"),
+) -> None:
+    """Ecrit le digest des conversations de la veille dans Obsidian."""
+    from datetime import date as date_cls
+
+    from zab.services.conversation_obsidian_daily import (
+        write_obsidian_conversation_digest,
+        yesterday_in_timezone,
+    )
+    from zab.services.conversations import parse_providers_arg
+
+    prov_list = [p.strip() for p in providers.split(",") if p.strip()] or None
+    try:
+        prov_set = parse_providers_arg(prov_list)
+        target_date = date_cls.fromisoformat(date) if date else None
+        if target_date is None:
+            target_date = yesterday_in_timezone(timezone_name)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from e
+
+    result = write_obsidian_conversation_digest(
+        target_date=target_date,
+        timezone_name=timezone_name,
+        providers=prov_set,
+        limit=limit,
+        batch_size=batch_size,
+        include_subagents=include_subagents,
+        once_per_day=once_per_day,
+        dry_run=dry_run,
+    )
+    if json_out:
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    status = str(result.get("status") or "?")
+    typer.echo(typer.style(f"Digest Obsidian conversations : {status}", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  Date          : {result.get('target_date')}")
+    typer.echo(f"  Conversations : {result.get('shown_conversations', 0)}")
+    typer.echo(f"  Providers     : {result.get('provider_counts', {})}")
+    if result.get("detail_abs"):
+        typer.echo(f"  Detail        : {result.get('detail_abs')}")
+    if result.get("daily_abs"):
+        typer.echo(f"  Daily         : {result.get('daily_abs')}")
+
+
 @memory_app.command("search")
 def memory_search_cmd(
     query: str = typer.Argument(..., help="Texte à chercher dans la mémoire Postgres"),
     *,
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50, help="Nombre de chunks retournés"),
-    source: str | None = typer.Option(None, "--source", help="Filtrer sur une source exacte"),
-    wing: str | None = typer.Option(None, "--wing", help="Filtrer sur un wing (match partiel)"),
+    source: Optional[str] = typer.Option(None, "--source", help="Filtrer sur une source exacte"),
+    wing: Optional[str] = typer.Option(None, "--wing", help="Filtrer sur un wing (match partiel)"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
 ) -> None:
     """Recherche dans la mémoire Postgres (conversations Cursor/Claude/Codex/Kimi, artefacts agents)."""
@@ -1468,7 +2016,7 @@ def add_cli_cmd(
 def add_api_cmd(
     key: str = typer.Argument(..., help="Identifiant du proxy (ex. litellm)"),
     base_url: str = typer.Option(..., "--url", "-u", help="URL de base de l'API"),
-    api_key_env: str | None = typer.Option(None, "--key-env", help="Variable d'environnement pour la clé API"),
+    api_key_env: Optional[str] = typer.Option(None, "--key-env", help="Variable d'environnement pour la clé API"),
 ) -> None:
     """Ajoute une entrée proxies.* dans local-tools.yaml."""
     try:
@@ -1497,8 +2045,8 @@ def add_skill_cmd(
     name: str = typer.Argument(..., help="Slug de la skill à créer"),
     *,
     description: str = typer.Option("", "--description", "-d", help="Description courte"),
-    project: str | None = typer.Option(None, "--project", help="Chemin du projet si skill locale"),
-    org: str | None = typer.Option(None, "--org", help="Organisation pour skill globale"),
+    project: Optional[str] = typer.Option(None, "--project", help="Chemin du projet si skill locale"),
+    org: Optional[str] = typer.Option(None, "--org", help="Organisation pour skill globale"),
     global_scope: bool = typer.Option(False, "--global", help="Forcer placement global"),
     project_scope: bool = typer.Option(False, "--project-scope", help="Forcer placement projet"),
     ai_route: bool = typer.Option(False, "--ai-route", help="Laisser une IA locale choisir global vs projet"),
@@ -1659,9 +2207,9 @@ def agent_bootstrap_cmd(
 @agent_app.command("skills")
 def agent_skills_cmd(
     *,
-    org: str | None = typer.Option(None, "--org", help="Filtrer par organisation"),
-    project: str | None = typer.Option(None, "--project", help="Filtrer par projet/source"),
-    query: str | None = typer.Option(None, "--query", "-q", help="Filtrer par texte"),
+    org: Optional[str] = typer.Option(None, "--org", help="Filtrer par organisation"),
+    project: Optional[str] = typer.Option(None, "--project", help="Filtrer par projet/source"),
+    query: Optional[str] = typer.Option(None, "--query", "-q", help="Filtrer par texte"),
     limit: int = typer.Option(200, "--limit", min=1, max=500),
     refresh: bool = typer.Option(False, "--refresh", help="Exécute zab sync avant de produire le manifeste"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
@@ -1740,7 +2288,7 @@ def _composio_cli_or_die() -> str:
 @composio_app.command("connections")
 def composio_connections_cmd(
     *,
-    toolkit: str | None = typer.Option(None, "--toolkit", help="Filtrer par toolkit slug (gmail, notion, …)"),
+    toolkit: Optional[str] = typer.Option(None, "--toolkit", help="Filtrer par toolkit slug (gmail, notion, …)"),
     active: bool = typer.Option(False, "--active", help="N'afficher que les comptes ACTIVE"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON brute"),
 ) -> None:
@@ -1779,7 +2327,7 @@ def composio_connections_cmd(
 @composio_app.command("whoami")
 def composio_whoami_cmd(
     toolkit: str = typer.Option("gmail", "--toolkit", help="Toolkit slug (gmail, notion…)"),
-    account: str | None = typer.Option(
+    account: Optional[str] = typer.Option(
         None,
         "--account",
         help="Word_id du compte à identifier. Si omis, identifie tous les comptes actifs du toolkit.",
@@ -1818,12 +2366,12 @@ def composio_execute_cmd(
     slug: str = typer.Argument(..., help="Slug du tool (ex. GMAIL_FETCH_EMAILS)"),
     data: str = typer.Option("{}", "--data", "-d", help="Payload JSON ou @fichier.json"),
     *,
-    account: str | None = typer.Option(
+    account: Optional[str] = typer.Option(
         None,
         "--account",
         help="Compte Composio à cibler (alias, word_id ou account id) quand plusieurs comptes existent.",
     ),
-    toolkit: str | None = typer.Option(
+    toolkit: Optional[str] = typer.Option(
         None,
         "--toolkit",
         help="Toolkit slug requis quand --all-accounts est utilisé.",
@@ -1924,12 +2472,12 @@ def composio_call_cmd(
     slug: str = typer.Argument(..., help="Slug du tool (ex. GMAIL_FETCH_EMAILS)"),
     data: str = typer.Option("{}", "--data", "-d", help="Payload JSON ou @fichier.json"),
     *,
-    account: str | None = typer.Option(
+    account: Optional[str] = typer.Option(
         None,
         "--account",
         help="connected_account_id (word_id, ex. gmail_piend-damara). Permet le multi-compte.",
     ),
-    user_id: str | None = typer.Option(None, "--user-id", help="user_id Composio (optionnel)"),
+    user_id: Optional[str] = typer.Option(None, "--user-id", help="user_id Composio (optionnel)"),
 ) -> None:
     """Exécute un tool Composio via la REST `/api/v3/tools/execute/<slug>` avec routage multi-compte."""
     from zab.services.composio_connectors import execute_tool_via_rest
@@ -1960,7 +2508,7 @@ def composio_call_cmd(
 def composio_search_cmd(
     query: list[str] = typer.Argument(..., help="Requêtes en langage naturel"),
     *,
-    toolkits: str | None = typer.Option(None, "--toolkits", help="Slugs séparés par virgule"),
+    toolkits: Optional[str] = typer.Option(None, "--toolkits", help="Slugs séparés par virgule"),
     limit: int = typer.Option(5, "--limit", min=1, max=1000),
 ) -> None:
     """Passthrough vers `composio search`."""
@@ -2001,13 +2549,13 @@ def composio_hint_cmd(
 # ── Cloud Workstation sync helpers ───────────────────────────────────────────
 
 
-def _ws_profiles_arg(profiles: list[str] | None) -> list[str]:
+def _ws_profiles_arg(profiles: Optional[list[str]]) -> list[str]:
     return profiles or ["zab", "dotfiles", "secrets-cli"]
 
 
 @ws_sync_app.command("status")
 def ws_sync_status_cmd(
-    profile: list[str] | None = typer.Option(None, "--profile", "-p", help="Profil à inspecter (répétable). Défaut: tous."),
+    profile: Optional[list[str]] = typer.Option(None, "--profile", "-p", help="Profil à inspecter (répétable). Défaut: tous."),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
     """Statut local/remote des profils de sync Workstation."""
@@ -2038,7 +2586,7 @@ def ws_sync_status_cmd(
 
 @ws_sync_app.command("push")
 def ws_sync_push_cmd(
-    profile: list[str] | None = typer.Option(None, "--profile", "-p", help="Profil à pousser (répétable). Défaut: tous."),
+    profile: Optional[list[str]] = typer.Option(None, "--profile", "-p", help="Profil à pousser (répétable). Défaut: tous."),
     force: bool = typer.Option(False, "--force", help="Pousser même si remote et local ont divergé."),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
@@ -2062,7 +2610,7 @@ def ws_sync_push_cmd(
 
 @ws_sync_app.command("pull")
 def ws_sync_pull_cmd(
-    profile: list[str] | None = typer.Option(None, "--profile", "-p", help="Profil à tirer (répétable). Défaut: tous."),
+    profile: Optional[list[str]] = typer.Option(None, "--profile", "-p", help="Profil à tirer (répétable). Défaut: tous."),
     force: bool = typer.Option(False, "--force", help="Appliquer sans préserver les conflits locaux."),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
@@ -2138,7 +2686,7 @@ def ws_cli_status_cmd(
 @ws_app.command("cli-install-missing")
 def ws_cli_install_missing_cmd(
     dry_run: bool = typer.Option(False, "--dry-run", help="Afficher les installateurs sans exécuter."),
-    name: list[str] | None = typer.Option(None, "--name", "-n", help="Installer seulement ce CLI (répétable)."),
+    name: Optional[list[str]] = typer.Option(None, "--name", "-n", help="Installer seulement ce CLI (répétable)."),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
     """Installe les CLIs manquants connus depuis cli_watchlist."""
@@ -2192,7 +2740,7 @@ def gmail_accounts_cmd(
 def gmail_search_cmd(
     query: str = typer.Argument(..., help="Query Gmail (ex: from:orange subject:invoice)"),
     limit: int = typer.Option(5, "--limit", min=1, max=50),
-    account: str | None = typer.Option(None, "--account", help="Compte spécifique, sinon tous"),
+    account: Optional[str] = typer.Option(None, "--account", help="Compte spécifique, sinon tous"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
     """Recherche Gmail via Composio, sur un compte ou tous."""
@@ -2254,7 +2802,7 @@ def _render_gmail_messages(results: list[dict[str, Any]], limit: int) -> None:
 @gmail_app.command("last")
 def gmail_last_cmd(
     limit: int = typer.Option(3, "--limit", min=1, max=20),
-    account: str | None = typer.Option(None, "--account", help="Compte spécifique, sinon tous"),
+    account: Optional[str] = typer.Option(None, "--account", help="Compte spécifique, sinon tous"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
     """Récupère les derniers emails d'un ou tous les comptes Gmail."""
@@ -2289,6 +2837,26 @@ def gmail_last_cmd(
         return
     _render_gmail_messages(results, limit)
 
+
+@brain_app.command("status")
+def brain_status(json_out: bool = typer.Option(False, "--json", help="Sortie JSON")) -> None:
+    """Affiche le statut du brain Zab."""
+    from zab.services.brain import status
+    data = status()
+    if json_out:
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(yaml.dump(data, allow_unicode=True, sort_keys=False))
+
+@brain_app.command("schema")
+def brain_schema(json_out: bool = typer.Option(False, "--json", help="Sortie JSON")) -> None:
+    """Affiche le schéma du brain Zab."""
+    from zab.services.brain import schema
+    data = schema()
+    if json_out:
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(yaml.dump(data, allow_unicode=True, sort_keys=False))
 
 def main() -> None:
     from zab.user_config import ensure_user_config_exists

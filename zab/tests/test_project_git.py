@@ -62,6 +62,8 @@ def test_project_git_metadata_with_dot_git_dir(monkeypatch, tmp_path_factory) ->
     assert r["git_branch"] == "main"
     assert r["remote_host"] == "github"
     assert "github.com" in (r.get("origin_https") or "")
+    assert r.get("last_activity_at_utc")
+    assert r.get("last_activity_source") in {"git_commit", "git_metadata"}
 
 
 def test_project_git_metadata_no_git(monkeypatch, tmp_path_factory) -> None:
@@ -92,6 +94,8 @@ def test_project_git_metadata_no_git(monkeypatch, tmp_path_factory) -> None:
 
     rows = discover_projects()
     assert rows[0].get("git_repo") is False
+    assert rows[0].get("last_activity_at_utc")
+    assert rows[0].get("last_activity_source") == "files"
 
 
 def test_project_git_metadata_path_only(tmp_path: Path) -> None:
@@ -108,3 +112,4 @@ def test_project_git_metadata_path_only(tmp_path: Path) -> None:
     assert meta["git_repo"] is True
     assert meta["git_branch"] == "dev"
     assert meta["remote_host"] == "gitlab"
+    assert meta["last_activity_at_utc"]

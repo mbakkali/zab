@@ -19,6 +19,7 @@ const en = {
     conversations: 'Conversations',
     plugins: 'Plugins',
     connectors: 'Connectors',
+    catalog: 'Tools Catalog',
     config: 'Configuration',
     skills: 'Skills',
     models: 'Models & agents',
@@ -648,7 +649,8 @@ const en = {
   conversationsView: {
     title: 'Conversations',
     subtitle: 'Aggregate Cursor, Claude Code, Codex, Hermes and other CLI histories.',
-    actions: { refreshChecks: 'Refresh checks', dryRun: 'Dry-run sync', sync: 'Sync' },
+    actions: { refreshChecks: 'Refresh checks', dryRun: 'Dry-run sync', sync: 'Sync', addAiProvider: 'Add AI provider' },
+    filters: { allSources: 'All sources' },
     history: { title: 'Conversation history' },
     search: { placeholder: 'Search conversations…', noResults: 'No results.' },
     empty: {
@@ -682,6 +684,7 @@ const frOverrides = {
     conversations: 'Conversations',
     plugins: 'Plugins',
     connectors: 'Connecteurs',
+    catalog: 'Catalogue tools',
     config: 'Configuration',
     skills: 'Skills',
     models: 'Modèles & agents',
@@ -1313,7 +1316,8 @@ const frOverrides = {
   conversationsView: {
     title: 'Conversations',
     subtitle: 'Agrégation Cursor, Claude Code, Codex, Hermes et autres historiques CLI.',
-    actions: { refreshChecks: 'Rafraîchir checks', dryRun: 'Dry-run sync', sync: 'Synchroniser' },
+    actions: { refreshChecks: 'Rafraîchir checks', dryRun: 'Dry-run sync', sync: 'Synchroniser', addAiProvider: 'Ajouter provider IA' },
+    filters: { allSources: 'Toutes les sources' },
     history: { title: 'Historique des conversations' },
     search: { placeholder: 'Rechercher dans les conversations…', noResults: 'Aucun résultat.' },
     empty: {

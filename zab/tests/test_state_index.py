@@ -51,6 +51,8 @@ def test_sync_state_writes_yaml(tmp_path, monkeypatch):
     assert "acme-alpha" in state["skills"]
     assert state["skills"]["acme-alpha"]["uses_connectors"] == ["linear"]
     assert "linear" in state["connectors"]
+    assert "tools" in state
+    assert "gmail-search" in state["tools"]
     assert "mcps" in state
     assert isinstance(state["mcps"].get("servers"), dict)
     assert "sync_status" in state["mcps"]
@@ -76,6 +78,40 @@ def test_context_pack_cli(monkeypatch, tmp_path: Path):
     assert (tmp_path / ".local" / "share" / "zab" / "context-pack").is_dir()
 
 
+def test_context_pack_includes_projects_orgs_and_knowledge(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root = tmp_path / "projects"
+    project = root / "zab"
+    project.mkdir(parents=True)
+    (project / "pyproject.toml").write_text("[project]\nname = \"zab\"\n", encoding="utf-8")
+    vault = tmp_path / "ObsidianVault"
+    (vault / "00_inbox").mkdir(parents=True)
+    (vault / "10_daily").mkdir(parents=True)
+    (vault / "50_notes").mkdir(parents=True)
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "projects_roots": [str(root)],
+                "cli_watchlist": [],
+                "tracked_env_extra": [],
+                "obsidian": {"vault_path": str(vault)},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    path, text = state_index.build_context_pack(project="zab", query="obsidian second brain", limit=10)
+
+    assert path.is_file()
+    assert "## Projects" in text
+    assert "### zab" in text
+    assert "## Knowledge Sources" in text
+    assert "## Tools Catalog" in text
+    assert "Obsidian Vault" in text
+
+
 def test_agent_friendly_cli_commands(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = CliRunner()
@@ -91,6 +127,42 @@ def test_agent_friendly_cli_commands(monkeypatch, tmp_path: Path):
     inv = runner.invoke(app, ["inventory", "code-tools", "--json", "--limit", "3"])
     assert inv.exit_code == 0
     assert '"pagination"' in inv.stdout
+
+
+def test_tools_catalog_cli_commands(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = CliRunner()
+
+    tools_list = runner.invoke(app, ["tools", "list", "--json", "--limit", "5"])
+    assert tools_list.exit_code == 0
+    list_payload = json.loads(tools_list.stdout)
+    assert list_payload["contract"] == "tools-catalog"
+    assert isinstance(list_payload["data"], list)
+    assert len(list_payload["data"]) >= 1
+
+    tools_search = runner.invoke(app, ["tools", "search", "gmail", "--json"])
+    assert tools_search.exit_code == 0
+    search_payload = json.loads(tools_search.stdout)
+    assert search_payload["contract"] == "tools-catalog-search"
+    assert search_payload["total"] >= 1
+
+    tools_inspect = runner.invoke(app, ["tools", "inspect", "gmail-search", "--json"])
+    assert tools_inspect.exit_code == 0
+    inspect_payload = json.loads(tools_inspect.stdout)
+    assert inspect_payload["contract"] == "tools-catalog-item"
+    assert inspect_payload["tool"]["id"] == "gmail-search"
+
+    tools_validate = runner.invoke(app, ["tools", "validate", "--json"])
+    assert tools_validate.exit_code == 0
+    validate_payload = json.loads(tools_validate.stdout)
+    assert validate_payload["contract"] == "tools-catalog-validation"
+    assert validate_payload["summary"]["total_tools"] >= 1
+
+    tools_check = runner.invoke(app, ["tools", "check", "gmail-search", "--json"])
+    assert tools_check.exit_code == 0
+    check_payload = json.loads(tools_check.stdout)
+    assert check_payload["contract"] == "tools-check"
+    assert check_payload["tool_id"] == "gmail-search"
 
 
 def test_agent_bootstrap_search_security_and_context_stdout(monkeypatch, tmp_path: Path):
@@ -145,3 +217,26 @@ def test_agent_handoff_cli(monkeypatch, tmp_path: Path):
     payload = json.loads(result.stdout)
     assert payload["found"] is True
     assert payload["project"]["name"] == "acme-app"
+
+
+def test_agent_handoff_cli_resolves_repo_without_skills(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root = tmp_path / "projects"
+    project = root / "zab"
+    project.mkdir(parents=True)
+    (project / "pyproject.toml").write_text("[project]\nname = \"zab\"\n", encoding="utf-8")
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(
+        yaml.safe_dump({"projects_roots": [str(root)], "cli_watchlist": [], "tracked_env_extra": []}),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    sync = runner.invoke(app, ["sync", "--json"])
+    assert sync.exit_code == 0
+    result = runner.invoke(app, ["agent", "handoff", "--project", "zab", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["found"] is True
+    assert payload["project"]["name"] == "zab"
+    assert payload["project"]["org"] == "zab"

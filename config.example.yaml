@@ -7,6 +7,11 @@ skills_roots:
 projects_roots:
   - ~/projects
 
+organizations:
+  - work
+  - personal
+  - clients
+
 cli_watchlist:
   - gh
 
@@ -14,6 +19,13 @@ tracked_env_extra: []
 
 # Optional: Postgres memory / conversations archive
 # Set ZAB_MEMORY_DATABASE_URL in ~/.config/zab/.env or your skills/.env
+
+# Optional: Obsidian vault used by daily digests and quick-capture tools
+# obsidian:
+#   vault_path: ~/ObsidianVault
+#   inbox_dir: 00_inbox
+#   daily_dir: 10_daily
+#   daily_template: 90_meta/templates/daily.md
 
 # Optional: remote dev workstation (GCP)
 # workstation:

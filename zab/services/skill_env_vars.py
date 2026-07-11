@@ -56,6 +56,32 @@ def _iter_dotenv_keys(path: Path) -> Iterable[str]:
 
 
 def _candidate_env_files(roots: list[Path], max_depth: int = 4) -> list[Path]:
+    """Find ``.env`` files without traversing the whole filesystem.
+
+    ``Path.rglob('.env')`` walks every descendant before we can apply the depth
+    filter. With broad configured roots such as ``$HOME`` this makes ``zab
+    sync`` spend more than a minute crawling caches, virtualenvs and project
+    dependencies. Use ``os.walk`` instead so ignored directories and depth are
+    pruned before descent.
+    """
+    import os
+
+    ignored_dirs = {
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".git",
+        "dist",
+        "build",
+        ".cache",
+        "Library",
+        "Applications",
+        "Downloads",
+        "Movies",
+        "Music",
+        "Pictures",
+    }
     out: list[Path] = []
     seen: set[Path] = set()
     for root in roots:
@@ -65,16 +91,20 @@ def _candidate_env_files(roots: list[Path], max_depth: int = 4) -> list[Path]:
             continue
         if not root.is_dir():
             continue
-        for env in root.rglob(".env"):
+        root_depth = len(root.parts)
+        for dirpath, dirnames, filenames in os.walk(root):
+            current = Path(dirpath)
+            depth = len(current.parts) - root_depth
+            dirnames[:] = [d for d in dirnames if d not in ignored_dirs]
+            if depth >= max_depth - 1:
+                dirnames[:] = []
+            if ".env" not in filenames:
+                continue
+            env = current / ".env"
             try:
-                rel_parts = env.resolve().relative_to(root).parts
-            except (ValueError, OSError):
+                resolved = env.resolve()
+            except OSError:
                 continue
-            if len(rel_parts) > max_depth:
-                continue
-            if any(part in {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build"} for part in rel_parts):
-                continue
-            resolved = env.resolve()
             if resolved in seen:
                 continue
             seen.add(resolved)

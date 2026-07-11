@@ -52,6 +52,11 @@ SECRET_ALIASES: dict[str, tuple[str, ...]] = {
     # Legacy bridge naming used by flowmetrik-cowork/compta/bridge.
     "QONTO_API_KEY": ("QONTO_SECRET_KEY",),
     "QONTO_ORGANIZATION_SLUG": ("QONTO_ID",),
+    # Common project-management env names found in local/project .env files.
+    "GITLAB_TOKEN": ("GITLAB_PROJECT_MANAGEMENT_TOKEN", "GITLAB_ISSUE_BOT_TOKEN"),
+    "NOTION_TOKEN": ("NOTION_API_KEY", "NOTION_NOTION_SECRET", "NOTION_NOTION_SECRET_DEV"),
+    # Composio exposes multiple key names depending on CLI/MCP setup.
+    "COMPOSIO_API_KEY": ("COMPOSIO_X_CONSUMER_API_KEY",),
 }
 
 SECRET_GROUPS: dict[str, tuple[str, ...]] = {

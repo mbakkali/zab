@@ -19,6 +19,7 @@ import {
   PlayCircleIcon,
   MessageMultiple02Icon,
   Mail01Icon,
+  Hammer,
 } from '@hugeicons/core-free-icons'
 import {
   Dialog,
@@ -34,6 +35,10 @@ import { cn } from '@/lib/utils'
 export type NavId =
   | 'overview'
   | 'system_check'
+  | 'cli_check'
+  | 'capabilities'
+  | 'source_health'
+  | 'research'
   | 'orgs'
   | 'projects'
   | 'tasks_inbox'
@@ -41,6 +46,7 @@ export type NavId =
   | 'conversations'
   | 'plugins'
   | 'connectors'
+  | 'catalog'
   | 'config'
   | 'tests'
   | 'security'
@@ -56,6 +62,10 @@ export type NavId =
 const NAV_ITEMS: { id: NavId; icon: unknown; group: 'main' | 'tools' }[] = [
   { id: 'overview', icon: CompassIcon, group: 'main' },
   { id: 'system_check', icon: TestTube01Icon, group: 'main' },
+  { id: 'cli_check', icon: LockKeyIcon, group: 'main' },
+  { id: 'capabilities', icon: AiBrain02Icon, group: 'main' },
+  { id: 'source_health', icon: TestTube01Icon, group: 'main' },
+  { id: 'research', icon: AiBrain02Icon, group: 'main' },
   { id: 'orgs', icon: Briefcase01Icon, group: 'main' },
   { id: 'projects', icon: Folder02Icon, group: 'main' },
   { id: 'tasks_inbox', icon: CheckListIcon, group: 'main' },
@@ -63,6 +73,7 @@ const NAV_ITEMS: { id: NavId; icon: unknown; group: 'main' | 'tools' }[] = [
   { id: 'conversations', icon: MessageMultiple02Icon, group: 'main' },
   { id: 'plugins', icon: PuzzleIcon, group: 'main' },
   { id: 'connectors', icon: Plug02Icon, group: 'main' },
+  { id: 'catalog', icon: Hammer, group: 'main' },
   { id: 'config', icon: Settings02Icon, group: 'main' },
   { id: 'skills', icon: SparklesIcon, group: 'main' },
   { id: 'models', icon: CpuIcon, group: 'main' },

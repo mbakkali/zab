@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from zab.paths import skills_roots_resolved_from_config, user_home
-from zab.services.project_git import project_git_metadata
-from zab.user_config import projects_roots_resolved, skills_sync_settings
+from zab.services.project_git import project_file_activity, project_git_metadata
+from zab.user_config import organization_slugs_from_user_config, projects_roots_resolved, skills_sync_settings
 
 # Parcours .cursor / .claude : ignorer autant que possible le bruit / la volumétrie
 _PROJECT_SUBTREE_SKIP: frozenset[str] = frozenset(
@@ -26,32 +26,69 @@ _PROJECT_SUBTREE_SKIP: frozenset[str] = frozenset(
     }
 )
 
+_PROJECT_MARKER_FILES: frozenset[str] = frozenset(
+    {
+        ".git",
+        "pyproject.toml",
+        "package.json",
+        "uv.lock",
+        "requirements.txt",
+        "setup.py",
+        "Cargo.toml",
+        "go.mod",
+        "pom.xml",
+        "Makefile",
+        "docker-compose.yml",
+        "compose.yaml",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "package-lock.json",
+        "bun.lockb",
+        "tsconfig.json",
+    }
+)
+
 
 def infer_org_slug(project_dir_name: str) -> str:
     """
     Associe un dossier projet (nom court) à une « organisation » logique (slug minuscule).
-    Règles calquées sur le routing multi-org GCP de l’utilisateur (préfixes de dossiers).
+    Les slugs configurés dans ``organizations`` sont utilisés comme préfixes publics.
     """
     n = project_dir_name.strip().lower().replace(" ", "-")
     if not n:
         return "hors-org"
 
-    if n.startswith("carrefour"):
-        return "carrefour"
+    if n == "zab" or n.startswith("zab-"):
+        return "zab"
 
-    if n == "litellm" or n.startswith("flowmetrik") or "flowmetrik" in n:
-        return "flowmetrik"
-
-    if (
-        n.startswith("upfund")
-        or n in ("upbot", "up")
-        or n.startswith("agileimmo")
-        or n.startswith("projet_agile")
-        or n.startswith("projet-agile")
-    ):
-        return "upfund"
+    for org in organization_slugs_from_user_config():
+        org_slug = org.strip().lower().replace("_", "-")
+        if not org_slug or org_slug == "zab":
+            continue
+        if n == org_slug or n.startswith(f"{org_slug}-") or n.startswith(f"{org_slug}_"):
+            return org_slug
 
     return "hors-org"
+
+
+def _project_markers(project_path: Path) -> list[str]:
+    """Return lightweight project markers present at the repository root."""
+
+    markers: list[str] = []
+    for name in sorted(_PROJECT_MARKER_FILES, key=str.casefold):
+        if (project_path / name).exists():
+            markers.append(name)
+    return markers
+
+
+def _looks_like_project(project_path: Path, skills_paths: list[Path]) -> tuple[bool, list[str]]:
+    markers = _project_markers(project_path)
+    reasons: list[str] = []
+    if skills_paths:
+        reasons.append("workspace_skills")
+    if markers:
+        reasons.append("project_markers")
+    return bool(reasons), reasons
 
 
 def _skill_id_for_path(skill_md: Path) -> str:
@@ -158,6 +195,11 @@ def _project_row(
     workspace_parent: str | None,
 ) -> dict[str, Any]:
     hp = user_home().resolve()
+    markers = _project_markers(path)
+    try:
+        project_id = str(path.resolve().relative_to(projects_root.resolve())).replace("\\", "/")
+    except ValueError:
+        project_id = name
     skills_payload: list[dict[str, Any]] = []
     for md in skills_paths:
         abs_p = str(md.resolve())
@@ -174,15 +216,40 @@ def _project_row(
             }
         )
     row: dict[str, Any] = {
+        "id": project_id,
         "name": name,
         "path": str(path.resolve()),
         "org": org,
         "projects_root": str(projects_root.resolve()),
         "skills": skills_payload,
+        "skills_count": len(skills_payload),
+        "project_markers": markers,
+        "detection_reasons": [
+            reason
+            for reason, enabled in (
+                ("workspace_skills", bool(skills_payload)),
+                ("project_markers", bool(markers)),
+            )
+            if enabled
+        ],
+        "aliases": sorted(
+            {
+                name,
+                name.lower(),
+                name.replace("_", "-"),
+                name.replace("-", "_"),
+                project_id,
+                project_id.lower(),
+                org,
+                path.name,
+            }
+        ),
     }
     if workspace_parent is not None:
         row["workspace_parent"] = workspace_parent
     row.update(project_git_metadata(path))
+    if not row.get("last_activity_at_utc"):
+        row.update(project_file_activity(path))
     return row
 
 
@@ -192,7 +259,7 @@ def discover_projects() -> list[dict[str, Any]]:
 
     - Dossiers immédiats avec au moins un SKILL.md = un projet (racine du workspace).
     - Sous-dossiers immédiats de ceux-ci (un niveau de plus) = projets distincts ; l’org est
-      inférée depuis le dossier parent (ex. ``carrefour/danmdata`` → org ``carrefour``).
+      inférée depuis le dossier parent (ex. ``clients/acme`` → org ``clients``).
     """
     projects_out: list[dict[str, Any]] = []
     for pr in projects_roots_resolved():
@@ -204,7 +271,8 @@ def discover_projects() -> list[dict[str, Any]]:
             continue
         for l1 in _immediate_project_dirs(pr_r):
             skills_l1 = discover_skills_in_project(l1)
-            if skills_l1:
+            include_l1, _ = _looks_like_project(l1, skills_l1)
+            if include_l1:
                 org = infer_org_slug(l1.name)
                 projects_out.append(
                     _project_row(
@@ -218,9 +286,12 @@ def discover_projects() -> list[dict[str, Any]]:
                 )
             for l2 in _immediate_project_dirs(l1):
                 skills_l2 = discover_skills_in_project(l2)
-                if not skills_l2:
+                include_l2, _ = _looks_like_project(l2, skills_l2)
+                if not include_l2:
                     continue
                 org_nested = infer_org_slug(l1.name)
+                if org_nested == "hors-org":
+                    org_nested = l1.name.strip().lower().replace(" ", "-") or "hors-org"
                 projects_out.append(
                     _project_row(
                         name=l2.name,

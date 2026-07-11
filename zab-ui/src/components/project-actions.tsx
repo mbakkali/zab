@@ -2,6 +2,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 
 export type OverviewProject = {
+  id?: string
   name: string
   path: string
   org: string
@@ -13,6 +14,9 @@ export type OverviewProject = {
   remote_host?: string | null
   origin_url?: string | null
   origin_https?: string | null
+  last_activity_at_utc?: string | null
+  last_activity_source?: string | null
+  last_activity_path?: string | null
 }
 
 async function postProjectAction(url: string, body: Record<string, string>): Promise<void> {

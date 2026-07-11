@@ -12,6 +12,7 @@ from typing import Any, Literal
 import yaml
 
 from zab.paths import config_dir, data_dir
+from zab.services import postgres_store as local_db
 from zab.services.skills_scan import collect_skill_md_under_repo, iter_skill_md_recursive
 from zab.user_config import load_user_config, save_user_config, skills_sync_settings, user_config_path
 
@@ -164,22 +165,42 @@ def _normalize_skill_entry(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def load_registry_document() -> dict[str, Any]:
-    p = registry_path()
-    if not p.is_file():
-        return {"version": REGISTRY_VERSION, "updated_at": _utc_now(), "skills": []}
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"version": REGISTRY_VERSION, "updated_at": _utc_now(), "skills": []}
-    if not isinstance(raw, dict):
-        return {"version": REGISTRY_VERSION, "updated_at": _utc_now(), "skills": []}
+def _empty_document() -> dict[str, Any]:
+    return {"version": REGISTRY_VERSION, "updated_at": _utc_now(), "skills": []}
+
+
+def _normalize_document(raw: dict[str, Any]) -> dict[str, Any]:
     skills = raw.get("skills")
     if not isinstance(skills, list):
         skills = []
     raw["skills"] = [_normalize_skill_entry(dict(x)) for x in skills if isinstance(x, dict)]
     raw["version"] = int(raw.get("version") or REGISTRY_VERSION)
+    raw.setdefault("updated_at", _utc_now())
     return raw
+
+
+def _load_registry_document_from_file() -> dict[str, Any]:
+    p = registry_path()
+    if not p.is_file():
+        return _empty_document()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return _empty_document()
+    if not isinstance(raw, dict):
+        return _empty_document()
+    return _normalize_document(raw)
+
+
+def load_registry_document(*, prefer_db: bool = True) -> dict[str, Any]:
+    if prefer_db:
+        doc = local_db.load_skills_registry_document(_empty_document())
+        if doc.get("skills"):
+            return _normalize_document(doc)
+    doc = _load_registry_document_from_file()
+    if prefer_db and doc.get("skills"):
+        local_db.save_skills_registry_document(doc)
+    return doc
 
 
 def save_registry_document(doc: dict[str, Any]) -> Path:
@@ -191,6 +212,7 @@ def save_registry_document(doc: dict[str, Any]) -> Path:
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, p)
+    local_db.save_skills_registry_document(doc)
     return p
 
 
@@ -213,6 +235,10 @@ def _ensure_registry_file_exists() -> Path:
     """Crée skills-registry.json + migration YAML si absent."""
     p = registry_path()
     if p.is_file():
+        return p
+    db_doc = local_db.load_skills_registry_document(_empty_document())
+    if db_doc.get("skills"):
+        save_registry_document(db_doc)
         return p
     doc = _migrate_from_legacy_config()
     save_registry_document(doc)

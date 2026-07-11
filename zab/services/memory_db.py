@@ -10,6 +10,7 @@ from typing import Any
 from zab.paths import skills_root, skills_root_from_config_file_only
 from zab.services.conversations_archive import ensure_conversations_archive_schema
 from zab.services.memory_scan import resolve_mehdi_memory_database_url
+from zab.services.postgres_dsn import resolve_postgres_dsn
 
 _MAX_DOCS = 100
 _MAX_CHUNKS = 100
@@ -117,6 +118,9 @@ def _postgres_failure_metadata(exc: BaseException) -> tuple[str, str | None]:
 
 
 def _url_or_none() -> str | None:
+    url = resolve_postgres_dsn()
+    if url:
+        return url
     for anchor in (skills_root_from_config_file_only(), skills_root()):
         url = resolve_mehdi_memory_database_url(anchor)
         if url:
@@ -518,6 +522,19 @@ def _conversation_provider_sql(alias: str, provider: str | None) -> tuple[str, l
     """Filtre slug dashboard -> SQL sur documents."""
     if not provider or not str(provider).strip():
         return "", []
+    providers = [p.strip() for p in str(provider).split(",") if p.strip()]
+    if len(providers) > 1:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for p in providers:
+            clause, clause_params = _conversation_provider_sql(alias, p)
+            if not clause:
+                continue
+            clauses.append(clause.removeprefix(" AND ").strip())
+            params.extend(clause_params)
+        if not clauses:
+            return "", []
+        return f" AND ({' OR '.join(clauses)})", params
     p = str(provider).strip().lower()
     a = alias
     if p == "cursor":
@@ -548,6 +565,13 @@ def _conversation_archive_provider_sql(alias: str, provider: str | None) -> tupl
     """Filtre slug dashboard -> colonne `provider` de `zab_conversations`."""
     if not provider or not str(provider).strip():
         return "", []
+    providers = [p.strip().lower() for p in str(provider).split(",") if p.strip()]
+    if len(providers) > 1:
+        normalized = ["gemini" if p == "gemini_cli" else p for p in providers]
+        allowed = [p for p in normalized if p in ("cursor", "claude", "codex", "kimi", "hermes", "gemini")]
+        if not allowed:
+            return "", []
+        return (f" AND {alias}.provider = ANY(%s)", [allowed])
     p = str(provider).strip().lower()
     if p == "gemini_cli":
         p = "gemini"

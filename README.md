@@ -5,11 +5,11 @@
 <h1 align="center">zab</h1>
 
 <p align="center">
-  <strong>One command center for your entire AI stack — skills · MCP · scan — local-first.</strong>
+  <strong>One command center for your entire AI stack — skills · MCP · scan — Postgres-backed.</strong>
 </p>
 
 <p align="center">
-  <em>Un seul poste de pilotage pour toute ta stack IA — skills · MCP · scan — 100&nbsp;% local.</em>
+  <em>Un seul poste de pilotage pour toute ta stack IA — skills · MCP · scan — mémoire Postgres.</em>
 </p>
 
 <p align="center">
@@ -30,16 +30,16 @@ You run **Cursor**, **Claude Code**, **Codex**, **Kimi**, **Hermes**, a pile of 
 **zab does not replace your agents.** It is the **sovereign aggregation layer** on your machine:
 
 1. **Scan** what you already have (skills, MCP, connectors, CLIs, projects).
-2. **Index** it into a regenerable local cache (`~/.local/share/zab/state.yaml`).
+2. **Index** it into the canonical Postgres schema (`zab_core`).
 3. **Operate** through a CLI, a web dashboard, and a read-only MCP server so any agent can bootstrap without guessing paths or leaking secrets.
 
-Your data stays under XDG paths (`~/.config/zab`, `~/.local/share/zab`). No cloud dependency for core workflows.
+User intent stays under XDG config paths (`~/.config/zab/config.yaml`, `overrides.yaml`). Generated state, registries, tasks, channels, crons, and search live in Postgres.
 
 → Full brand voice: [docs/BRAND.md](docs/BRAND.md)
 
 ## Dashboard
 
-| Overview — local-first index at a glance | Organizations — skills grouped by org |
+| Overview — Postgres-backed index at a glance | Organizations — skills grouped by org |
 |:---:|:---:|
 | ![Overview](docs/assets/screenshots/overview.png) | ![Organizations](docs/assets/screenshots/organizations.png) |
 
@@ -51,7 +51,7 @@ Your data stays under XDG paths (`~/.config/zab`, `~/.local/share/zab`). No clou
 |:---:|:---:|
 | ![Conversations](docs/assets/screenshots/conversations.png) | ![Configuration](docs/assets/screenshots/configuration-cli-watchlist.png) |
 
-*Optional Postgres memory (`ZAB_MEMORY_DATABASE_URL`) powers conversation archive and full-text search.*
+*Postgres (`ZAB_MEMORY_DATABASE_URL`) is required. Zab stores operational state in `zab_core`; memory/RAG tables remain focused on conversations and documents.*
 
 ## Why zab
 
@@ -59,20 +59,21 @@ If you run multiple AI coding tools, your setup fragments across skills folders,
 
 **zab** makes your existing toolchain **coherent**: discoverable, inspectable, and safe to hand off to any MCP-compatible client.
 
-- **Unify** scattered AI tooling into one regenerable local index
+- **Unify** scattered AI tooling into one regenerable Postgres-backed index
 - **Bootstrap agents** with `agent bootstrap`, `search`, `inspect`, `context-pack`, and `mcp serve`
-- **Stay local-first** with offline-capable caches
+- **Keep user intent local** in editable config files while generated state lives in Postgres
 - **Operate safely** with env tracking, security scans, and no raw secret echo
 - **Bridge ecosystems** via skills broadcast, task aggregation, MemPalace, CodexBar, Composio, Hermes
 
 ## Features
 
-- Local index and full-text search across skills, MCP, projects, connectors, models
+- Postgres full-text search across skills, MCP, projects, connectors, models
 - FastAPI backend + React dashboard
 - Agent bootstrap workflow for Claude Code, Codex, Cursor, and MCP clients
 - Skills registry, broadcast, and cross-CLI sync helpers
 - Security tab with OSV, npm audit, gitleaks presets
-- Optional Postgres memory and conversation archive (`ZAB_MEMORY_DATABASE_URL`)
+- Required Postgres memory and conversation archive (`ZAB_MEMORY_DATABASE_URL`)
+- Local daily conversation digest to Obsidian, with project/org attribution
 - Optional Composio connector aggregation, GCP workstation helpers, cron views
 
 ## Stack & external tools
@@ -88,9 +89,9 @@ zab is a thin orchestration layer: most capabilities come from **local CLIs and 
 | [Pydantic](https://docs.pydantic.dev/) | Request/response models |
 | [httpx](https://www.python-httpx.org/) | HTTP probes (proxies, Composio REST) |
 | [google-auth](https://googleapis.dev/python/google-auth/) | Vertex OpenAI-compatible proxy (SA token refresh) |
-| [PyYAML](https://pyyaml.org/) | `config.yaml`, `state.yaml`, Agentpipe |
+| [PyYAML](https://pyyaml.org/) | `config.yaml`, `overrides.yaml`, Agentpipe |
 | [python-dotenv](https://github.com/theskumar/python-dotenv) | Load skills / zab `.env` at startup |
-| [psycopg](https://www.psycopg.org/) *(optional `memory` extra)* | Postgres memory & conversation archive |
+| [psycopg](https://www.psycopg.org/) | Canonical Postgres store, memory & conversation archive |
 
 ### External CLIs & ecosystems (optional, detected at runtime)
 
@@ -114,7 +115,7 @@ Install only what you use; `zab doctor` and the dashboard **System check** tab r
 
 ## Roadmap — upcoming integrations
 
-These are **planned or in progress** (see `vision.md`, `docs/`, `.hermes/plans/`). Nothing here is required for the core local-first workflow.
+These are **planned or in progress** (see `vision.md`, `docs/`, `.hermes/plans/`). Nothing here is required for the core Postgres-backed workflow.
 
 | Area | Planned work |
 |------|----------------|
@@ -199,7 +200,7 @@ Copy [`config.example.yaml`](config.example.yaml) to `~/.config/zab/config.yaml`
 
 At startup, the API loads `$SKILLS_ROOT/.env` and `~/.config/zab/.env` without overriding variables already set in your shell.
 
-### Optional memory (Postgres)
+### Required Postgres
 
 ```bash
 uv sync --extra memory
@@ -213,12 +214,21 @@ ZAB_MEMORY_DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/zab_memory
 
 Legacy alias `MEHDI_MEMORY_DATABASE_URL` is still supported.
 
+Create/migrate Zab’s operational schema, then import the previous local caches:
+
+```bash
+zab db migrate --json
+zab db import-legacy --json
+```
+
+The import command reads the previous SQLite database (`~/.local/share/zab/zab.db`) and remaining JSON/YAML caches into Postgres. SQLite databases owned by external tools such as Hermes/Cursor may still be read as source data, but SQLite is no longer a Zab runtime fallback.
+
 ## CLI overview
 
 | Command | Description |
 |---------|-------------|
 | `zab doctor` | Check toolchain and optional config |
-| `zab sync` | Rebuild local index (`~/.local/share/zab/state.yaml`) |
+| `zab sync` | Rebuild the Postgres-backed index (`zab_core`) |
 | `zab dashboard` | Start API + SPA on port 8742 |
 | `zab features --json` | List capabilities, commands, and API routes |
 | `zab agent bootstrap --json` | Recommended agent entrypoint |
@@ -227,8 +237,12 @@ Legacy alias `MEHDI_MEMORY_DATABASE_URL` is still supported.
 | `zab context-pack --stdout` | Export a Markdown context pack |
 | `zab mcp serve` | Read-only MCP stdio server for agents |
 | `zab security status --json` | Local security status without raw secrets |
+| `zab conversations obsidian-daily --yesterday` | Write yesterday's local agent conversation digest to Obsidian |
 
 Run `zab features` for the full command catalog.
+
+Daily conversation digests are documented in
+[docs/conversation-daily-obsidian.md](docs/conversation-daily-obsidian.md).
 
 ## For coding agents
 
@@ -244,7 +258,7 @@ zab context-pack --query "deployment" --stdout
 
 For MCP clients, run `zab mcp serve` and use the read-only tools (`search`, `inspect`).
 
-Rules: use JSON outputs, never print raw secrets, treat `state.yaml` as generated cache and `config.yaml` as user intent.
+Rules: use JSON outputs, never print raw secrets, treat Postgres `zab_core` as generated state and `config.yaml` / `overrides.yaml` as user intent.
 
 ## Security model
 

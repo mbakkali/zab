@@ -37,12 +37,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { SidebarNav, MobileNavDrawer, type NavId } from '@/components/sidebar-nav'
 import { ConnectorsView } from '@/components/connectors-view'
+import { CliCheckView } from '@/components/cli-check-view'
 import { ConfigView } from '@/components/config-view'
 import { SkillsView } from '@/components/skills-view'
 import { ProjectsView } from '@/components/projects-view'
 import { TasksInboxView } from '@/components/tasks-inbox-view'
 import { ConversationsView } from '@/components/conversations-view'
 import { WorkstationView } from '@/components/workstation-view'
+import { CapabilitiesView } from '@/components/capabilities-view'
+import { SourceHealthView } from '@/components/source-health-view'
+import { ResearchView } from '@/components/research-view'
+import { ToolsCatalogView } from '@/components/tools-catalog-view'
 import CronsView from '@/components/crons-view'
 import { ChannelsView, type ChannelItem } from '@/components/channels-view'
 import { vscodeFileHref } from '@/lib/env-open'
@@ -75,6 +80,7 @@ type McpOverviewBlock = {
 }
 
 type OverviewProject = {
+  id?: string
   name: string
   path: string
   org: string
@@ -86,6 +92,9 @@ type OverviewProject = {
   remote_host?: string | null
   origin_url?: string | null
   origin_https?: string | null
+  last_activity_at_utc?: string | null
+  last_activity_source?: string | null
+  last_activity_path?: string | null
 }
 
 type Overview = {
@@ -100,6 +109,21 @@ type Overview = {
   orgs: {
     org: string
     skills: { id: string; path: string; source?: string; project?: string }[]
+    projects?: {
+      id?: string
+      name?: string
+      path?: string
+      workspace_parent?: string | null
+      skills_count?: number
+      org?: string
+      git_repo?: boolean
+      git_branch?: string | null
+      remote_host?: string | null
+      last_activity_at_utc?: string | null
+      last_activity_source?: string | null
+      last_activity_path?: string | null
+    }[]
+    projects_count?: number
     skills_repo_root?: string
   }[]
   plugin_bundles: { id: string; path: string; skill_count: number; fs_path?: string }[]
@@ -209,19 +233,40 @@ function useJobRunner() {
 }
 
 const VALID_TABS: NavId[] = [
-  'overview', 'system_check', 'orgs', 'projects', 'tasks_inbox', 'channels', 'conversations', 'plugins', 'connectors', 'config',
-  'tests', 'security', 'exports', 'memory', 'ide', 'models', 'workstation', 'hermes', 'skills', 'crons',
+  'overview', 'system_check', 'cli_check', 'capabilities', 'source_health', 'research', 'orgs', 'projects', 'tasks_inbox', 'channels', 'conversations', 'plugins', 'connectors', 'config',
+  'tests', 'security', 'exports', 'memory', 'ide', 'models', 'workstation', 'hermes', 'skills', 'catalog', 'crons',
 ]
 
-/** Accepte `#conversations`, `#/conversations`, `#conversations?…` pour le SPA hash routing. */
-function parseLocationHashToNavId(): NavId | null {
+type HashRoute = {
+  tab: NavId | null
+  id: string | null
+}
+
+function encodeRouteId(id?: string | null): string {
+  if (!id) return ''
+  return id.split('/').map((part) => encodeURIComponent(part)).join('/')
+}
+
+/** Accepte `#projects/clients/acme`, `#/orgs/clients`, `#conversations?…`. */
+function parseLocationHashToRoute(): HashRoute {
   let raw = window.location.hash.replace(/^#/, '').trim()
-  if (!raw) return null
+  if (!raw) return { tab: null, id: null }
   if (raw.startsWith('/')) raw = raw.slice(1)
-  const segment = (raw.split(/[/?]/)[0] ?? '').trim()
-  if (!segment) return null
+  const beforeQuery = raw.split(/[?]/)[0] ?? ''
+  const [segment, ...rest] = beforeQuery.split('/')
+  if (!segment) return { tab: null, id: null }
   const id = segment as NavId
-  return VALID_TABS.includes(id) ? id : null
+  if (!VALID_TABS.includes(id)) return { tab: null, id: null }
+  const rawRouteId = rest.join('/').trim()
+  let routeId: string | null = null
+  if (rawRouteId) {
+    try {
+      routeId = decodeURIComponent(rawRouteId)
+    } catch {
+      routeId = rawRouteId
+    }
+  }
+  return { tab: id, id: routeId }
 }
 
 export default function App() {
@@ -269,20 +314,30 @@ export default function App() {
   const [skillContent, setSkillContent] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
 
-  const [tab, setTab] = useState<NavId>(() => parseLocationHashToNavId() ?? 'overview')
+  const initialRoute = useMemo(() => parseLocationHashToRoute(), [])
+  const [tab, setTab] = useState<NavId>(() => initialRoute.tab ?? 'overview')
+  const [routeId, setRouteId] = useState<string | null>(() => initialRoute.id)
   const [scanTools, setScanTools] = useState<ScanToolsPayload | null>(null)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
-  const navigateTab = useCallback((id: NavId) => {
+  const navigateRoute = useCallback((id: NavId, entityId?: string | null) => {
     setTab(id)
-    window.location.hash = id
+    setRouteId(entityId || null)
+    window.location.hash = entityId ? `${id}/${encodeRouteId(entityId)}` : id
     setMobileNavOpen(false)
   }, [])
 
+  const navigateTab = useCallback((id: NavId) => {
+    navigateRoute(id, null)
+  }, [navigateRoute])
+
   useEffect(() => {
     const handler = () => {
-      const id = parseLocationHashToNavId()
-      if (id) setTab(id)
+      const route = parseLocationHashToRoute()
+      if (route.tab) {
+        setTab(route.tab)
+        setRouteId(route.id)
+      }
     }
     window.addEventListener('hashchange', handler)
     return () => window.removeEventListener('hashchange', handler)
@@ -424,6 +479,12 @@ export default function App() {
                 <span className="text-muted-foreground shrink-0">zab</span>
                 <span className="text-muted-foreground shrink-0">/</span>
                 <span className="truncate font-medium tracking-tight">{tabTitle}</span>
+                {routeId ? (
+                  <>
+                    <span className="text-muted-foreground shrink-0">/</span>
+                    <span className="text-muted-foreground truncate font-mono text-xs">{routeId}</span>
+                  </>
+                ) : null}
               </div>
             </div>
             <div className="text-muted-foreground flex min-w-0 max-w-[42%] flex-shrink-0 items-center justify-end gap-2 sm:max-w-[48%] md:max-w-[55%] lg:max-w-md">
@@ -456,6 +517,11 @@ export default function App() {
               />
             )}
             {tab === 'system_check' && <SystemCheckSection />}
+            {tab === 'cli_check' && <CliCheckView />}
+            {tab === 'capabilities' && <CapabilitiesView />}
+            {tab === 'source_health' && <SourceHealthView />}
+            {tab === 'research' && <ResearchView />}
+            {tab === 'catalog' && <ToolsCatalogView />}
             {tab === 'channels' && (
               <ChannelsView
                 orgs={overview?.orgs}
@@ -466,6 +532,8 @@ export default function App() {
             {tab === 'orgs' && (
               <OrgsSection
                 overview={overview}
+                activeOrgId={routeId}
+                onOpenProject={(projectId) => navigateRoute('projects', projectId)}
                 onJump={navigateTab}
                 onOpenSkill={(path) => {
                   navigateTab('skills')
@@ -477,6 +545,8 @@ export default function App() {
             {tab === 'projects' && (
               <ProjectsView
                 overview={overview}
+                activeProjectId={routeId}
+                onOpenOrg={(org) => navigateRoute('orgs', org)}
                 miningProjectPath={miningProjectPath}
                 onMineMemory={handleMineProjectMemory}
                 onRunSecurityScan={(preset, projectPath) => {
@@ -1051,8 +1121,8 @@ function OverviewSection({
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {['skills', 'mcp_servers', 'connectors', 'code_tools', 'memory_sources'].map((key) => (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+            {['skills', 'mcp_servers', 'connectors', 'code_tools', 'tools', 'memory_sources'].map((key) => (
               <div key={key} className="rounded-lg border border-zinc-200 px-3 py-2">
                 <p className="text-lg font-semibold">{stateSummary?.counts?.[key] ?? '—'}</p>
                 <p className="text-muted-foreground text-[11px]">{key}</p>
@@ -1146,31 +1216,62 @@ function QuickJump({
   )
 }
 
+function formatActivityDate(value?: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(d)
+}
+
+function activitySourceLabel(value?: string | null): string {
+  if (value === 'git_commit') return 'git'
+  if (value === 'git_metadata') return 'git meta'
+  if (value === 'files') return 'fichiers'
+  return 'activité'
+}
+
 function OrgSkillsCard({
   org,
   skills,
+  projects,
+  active,
   skillsRepoRoot,
   skillsRoot,
   onOpenSkill,
+  onOpenProject,
 }: {
   org: string
   skills: Overview['orgs'][number]['skills']
+  projects?: NonNullable<Overview['orgs'][number]['projects']>
+  active?: boolean
   skillsRepoRoot?: string
   skillsRoot: string | null
   onOpenSkill: (path: string) => void
+  onOpenProject: (id: string) => void
 }) {
   const { t } = useI18n()
-  const [expanded, setExpanded] = useState(() => skills.length <= 5)
+  const projectRows = [...(projects ?? [])].sort((a, b) => {
+    const bt = b.last_activity_at_utc ? Date.parse(b.last_activity_at_utc) : 0
+    const at = a.last_activity_at_utc ? Date.parse(a.last_activity_at_utc) : 0
+    if (bt !== at) return bt - at
+    return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
+  })
+  const [expanded, setExpanded] = useState(() => projectRows.length <= 6 && skills.length <= 5)
+  useEffect(() => {
+    if (active) setExpanded(true)
+  }, [active])
   const toggle = useCallback(() => setExpanded((e) => !e), [])
   return (
-    <Card>
+    <Card className={active ? 'border-zinc-900 ring-1 ring-zinc-900' : undefined}>
       <CardHeader className="flex flex-row items-center gap-3 pb-2">
         <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-white">
           <HugeiconsIcon icon={Folder02Icon} size={22} />
         </div>
         <div className="min-w-0 flex-1">
           <CardTitle className="text-lg">{org}</CardTitle>
-          <CardDescription>{skills.length} skills</CardDescription>
+          <CardDescription>
+            {projectRows.length} projet{projectRows.length > 1 ? 's' : ''} · {skills.length} skills
+          </CardDescription>
         </div>
         <button
           type="button"
@@ -1193,7 +1294,57 @@ function OrgSkillsCard({
         </button>
       </CardHeader>
       {expanded ? (
-        <CardContent className="pt-0">
+        <CardContent className="space-y-3 pt-0">
+          <div>
+            <p className="text-muted-foreground mb-1.5 text-[10px] font-semibold uppercase">Projets</p>
+            {projectRows.length > 0 ? (
+              <ul className="list-none space-y-1 pl-0 text-xs">
+                {projectRows.slice(0, 12).map((p) => (
+                  <li key={p.path || p.name} className="min-w-0 rounded-md border border-zinc-200/70 dark:border-zinc-800">
+                    <button
+                      type="button"
+                      className="block w-full px-2 py-1.5 text-left transition hover:bg-muted/60"
+                      onClick={() => {
+                        const projectId = p.id || p.name || p.path
+                        if (projectId) onOpenProject(projectId)
+                      }}
+                    >
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium">{p.name || 'Projet'}</p>
+                        <p className="text-muted-foreground truncate font-mono text-[10px]">
+                          {p.path ? shortenHomeInPath(p.path) : p.workspace_parent || ''}
+                        </p>
+                      </div>
+                      <span className="text-muted-foreground shrink-0 text-[10px]" title={p.last_activity_at_utc || undefined}>
+                        {formatActivityDate(p.last_activity_at_utc)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                      {p.org && p.org !== org ? <span className="rounded bg-muted px-1 py-0.5">{p.org}</span> : null}
+                      {p.git_repo ? (
+                        <span className="rounded bg-emerald-100 px-1 py-0.5 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
+                          git{p.git_branch ? ` · ${p.git_branch}` : ''}
+                        </span>
+                      ) : (
+                        <span>{t('projects.card.noGit')}</span>
+                      )}
+                      <span>{p.skills_count ?? 0} skill{(p.skills_count ?? 0) !== 1 ? 's' : ''}</span>
+                      {p.last_activity_source ? <span>{activitySourceLabel(p.last_activity_source)}</span> : null}
+                    </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted-foreground text-xs">Aucun projet rattaché.</p>
+            )}
+            {projectRows.length > 12 ? (
+              <p className="text-muted-foreground mt-1 text-[10px]">+{projectRows.length - 12} autres projets</p>
+            ) : null}
+          </div>
+          <div>
+            <p className="text-muted-foreground mb-1.5 text-[10px] font-semibold uppercase">Skills</p>
           <ul className="list-none space-y-0.5 pl-0 text-xs">
             {skills.map((s) => {
               const vsc = vscodeFileHrefForSkill(s.path, skillsRepoRoot, skillsRoot)
@@ -1231,6 +1382,7 @@ function OrgSkillsCard({
               )
             })}
           </ul>
+          </div>
         </CardContent>
       ) : null}
     </Card>
@@ -1240,31 +1392,40 @@ function OrgSkillsCard({
 function OrgsSection({
   overview,
   onOpenSkill,
+  activeOrgId,
+  onOpenProject,
   onJump,
 }: {
   overview: Overview | null
   onOpenSkill: (path: string) => void
+  activeOrgId?: string | null
+  onOpenProject: (id: string) => void
   onJump: (id: NavId) => void
 }) {
   const { t } = useI18n()
   if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
+  const selectedOrg = activeOrgId ? overview.orgs.find((o) => o.org === activeOrgId) : undefined
+  const visibleOrgs = selectedOrg ? [selectedOrg] : overview.orgs
   return (
     <div className="space-y-6">
       <header>
         <h2 className="text-2xl font-semibold tracking-tight">{t('orgs.title')}</h2>
         <p className="text-muted-foreground text-sm">
-          {t('orgs.subtitleCount', { count: String(overview.orgs.length) })}
+          {t('orgs.subtitleCount', { count: String(visibleOrgs.length) })}
         </p>
       </header>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {overview.orgs.map((o) => (
+        {visibleOrgs.map((o) => (
           <OrgSkillsCard
             key={o.org}
             org={o.org}
             skills={o.skills}
+            projects={o.projects}
+            active={activeOrgId === o.org}
             skillsRepoRoot={o.skills_repo_root}
             skillsRoot={overview.skills_root}
             onOpenSkill={onOpenSkill}
+            onOpenProject={onOpenProject}
           />
         ))}
       </div>
@@ -2294,8 +2455,8 @@ function MemorySection({
           {memorySearchResults.length > 0 ? (
             <div className="space-y-3">
               <p className="text-muted-foreground text-xs">{memorySearchResults.length} résultat(s). Cliquez sur “Voir la conversation” pour ouvrir les chunks du document.</p>
-              {memorySearchResults.map((r) => (
-                <article key={r.chunk_id} className="rounded-xl border border-zinc-200 p-3 text-xs dark:border-zinc-800">
+              {memorySearchResults.map((r, index) => (
+                <article key={`${r.document_id}:${r.chunk_id}:${r.chunk_index}:${index}`} className="rounded-xl border border-zinc-200 p-3 text-xs dark:border-zinc-800">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
                       {r.source}
@@ -2352,8 +2513,8 @@ function MemorySection({
                   onChange={(e) => setProjectScanPath(e.target.value)}
                 >
                   {sortedProjects.length === 0 ? <option value="">Aucun projet détecté</option> : null}
-                  {sortedProjects.map((p) => (
-                    <option key={p.path} value={p.path}>
+                  {sortedProjects.map((p, index) => (
+                    <option key={`${p.org}:${p.name}:${p.path}:${index}`} value={p.path}>
                       {p.org}/{p.name} — {shortenHomeInPath(p.path)}
                     </option>
                   ))}
@@ -2478,8 +2639,8 @@ function MemorySection({
             </p>
           ) : (
             <ul className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-              {sortedProjects.map((p) => (
-                <li key={p.path} className="flex items-start gap-2 text-sm">
+              {sortedProjects.map((p, index) => (
+                <li key={`${p.org}:${p.name}:${p.path}:${index}`} className="flex items-start gap-2 text-sm">
                   <input
                     type="checkbox"
                     className="mt-1 size-4 shrink-0 rounded border-zinc-300"
@@ -2843,8 +3004,8 @@ function IdeSection({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {codeTools.map((tool) => (
-                  <TableRow key={tool.key}>
+                {codeTools.map((tool, index) => (
+                  <TableRow key={`${tool.key}:${tool.id}:${tool.binary ?? ''}:${index}`}>
                     <TableCell className="font-medium text-xs">{tool.display_name ?? tool.id}</TableCell>
                     <TableCell className="font-mono text-xs">{tool.provider ?? '—'}</TableCell>
                     <TableCell className="text-xs">{tool.installed ? t('memory.installed') : t('memory.absent')}</TableCell>
@@ -2867,8 +3028,8 @@ function IdeSection({
                 <div>
                   <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">Commandes zab</p>
                   <ul className="space-y-1">
-                    {scanTools.cli_commands.map((c) => (
-                      <li key={c.id} className="flex items-center gap-2 text-xs">
+                    {scanTools.cli_commands.map((c, index) => (
+                      <li key={`${c.id}:${c.name}:${index}`} className="flex items-center gap-2 text-xs">
                         <code className="bg-muted rounded px-1.5 py-0.5 font-mono">{c.name}</code>
                         <span className="text-muted-foreground">{c.description}</span>
                       </li>
@@ -2878,8 +3039,8 @@ function IdeSection({
                 <div>
                   <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">Scripts ({scanTools.scripts.length})</p>
                   <ul className="space-y-1 max-h-64 overflow-auto">
-                    {scanTools.scripts.map((s) => (
-                      <li key={s.id} className="flex items-start gap-2 text-xs">
+                    {scanTools.scripts.map((s, index) => (
+                      <li key={`${s.id}:${s.path}:${index}`} className="flex items-start gap-2 text-xs">
                         <code className="bg-muted rounded px-1.5 py-0.5 font-mono shrink-0">{s.name}</code>
                         <span className="text-muted-foreground line-clamp-2">{s.description}</span>
                         <a

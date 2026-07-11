@@ -10,6 +10,7 @@
     "conversations": "Conversations",
     "plugins": "Plugins",
     "connectors": "Connectors",
+    "catalog": "Tools Catalog",
     "config": "Configuration",
     "skills": "Skills",
     "models": "Models & agents",
@@ -715,7 +716,11 @@
     "actions": {
       "refreshChecks": "Refresh checks",
       "dryRun": "Dry-run sync",
-      "sync": "Sync"
+      "sync": "Sync",
+      "addAiProvider": "Add AI provider"
+    },
+    "filters": {
+      "allSources": "All sources"
     },
     "history": {
       "title": "Conversation history"

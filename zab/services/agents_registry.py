@@ -97,6 +97,8 @@ def list_codexbar_agents() -> dict[str, Any]:
         if not isinstance(pid, str) or not pid.strip():
             continue
         pid = pid.strip()
+        provider_source = item.get("source") if isinstance(item.get("source"), str) else None
+        requires_cli = provider_source not in {"api", "oauth", "http", "remote"}
         cli_path, on_path, src = _resolve_cli_for_provider(pid, overrides)
         row: dict[str, Any] = {
             "id": pid,
@@ -104,9 +106,10 @@ def list_codexbar_agents() -> dict[str, Any]:
             "cli_path": cli_path,
             "on_path": on_path,
             "cli_source": src,
+            "requires_cli": requires_cli,
         }
-        if isinstance(item.get("source"), str):
-            row["provider_source"] = item["source"]
+        if provider_source:
+            row["provider_source"] = provider_source
         agents.append(row)
 
     agents.sort(key=lambda x: str(x["id"]).lower())

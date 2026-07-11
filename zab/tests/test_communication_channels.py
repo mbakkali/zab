@@ -14,6 +14,46 @@ from zab.services import communication_channels as cc
 # CLASSES DE MOCK POUR PSYCOPG / POSTGRESQL
 # ==========================================
 
+
+def test_hermes_channels_snapshot_reads_config_and_directory(tmp_path: Path) -> None:
+    hermes = tmp_path / ".hermes"
+    hermes.mkdir()
+    (hermes / "config.yaml").write_text(
+        """
+communication_channels:
+  enabled: true
+  default_org: personal
+  channels:
+    - id: telegram-personal
+      label: Telegram
+      type: telegram
+      connector: telegram
+      enabled: false
+platform_toolsets:
+  telegram:
+    - hermes-telegram
+""",
+        encoding="utf-8",
+    )
+    (hermes / "channel_directory.json").write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-06-09T10:00:00",
+                "platforms": {
+                    "telegram": [{"id": "123", "name": "Alex", "type": "dm"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = cc.hermes_channels_snapshot(hermes)
+
+    assert snap["enabled"] is True
+    assert snap["channels"][0]["id"] == "telegram-personal"
+    assert snap["platform_toolsets"]["telegram"] == ["hermes-telegram"]
+    assert snap["directory_counts"] == {"telegram": 1}
+
 class MockCursor:
     def __init__(self, rows=None):
         self.rows = rows or []

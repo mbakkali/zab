@@ -1,13 +1,26 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Mail01Icon,
-  RefreshIcon,
-  Add01Icon,
-  MessageMultiple02Icon,
-  Settings02Icon,
-} from '@hugeicons/core-free-icons'
+  AlertCircle,
+  AlertTriangle,
+  Archive,
+  Bot,
+  CheckCircle2,
+  ChevronRight,
+  Circle,
+  ClipboardList,
+  ExternalLink,
+  Inbox,
+  Loader2,
+  Mail,
+  MessageCircle,
+  MessagesSquare,
+  Plus,
+  RefreshCw,
+  Settings,
+  ShieldCheck,
+  Tags,
+} from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -16,7 +29,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Loader2, CheckCircle2, AlertCircle, AlertTriangle, PauseCircle } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 export type ChannelSyncSummary = {
   unread_count: number
@@ -27,21 +40,67 @@ export type ChannelSyncSummary = {
 export type ChannelItem = {
   id: string
   label: string
-  type: 'email' | 'whatsapp' | 'slack' | 'telegram'
+  type: 'email' | 'whatsapp' | 'slack' | 'telegram' | string
   connector: string
   org: string
-  email_address?: string
+  email_address?: string | null
+  address?: string | null
   enabled: boolean
   status?: 'ok' | 'error' | 'pending' | 'degraded' | 'disabled'
   reason?: string | null
   last_synced_at?: string
   sync_summary?: ChannelSyncSummary
+  auth?: Record<string, unknown>
+  credentials?: Record<string, unknown>
+  documentation?: string
+}
+
+type ChannelAction = {
+  id: string
+  channel_id: string
+  channel_label: string
+  type: string
+  sender: string
+  subject?: string
+  content: string
+  date: string
+  url?: string
+  org: string
+  status: 'pending' | 'dismissed' | 'converted' | string
+  obsidian_noted?: boolean
 }
 
 type ChannelsPayload = {
   generated_at_utc: string
   channels: ChannelItem[]
+  action_items?: ChannelAction[]
   total_actions_count: number
+}
+
+type HermesDirectoryEntry = {
+  id: string
+  name: string
+  type?: string
+  thread_id?: string | null
+  guild?: string
+}
+
+type HermesSnapshot = {
+  home: string
+  config_path: string
+  config_present: boolean
+  config_error?: string | null
+  enabled: boolean
+  default_org?: string | null
+  channels: ChannelItem[]
+  platform_toolsets: Record<string, string[]>
+  platforms: Record<string, unknown>
+  directory_path: string
+  directory_present: boolean
+  directory_error?: string | null
+  directory_updated_at?: string | null
+  directory_counts: Record<string, number>
+  directory_platforms: Record<string, HermesDirectoryEntry[]>
 }
 
 type OrgItem = {
@@ -55,31 +114,106 @@ interface ChannelsViewProps {
   onOpenConnectorsConfig?: (channel: ChannelItem) => void
 }
 
+const CHANNEL_TYPES = ['email', 'whatsapp', 'slack', 'telegram'] as const
+
+function channelIcon(type: string) {
+  if (type === 'email') return Mail
+  if (type === 'slack') return MessagesSquare
+  if (type === 'telegram') return MessagesSquare
+  if (type === 'whatsapp') return MessageCircle
+  return Inbox
+}
+
+function channelTone(type: string) {
+  if (type === 'email') return 'bg-blue-50 text-blue-700 border-blue-200'
+  if (type === 'whatsapp') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  if (type === 'slack') return 'bg-violet-50 text-violet-700 border-violet-200'
+  if (type === 'telegram') return 'bg-sky-50 text-sky-700 border-sky-200'
+  return 'bg-zinc-50 text-zinc-700 border-zinc-200'
+}
+
+function connectorForType(type: string) {
+  if (type === 'email') return 'gmail'
+  if (type === 'whatsapp') return 'evolution-api'
+  if (type === 'slack') return 'slack'
+  if (type === 'telegram') return 'telegram'
+  return type
+}
+
+function statusMeta(status?: ChannelItem['status']) {
+  if (status === 'ok') return { label: 'Actif', icon: CheckCircle2, cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+  if (status === 'degraded') return { label: 'À configurer', icon: AlertTriangle, cls: 'bg-amber-50 text-amber-700 border-amber-200' }
+  if (status === 'disabled') return { label: 'Désactivé', icon: Circle, cls: 'bg-zinc-50 text-zinc-600 border-zinc-200' }
+  return { label: 'Erreur', icon: AlertCircle, cls: 'bg-red-50 text-red-700 border-red-200' }
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return 'Jamais'
+  try {
+    return new Date(value).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return value
+  }
+}
+
+function humanizeReason(reason?: string | null): string {
+  if (!reason) return ''
+  const r = reason.toLowerCase()
+  if (r.includes('gog_oauth_missing') || r.includes('credentials missing')) return 'OAuth gog non configuré'
+  if (r.includes('gog_cli_not_installed')) return 'CLI gog absente'
+  if (r.includes('evolution_env_incomplete')) return 'Variables Evolution manquantes'
+  if (r.includes('composio_not_authenticated') || r.includes('401')) return 'Composio non authentifié'
+  if (r.includes('composio_cli_not_installed')) return 'CLI composio absente'
+  if (r.includes('no_fetcher_for_type:slack')) return 'Fetcher Slack non branché côté Zab'
+  if (r.startsWith('no_fetcher_for_type:')) return `Aucun fetcher pour ${reason.split(':')[1]}`
+  return reason.length > 180 ? `${reason.slice(0, 180)}…` : reason
+}
+
+function channelAddress(channel: ChannelItem) {
+  return channel.email_address || channel.address || '—'
+}
+
+function envKeys(channel: ChannelItem) {
+  const source = channel.auth || channel.credentials || {}
+  return Object.entries(source)
+    .map(([key, value]) => (key.endsWith('_env') || key === 'token_env' || key === 'credentials_env' ? String(value) : null))
+    .filter(Boolean) as string[]
+}
+
+function authEntries(channel: ChannelItem) {
+  const source = channel.auth || channel.credentials || {}
+  return Object.entries(source).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+}
+
 export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig }: ChannelsViewProps) {
   const [data, setData] = useState<ChannelsPayload | null>(null)
+  const [hermes, setHermes] = useState<HermesSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  
-  // Modal state
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [label, setLabel] = useState('')
-  const [type, setType] = useState<'email' | 'whatsapp' | 'slack' | 'telegram'>('email')
+  const [type, setType] = useState<(typeof CHANNEL_TYPES)[number]>('email')
   const [connector, setConnector] = useState('gmail')
   const [emailAddress, setEmailAddress] = useState('')
   const [org, setOrg] = useState('personal')
   const [submitting, setSubmitting] = useState(false)
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null)
 
-  // Fetch channels data
   const fetchChannels = async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const res = await fetch('/api/channels')
-      if (!res.ok) throw new Error("Erreur lors de la récupération des canaux")
-      const payload = await res.json()
+      const [channelsRes, hermesRes] = await Promise.all([
+        fetch('/api/channels'),
+        fetch('/api/channels/hermes'),
+      ])
+      if (!channelsRes.ok) throw new Error('Erreur lors de la récupération des canaux')
+      const payload = (await channelsRes.json()) as ChannelsPayload
       setData(payload)
+      if (!selectedId && payload.channels.length > 0) setSelectedId(payload.channels[0].id)
+      if (hermesRes.ok) setHermes((await hermesRes.json()) as HermesSnapshot)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      toast.error(message)
+      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       if (!silent) setLoading(false)
     }
@@ -89,33 +223,53 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
     void fetchChannels()
   }, [])
 
-  // Sync channels
+  useEffect(() => {
+    setConnector(connectorForType(type))
+  }, [type])
+
+  const channels = data?.channels ?? []
+  const actions = data?.action_items ?? []
+  const pendingActions = actions.filter((action) => action.status === 'pending')
+  const selected = channels.find((channel) => channel.id === selectedId) ?? channels[0]
+
+  const summary = useMemo(() => {
+    const active = channels.filter((channel) => channel.status === 'ok').length
+    const degraded = channels.filter((channel) => channel.status === 'degraded').length
+    const unread = channels.reduce((sum, channel) => sum + (channel.sync_summary?.unread_count ?? 0), 0)
+    const platforms = Array.from(new Set(channels.map((channel) => channel.type))).length
+    return { active, degraded, unread, platforms }
+  }, [channels])
+
+  const hermesDirectoryRows = useMemo(() => {
+    if (!hermes?.directory_platforms) return []
+    return Object.entries(hermes.directory_platforms).flatMap(([platform, entries]) =>
+      (Array.isArray(entries) ? entries.slice(0, 8) : []).map((entry) => ({ platform, ...entry })),
+    )
+  }, [hermes])
+
   const handleSyncAll = async () => {
     setSyncing(true)
     try {
       const res = await fetch('/api/channels/sync', { method: 'POST' })
-      if (!res.ok) throw new Error("La synchronisation a échoué")
-      const payload = await res.json()
-      setData(payload)
-      toast.success("Synchronisation effectuée avec succès !")
+      if (!res.ok) throw new Error('La synchronisation a échoué')
+      setData((await res.json()) as ChannelsPayload)
+      toast.success('Synchronisation effectuée')
       if (onRefreshStats) onRefreshStats()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      toast.error(message)
+      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setSyncing(false)
     }
   }
 
-  // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!label.trim()) {
-      toast.error("Veuillez saisir un libellé.")
+      toast.error('Veuillez saisir un libellé.')
       return
     }
     if (type === 'email' && !emailAddress.trim()) {
-      toast.error("Veuillez saisir une adresse e-mail.")
+      toast.error('Veuillez saisir une adresse e-mail.')
       return
     }
 
@@ -129,428 +283,454 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
           type,
           connector,
           email_address: type === 'email' ? emailAddress : undefined,
-          org: org || 'personal'
+          org: org || 'personal',
         }),
       })
-
-      if (!res.ok) {
-        const errorText = await res.text()
-        throw new Error(errorText || "Impossible d'ajouter le canal")
-      }
-
+      if (!res.ok) throw new Error(await res.text())
       const payload = await res.json()
-      setData(payload.cache || payload)
-      toast.success(`Canal "${label}" ajouté et synchronisé !`)
-      
-      // Reset form & close
+      setData((payload.cache || payload) as ChannelsPayload)
+      toast.success(`Canal "${label}" ajouté`)
       setLabel('')
       setType('email')
-      setConnector('gmail')
       setEmailAddress('')
       setOrg('personal')
       setModalOpen(false)
-      
       if (onRefreshStats) onRefreshStats()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      toast.error(message)
+      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setSubmitting(false)
     }
   }
 
-  // Adjust connector based on type selection
-  useEffect(() => {
-    if (type === 'email') {
-      setConnector('gmail')
-    } else if (type === 'whatsapp') {
-      setConnector('evolution-api')
-    } else if (type === 'slack') {
-      setConnector('slack')
-    } else if (type === 'telegram') {
-      setConnector('telegram')
-    }
-  }, [type])
-
-  const getConnectorBadgeColor = (conn: string) => {
-    const c = conn.toLowerCase()
-    if (c.includes('gmail')) return 'bg-red-500/10 text-red-500 border-red-500/20'
-    if (c.includes('outlook')) return 'bg-blue-500/10 text-blue-500 border-blue-500/20'
-    if (c.includes('evolution')) return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-    if (c.includes('slack')) return 'bg-purple-500/10 text-purple-500 border-purple-500/20'
-    if (c.includes('telegram')) return 'bg-sky-500/10 text-sky-500 border-sky-500/20'
-    return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
-  }
-
-  const getChannelGradient = (type: string) => {
-    switch (type) {
-      case 'email':
-        return 'from-blue-600/10 to-indigo-600/5 hover:to-indigo-600/10 border-indigo-500/10 hover:border-indigo-500/30 shadow-indigo-500/5'
-      case 'whatsapp':
-        return 'from-emerald-600/10 to-teal-600/5 hover:to-teal-600/10 border-emerald-500/10 hover:border-emerald-500/30 shadow-emerald-500/5'
-      case 'slack':
-        return 'from-purple-600/10 to-pink-600/5 hover:to-pink-600/10 border-purple-500/10 hover:border-purple-500/30 shadow-purple-500/5'
-      case 'telegram':
-        return 'from-sky-600/10 to-blue-600/5 hover:to-blue-600/10 border-sky-500/10 hover:border-sky-500/30 shadow-sky-500/5'
-      default:
-        return 'from-zinc-600/10 to-zinc-600/5 hover:to-zinc-600/10 border-zinc-500/10'
-    }
-  }
-
-  const humanizeReason = (reason?: string | null): string => {
-    if (!reason) return ''
-    const r = reason.toLowerCase()
-    if (r.includes('gog_oauth_missing') || r.includes('credentials missing')) return "OAuth gog non configuré (lancez `gog auth credentials <client.json>`)"
-    if (r.includes('gog_cli_not_installed')) return "CLI gog absente (installez `gog`)"
-    if (r.includes('evolution_env_incomplete')) return "Variables Evolution manquantes (EVOLUTION_API_URL / API_KEY / INSTANCE)"
-    if (r.includes('composio_not_authenticated') || r.includes('401')) return "Composio non authentifié (lancez `composio link <toolkit>`)"
-    if (r.includes('composio_cli_not_installed')) return "CLI composio absente"
-    if (r.includes('no_fetcher_for_type:slack')) return "Pas encore de connecteur Slack côté zab"
-    if (r.startsWith('no_fetcher_for_type:')) return `Aucun connecteur pour ce type (${reason.split(':')[1]})`
-    return reason.length > 160 ? reason.slice(0, 160) + '…' : reason
-  }
-
-  const renderStatusBadge = (chan: ChannelItem) => {
-    const status = chan.status || 'ok'
-    if (status === 'ok') {
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold border bg-emerald-50 border-emerald-200 shadow-xs" title="Canal connecté et synchronisé">
-          <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-          <span className="text-emerald-700">Actif</span>
-        </span>
-      )
-    }
-    if (status === 'degraded') {
-      const openConfig = () => {
-        if (onOpenConnectorsConfig) onOpenConnectorsConfig(chan)
-      }
-      return (
-        <button
-          type="button"
-          onClick={openConfig}
-          className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold shadow-xs transition hover:border-amber-300 hover:bg-amber-100/70"
-          title={`${humanizeReason(chan.reason)} — ouvrir Connecteurs`}
-          aria-label={`Configurer le canal ${chan.label}`}
-        >
-          <AlertTriangle className="h-3 w-3 text-amber-500" />
-          <span className="text-amber-700">À configurer</span>
-        </button>
-      )
-    }
-    if (status === 'disabled') {
-      return (
-        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold border bg-zinc-100 border-zinc-200 shadow-xs" title="Canal désactivé">
-          <PauseCircle className="h-3 w-3 text-zinc-500" />
-          <span className="text-zinc-600">Désactivé</span>
-        </span>
-      )
-    }
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold border bg-red-50 border-red-200 shadow-xs" title={humanizeReason(chan.reason)}>
-        <AlertCircle className="h-3 w-3 text-red-500 animate-pulse" />
-        <span className="text-red-700">Erreur</span>
-      </span>
-    )
-  }
-
-  const formatLastSynced = (dateStr?: string) => {
-    if (!dateStr) return 'Jamais'
+  const updateAction = async (action: ChannelAction, mode: 'dismiss' | 'obsidian-convert') => {
+    setActionBusyId(action.id)
     try {
-      const dt = new Date(dateStr)
-      return dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-    } catch {
-      return dateStr
+      const res = await fetch(`/api/channels/actions/${encodeURIComponent(action.id)}/${mode}`, { method: 'POST' })
+      if (!res.ok) throw new Error(await res.text())
+      setData((await res.json()) as ChannelsPayload)
+      toast.success(mode === 'dismiss' ? 'Action archivée' : 'Action convertie en tâche')
+      if (onRefreshStats) onRefreshStats()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setActionBusyId(null)
     }
   }
+
+  const StatusIcon = statusMeta(selected?.status).icon
 
   return (
-    <div className="space-y-6">
-      {/* Header Banner with Premium Aesthetics */}
-      <div className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-linear-to-r from-zinc-900 via-zinc-800 to-zinc-950 p-6 text-white shadow-xl">
-        <div className="absolute -top-24 -right-24 h-48 w-48 rounded-full bg-indigo-500/10 blur-3xl" />
-        <div className="absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-emerald-500/10 blur-3xl" />
-        
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="flex h-2 w-2 rounded-full bg-indigo-400 animate-pulse" />
-              <p className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Canaux de communication</p>
-            </div>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight md:text-3xl">Gérez votre connectivité</h1>
-            <p className="mt-2 max-w-xl text-sm text-zinc-300">
-              Centralisez vos comptes e-mails, Slack, WhatsApp et Telegram. Zab agrège les messages clés et vous permet de les transformer en tâches actionnables.
-            </p>
-          </div>
-          
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => setModalOpen(true)}
-              className="bg-white text-zinc-950 hover:bg-zinc-100 shadow-lg cursor-pointer flex items-center gap-1.5 rounded-xl font-medium transition"
-            >
-              <HugeiconsIcon icon={Add01Icon} size={16} strokeWidth={2.5} />
-              Nouveau canal
-            </Button>
-            
-            <Button
-              onClick={handleSyncAll}
-              disabled={syncing}
-              variant="outline"
-              className="border-zinc-700 bg-zinc-800/50 text-white hover:bg-zinc-800 cursor-pointer flex items-center gap-1.5 rounded-xl font-medium transition"
-            >
-              {syncing ? (
-                <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-              ) : (
-                <HugeiconsIcon icon={RefreshIcon} size={16} className="text-indigo-400" />
-              )}
-              Synchroniser tout
-            </Button>
-          </div>
+    <section className="space-y-5" data-testid="channels-view">
+      <header className="flex flex-col gap-3 border-b pb-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-muted-foreground text-sm font-medium uppercase">Communication</p>
+          <h2 className="text-3xl font-semibold tracking-tight">Canaux</h2>
+          <p className="text-muted-foreground mt-2 max-w-3xl text-sm">
+            Configuration Zab, état de synchro et annuaire Hermes des plateformes joignables.
+          </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => void fetchChannels()} disabled={loading || syncing}>
+            <RefreshCw className={cn('mr-2 size-4', loading ? 'animate-spin' : '')} />
+            Recharger
+          </Button>
+          <Button type="button" variant="outline" onClick={() => setModalOpen(true)}>
+            <Plus className="mr-2 size-4" />
+            Nouveau canal
+          </Button>
+          <Button type="button" onClick={() => void handleSyncAll()} disabled={syncing}>
+            {syncing ? <Loader2 className="mr-2 size-4 animate-spin" /> : <RefreshCw className="mr-2 size-4" />}
+            Synchroniser
+          </Button>
+        </div>
+      </header>
 
-        {data?.generated_at_utc && (
-          <div className="mt-6 flex items-center gap-2 border-t border-zinc-800 pt-4 text-xs text-zinc-400">
-            <span>Dernière synchronisation globale :</span>
-            <span className="font-semibold text-zinc-300">{new Date(data.generated_at_utc).toLocaleString('fr-FR')}</span>
-          </div>
-        )}
+      <div className="grid gap-3 md:grid-cols-4">
+        <Metric label="Canaux" value={channels.length} />
+        <Metric label="Actifs" value={summary.active} tone="text-emerald-600" />
+        <Metric label="À configurer" value={summary.degraded} tone="text-amber-600" />
+        <Metric label="Actions" value={data?.total_actions_count ?? pendingActions.length} tone="text-blue-600" />
       </div>
 
       {loading ? (
-        <div className="flex h-48 items-center justify-center rounded-xl border border-zinc-100 bg-white/50 backdrop-blur-xs">
-          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="h-8 w-8 animate-spin text-zinc-800" />
-            <p className="text-sm font-medium text-zinc-500">Chargement de vos canaux de communication...</p>
-          </div>
+        <div className="flex h-48 items-center justify-center rounded-lg border">
+          <Loader2 className="mr-2 size-5 animate-spin" />
+          <span className="text-muted-foreground text-sm">Chargement des canaux...</span>
         </div>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-2">
-          {data?.channels.map((chan) => (
-            <Card
-              key={chan.id}
-              className={`relative overflow-hidden border bg-linear-to-b ${getChannelGradient(chan.type)} transition-all duration-300 hover:-translate-y-1 hover:shadow-lg rounded-xl`}
-            >
-              <div className="absolute top-0 right-0 p-3">
-                {renderStatusBadge(chan)}
-              </div>
+        <div className="grid gap-5 xl:grid-cols-[minmax(320px,0.9fr)_minmax(0,1.4fr)]">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b pb-3">
+              <CardTitle className="text-base">Canaux Zab</CardTitle>
+              <CardDescription>{summary.platforms} plateforme(s) · {summary.unread} non lu(s)</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {channels.length === 0 ? (
+                <div className="p-4 text-sm text-muted-foreground">Aucun canal configuré.</div>
+              ) : (
+                <div className="divide-y">
+                  {channels.map((channel) => (
+                    <ChannelRow
+                      key={channel.id}
+                      channel={channel}
+                      active={selected?.id === channel.id}
+                      onClick={() => setSelectedId(channel.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-              <CardHeader className="pb-3 pt-5">
-                <div className="flex items-center gap-3">
-                  <div className={`flex size-10 items-center justify-center rounded-xl bg-white shadow-md border border-zinc-100`}>
-                    {chan.type === 'email' ? (
-                      <HugeiconsIcon icon={Mail01Icon} size={20} className="text-indigo-600" />
-                    ) : (
-                      <HugeiconsIcon icon={MessageMultiple02Icon} size={20} className="text-emerald-600" />
-                    )}
+          <div className="space-y-5">
+            {selected ? (
+              <Card>
+                <CardHeader className="border-b">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={cn('inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium', channelTone(selected.type))}>
+                          {selected.type}
+                        </span>
+                        <span className={cn('inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium', statusMeta(selected.status).cls)}>
+                          <StatusIcon className="mr-1 size-3.5" />
+                          {statusMeta(selected.status).label}
+                        </span>
+                      </div>
+                      <CardTitle className="mt-3 truncate text-xl">{selected.label}</CardTitle>
+                      <CardDescription className="mt-1 font-mono text-xs">{selected.id}</CardDescription>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => onOpenConnectorsConfig?.(selected)}>
+                        <Settings className="mr-2 size-4" />
+                        Connecteur
+                      </Button>
+                      {selected.documentation ? (
+                        <a href={selected.documentation} target="_blank" rel="noreferrer">
+                          <Button type="button" variant="outline" size="sm">
+                            <ExternalLink className="mr-2 size-4" />
+                            Docs
+                          </Button>
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
+                </CardHeader>
+                <CardContent className="space-y-5 pt-5">
+                  {selected.status && selected.status !== 'ok' && selected.reason ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      {humanizeReason(selected.reason)}
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <InfoBlock label="Connecteur" value={selected.connector} />
+                    <InfoBlock label="Organisation" value={selected.org} />
+                    <InfoBlock label="Adresse" value={channelAddress(selected)} />
+                    <InfoBlock label="Dernière synchro" value={formatDate(selected.last_synced_at)} />
+                    <InfoBlock label="Non lus" value={String(selected.sync_summary?.unread_count ?? 0)} />
+                    <InfoBlock label="Cette semaine" value={String(selected.sync_summary?.received_this_week ?? 0)} />
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <section className="rounded-lg border p-3">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+                        <ShieldCheck className="size-4 text-muted-foreground" />
+                        Auth et variables
+                      </div>
+                      {authEntries(selected).length > 0 ? (
+                        <div className="space-y-2">
+                          {authEntries(selected).map(([key, value]) => (
+                            <div key={key} className="flex items-center justify-between gap-3 text-xs">
+                              <span className="text-muted-foreground">{key}</span>
+                              <code className="max-w-52 truncate rounded bg-muted px-1.5 py-0.5">{String(value)}</code>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Aucun bloc auth détaillé dans la config Zab.</p>
+                      )}
+                      {envKeys(selected).length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-1">
+                          {envKeys(selected).map((key) => <Badge key={key}>{key}</Badge>)}
+                        </div>
+                      ) : null}
+                    </section>
+
+                    <section className="rounded-lg border p-3">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+                        <ClipboardList className="size-4 text-muted-foreground" />
+                        Actions de ce canal
+                      </div>
+                      <div className="space-y-2">
+                        {pendingActions.filter((action) => action.channel_id === selected.id).slice(0, 4).map((action) => (
+                          <ActionRow key={action.id} action={action} busy={actionBusyId === action.id} onUpdate={updateAction} />
+                        ))}
+                        {pendingActions.filter((action) => action.channel_id === selected.id).length === 0 ? (
+                          <p className="text-sm text-muted-foreground">Aucune action en attente.</p>
+                        ) : null}
+                      </div>
+                    </section>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <Card>
+              <CardHeader className="border-b">
+                <div className="flex items-start justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base font-bold tracking-tight text-zinc-900">
-                      {chan.label}
-                    </CardTitle>
-                    <CardDescription className="text-xs text-zinc-500 mt-0.5 font-medium flex items-center gap-1.5">
-                      <span>Org: </span>
-                      <span className="uppercase text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded text-[10px] font-bold">
-                        {chan.org}
-                      </span>
+                    <CardTitle className="text-base">Hermes channels</CardTitle>
+                    <CardDescription>
+                      {hermes?.config_present ? hermes.config_path : 'Config Hermes introuvable'}
                     </CardDescription>
                   </div>
+                  <span className={cn('rounded-md border px-2 py-1 text-xs font-medium', hermes?.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-zinc-50 text-zinc-600')}>
+                    {hermes?.enabled ? 'enabled' : 'disabled'}
+                  </span>
                 </div>
               </CardHeader>
+              <CardContent className="grid gap-4 pt-5 lg:grid-cols-[1fr_1.2fr]">
+                <section>
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <Bot className="size-4 text-muted-foreground" />
+                    Plateformes déclarées
+                  </div>
+                  <div className="space-y-2">
+                    {(hermes?.channels ?? []).map((channel) => (
+                      <HermesChannel key={channel.id} channel={channel} toolsets={hermes?.platform_toolsets?.[channel.type] ?? []} count={hermes?.directory_counts?.[channel.type] ?? 0} />
+                    ))}
+                    {(hermes?.channels ?? []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Aucun canal Hermes déclaré.</p>
+                    ) : null}
+                  </div>
+                </section>
 
-              <CardContent className="space-y-4 pb-5 pt-0">
-                {/* Hint d'état (reason) — caché si le canal est actif */}
-                {chan.status && chan.status !== 'ok' && chan.reason && (
-                  <div className={`rounded-lg px-3 py-2 text-[11px] font-medium border ${
-                    chan.status === 'degraded'
-                      ? 'bg-amber-50/70 border-amber-200/60 text-amber-800'
-                      : chan.status === 'disabled'
-                      ? 'bg-zinc-50 border-zinc-200/60 text-zinc-600'
-                      : 'bg-red-50/70 border-red-200/60 text-red-800'
-                  }`}>
-                    {humanizeReason(chan.reason)}
+                <section>
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <Tags className="size-4 text-muted-foreground" />
+                    Annuaire joignable
                   </div>
-                )}
-
-                {/* Meta details */}
-                <div className="text-xs space-y-1 text-zinc-600 font-medium">
-                  {chan.email_address && (
-                    <div className="flex justify-between border-b border-zinc-100/50 pb-1">
-                      <span className="text-zinc-400">Adresse</span>
-                      <span className="text-zinc-800 select-all">{chan.email_address}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between border-b border-zinc-100/50 pb-1">
-                    <span className="text-zinc-400">Connecteur</span>
-                    <span className={`rounded px-1.5 py-0.2 border text-[10px] font-bold uppercase ${getConnectorBadgeColor(chan.connector)}`}>
-                      {chan.connector}
-                    </span>
+                  <div className="max-h-72 overflow-auto rounded-lg border">
+                    {hermesDirectoryRows.length > 0 ? hermesDirectoryRows.map((entry) => (
+                      <div key={`${entry.platform}:${entry.id}`} className="flex items-center justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0">
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{entry.name}</div>
+                          <div className="text-muted-foreground truncate font-mono text-xs">{entry.id}</div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Badge>{entry.platform}</Badge>
+                          {entry.thread_id ? <Badge>topic {entry.thread_id}</Badge> : null}
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="p-3 text-sm text-muted-foreground">Aucune entrée dans `channel_directory.json`.</div>
+                    )}
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-zinc-400">Dernière synchro</span>
-                    <span className="text-zinc-500">{formatLastSynced(chan.last_synced_at)}</span>
-                  </div>
-                </div>
-
-                {/* Metrics Blocks */}
-                {chan.type === 'email' ? (
-                  <div className="grid grid-cols-3 gap-2 rounded-xl bg-white/60 p-2.5 shadow-inner border border-zinc-100/80">
-                    <div className="text-center">
-                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Non lus</p>
-                      <p className="text-lg font-black text-indigo-600 mt-0.5">
-                        {chan.sync_summary?.unread_count ?? 0}
-                      </p>
-                    </div>
-                    <div className="text-center border-x border-zinc-100">
-                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Aujourd'hui</p>
-                      <p className="text-lg font-black text-zinc-800 mt-0.5">
-                        {chan.sync_summary?.received_today ?? 0}
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">7 jours</p>
-                      <p className="text-lg font-black text-zinc-800 mt-0.5">
-                        {chan.sync_summary?.received_this_week ?? 0}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between rounded-xl bg-white/60 px-3 py-2.5 shadow-inner border border-zinc-100/80">
-                    <span className="text-xs font-bold text-zinc-500">Messages non lus</span>
-                    <span className={`inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-xs font-black ${
-                      (chan.sync_summary?.unread_count ?? 0) > 0 ? 'bg-emerald-500 text-white animate-pulse' : 'bg-zinc-200 text-zinc-600'
-                    }`}>
-                      {chan.sync_summary?.unread_count ?? 0}
-                    </span>
-                  </div>
-                )}
+                  {hermes?.directory_updated_at ? (
+                    <p className="text-muted-foreground mt-2 text-xs">Mis à jour : {formatDate(hermes.directory_updated_at)}</p>
+                  ) : null}
+                </section>
               </CardContent>
             </Card>
-          ))}
+          </div>
         </div>
       )}
 
-      {/* Modal / Dialog for Adding Channel */}
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="sm:max-w-md bg-white border border-zinc-200 rounded-2xl shadow-2xl p-6">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-zinc-950 flex items-center gap-2">
-              <HugeiconsIcon icon={Settings02Icon} size={20} className="text-indigo-600" />
-              Ajouter un canal de communication
-            </DialogTitle>
-          </DialogHeader>
+      {pendingActions.length > 0 ? (
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle className="text-base">Actions multi-canaux</CardTitle>
+            <CardDescription>{pendingActions.length} message(s) à traiter</CardDescription>
+          </CardHeader>
+          <CardContent className="divide-y p-0">
+            {pendingActions.slice(0, 8).map((action) => (
+              <ActionRow key={action.id} action={action} busy={actionBusyId === action.id} onUpdate={updateAction} wide />
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
-          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-            {/* Label input */}
-            <div className="space-y-1.5">
-              <label htmlFor="chan-label" className="text-xs font-bold uppercase tracking-wider text-zinc-500">
-                Nom d'affichage du canal *
-              </label>
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ajouter un canal</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label="Nom d’affichage">
               <input
-                id="chan-label"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                placeholder="ex: Gmail Personnel, WhatsApp Client..."
-                className="border-zinc-200 bg-zinc-50/50 w-full rounded-xl border px-3.5 py-2.5 text-sm font-medium text-zinc-900 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                placeholder="Gmail Personnel"
+                className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
                 required
               />
-            </div>
-
-            {/* Type selector */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label htmlFor="chan-type" className="text-xs font-bold uppercase tracking-wider text-zinc-500">
-                  Type de canal *
-                </label>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Type">
                 <select
-                  id="chan-type"
                   value={type}
-                  onChange={(e) => setType(e.target.value as 'email' | 'whatsapp' | 'slack' | 'telegram')}
-                  className="border-zinc-200 bg-zinc-50/50 w-full rounded-xl border px-3.5 py-2.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                  onChange={(e) => setType(e.target.value as (typeof CHANNEL_TYPES)[number])}
+                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
                 >
-                  <option value="email">📧 E-mail</option>
-                  <option value="whatsapp">💬 WhatsApp</option>
-                  <option value="slack">🗣️ Slack</option>
-                  <option value="telegram">✈️ Telegram</option>
+                  {CHANNEL_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
-              </div>
-
-              {/* Organization selector */}
-              <div className="space-y-1.5">
-                <label htmlFor="chan-org" className="text-xs font-bold uppercase tracking-wider text-zinc-500">
-                  Organisation associée *
-                </label>
+              </Field>
+              <Field label="Organisation">
                 <select
-                  id="chan-org"
                   value={org}
                   onChange={(e) => setOrg(e.target.value)}
-                  className="border-zinc-200 bg-zinc-50/50 w-full rounded-xl border px-3.5 py-2.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
                 >
-                  <option value="personal">👤 Personnel</option>
-                  {orgs.map((o) => (
-                    <option key={o.org} value={o.org}>
-                      🏢 {o.org.toUpperCase()}
-                    </option>
-                  ))}
+                  <option value="personal">personal</option>
+                  {orgs.map((item) => <option key={item.org} value={item.org}>{item.org}</option>)}
                 </select>
-              </div>
+              </Field>
             </div>
-
-            {/* Email field (only visible for email type) */}
-            {type === 'email' && (
-              <div className="space-y-1.5">
-                <label htmlFor="chan-email" className="text-xs font-bold uppercase tracking-wider text-zinc-500">
-                  Adresse e-mail *
-                </label>
+            {type === 'email' ? (
+              <Field label="Adresse e-mail">
                 <input
-                  id="chan-email"
                   type="email"
                   value={emailAddress}
                   onChange={(e) => setEmailAddress(e.target.value)}
                   placeholder="mehdi@example.com"
-                  className="border-zinc-200 bg-zinc-50/50 w-full rounded-xl border px-3.5 py-2.5 text-sm font-medium text-zinc-900 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10"
+                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
                   required
                 />
-              </div>
-            )}
-
-            {/* Connector summary display */}
-            <div className="rounded-xl border border-zinc-100 bg-zinc-50 p-3 text-xs text-zinc-500 font-medium">
-              <div className="flex justify-between items-center">
-                <span>Connecteur qui sera utilisé :</span>
-                <span className={`rounded-md px-1.5 py-0.5 border text-[10px] font-bold uppercase ${getConnectorBadgeColor(connector)}`}>
-                  {connector}
-                </span>
-              </div>
-              <p className="mt-1.5 text-[11px] text-zinc-400">
-                La configuration du jeton d'authentification s'effectue dans l'onglet Connecteurs.
-              </p>
+              </Field>
+            ) : null}
+            <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+              Connecteur: <code className="font-mono">{connector}</code>
             </div>
-
-            {/* Action buttons */}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setModalOpen(false)}
-                className="border-zinc-200 text-zinc-700 hover:bg-zinc-50 cursor-pointer rounded-xl font-semibold transition"
-              >
-                Annuler
-              </Button>
-              <Button
-                type="submit"
-                disabled={submitting}
-                className="bg-zinc-900 text-white hover:bg-zinc-800 cursor-pointer rounded-xl font-semibold transition shadow-md flex items-center gap-1.5"
-              >
-                {submitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-white" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4" />
-                )}
-                Confirmer l'ajout
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>Annuler</Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Plus className="mr-2 size-4" />}
+                Ajouter
               </Button>
             </div>
           </form>
         </DialogContent>
       </Dialog>
+    </section>
+  )
+}
+
+function Metric({ label, value, tone = '' }: { label: string; value: number | string; tone?: string }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardDescription>{label}</CardDescription>
+        <CardTitle className={cn('text-3xl', tone)}>{value}</CardTitle>
+      </CardHeader>
+    </Card>
+  )
+}
+
+function InfoBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="text-muted-foreground text-xs">{label}</div>
+      <div className="mt-1 truncate text-sm font-medium">{value}</div>
+    </div>
+  )
+}
+
+function Badge({ children }: { children: ReactNode }) {
+  return <span className="rounded border bg-muted px-1.5 py-0.5 text-[11px] font-medium">{children}</span>
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-muted-foreground text-xs font-medium uppercase">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function ChannelRow({ channel, active, onClick }: { channel: ChannelItem; active: boolean; onClick: () => void }) {
+  const Icon = channelIcon(channel.type)
+  const meta = statusMeta(channel.status)
+  const StatusIcon = meta.icon
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn('flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-muted/50', active && 'bg-muted')}
+    >
+      <span className={cn('flex size-9 items-center justify-center rounded-lg border', channelTone(channel.type))}>
+        <Icon className="size-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{channel.label}</span>
+        <span className="text-muted-foreground mt-0.5 block truncate text-xs">{channel.connector} · {channel.org}</span>
+      </span>
+      <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px]', meta.cls)}>
+        <StatusIcon className="mr-1 size-3" />
+        {channel.sync_summary?.unread_count ?? 0}
+      </span>
+      <ChevronRight className="text-muted-foreground size-4" />
+    </button>
+  )
+}
+
+function HermesChannel({ channel, toolsets, count }: { channel: ChannelItem; toolsets: string[]; count: number }) {
+  const Icon = channelIcon(channel.type)
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-start gap-3">
+        <span className={cn('flex size-8 items-center justify-center rounded-lg border', channelTone(channel.type))}>
+          <Icon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="truncate text-sm font-medium">{channel.label}</div>
+            <span className={cn('rounded-md border px-1.5 py-0.5 text-[11px]', channel.enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-50 text-zinc-600 border-zinc-200')}>
+              {channel.enabled ? 'on' : 'off'}
+            </span>
+          </div>
+          <div className="text-muted-foreground mt-0.5 truncate font-mono text-xs">{channel.id} · {channel.connector}</div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            <Badge>{count} route(s)</Badge>
+            {toolsets.map((toolset) => <Badge key={toolset}>{toolset}</Badge>)}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ActionRow({ action, busy, onUpdate, wide = false }: { action: ChannelAction; busy: boolean; onUpdate: (action: ChannelAction, mode: 'dismiss' | 'obsidian-convert') => Promise<void>; wide?: boolean }) {
+  return (
+    <div className={cn('space-y-2', wide ? 'p-4' : 'rounded-lg border p-3')}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">{action.subject || 'Action sans titre'}</div>
+          <div className="text-muted-foreground mt-0.5 truncate text-xs">{action.sender} · {action.channel_label} · {formatDate(action.date)}</div>
+        </div>
+        <Badge>{action.type}</Badge>
+      </div>
+      <p className="text-muted-foreground line-clamp-2 text-sm">{action.content}</p>
+      <div className="flex flex-wrap gap-2">
+        {action.url ? (
+          <a href={action.url} target="_blank" rel="noreferrer">
+            <Button type="button" variant="outline" size="sm">
+              <ExternalLink className="mr-2 size-4" />
+              Ouvrir
+            </Button>
+          </a>
+        ) : null}
+        <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void onUpdate(action, 'obsidian-convert')}>
+          {busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : <ClipboardList className="mr-2 size-4" />}
+          Tâche
+        </Button>
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void onUpdate(action, 'dismiss')}>
+          <Archive className="mr-2 size-4" />
+          Archiver
+        </Button>
+      </div>
     </div>
   )
 }

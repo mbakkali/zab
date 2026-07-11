@@ -21,6 +21,33 @@ function shortenHome(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, '~')
 }
 
+function activityTime(p: OverviewProject): number {
+  const raw = p.last_activity_at_utc
+  if (!raw) return 0
+  const ts = Date.parse(raw)
+  return Number.isNaN(ts) ? 0 : ts
+}
+
+function formatActivityDate(value?: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(d)
+}
+
+function activitySourceLabel(value?: string | null): string {
+  if (value === 'git_commit') return 'git'
+  if (value === 'git_metadata') return 'git meta'
+  if (value === 'files') return 'fichiers'
+  return 'activité'
+}
+
+function projectMatchesRoute(p: OverviewProject, routeId: string): boolean {
+  const id = routeId.trim().toLowerCase()
+  if (!id) return false
+  return [p.id, p.name, p.path].some((value) => typeof value === 'string' && value.toLowerCase() === id)
+}
+
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init)
   if (!r.ok) {
@@ -33,6 +60,8 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 function ProjectCard({
   p,
   shortenHome: sh,
+  active,
+  onOpenOrg,
   onOpenSkill,
   miningProjectPath,
   onMineMemory,
@@ -40,6 +69,8 @@ function ProjectCard({
 }: {
   p: OverviewProject
   shortenHome: (path: string) => string
+  active?: boolean
+  onOpenOrg: (org: string) => void
   onOpenSkill: (path: string) => void
   miningProjectPath?: string | null
   onMineMemory?: (path: string, name: string) => void | Promise<void>
@@ -51,19 +82,21 @@ function ProjectCard({
   const remote = (p.remote_host || '') as string
 
   return (
-    <Card>
+    <Card className={active ? 'border-zinc-900 ring-1 ring-zinc-900' : undefined}>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{p.name}</CardTitle>
         <CardDescription>
           <span className="inline-flex flex-wrap items-center gap-2">
-            <span
+            <button
+              type="button"
+              onClick={() => onOpenOrg(p.org)}
               className={cn(
                 'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200',
+                'bg-zinc-100 text-zinc-700 transition hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200',
               )}
             >
               {p.org}
-            </span>
+            </button>
             <span className="text-muted-foreground">
               {p.skills.length} skill{p.skills.length > 1 ? 's' : ''}
             </span>
@@ -85,10 +118,26 @@ function ProjectCard({
                 {remote}
               </span>
             ) : null}
+            {p.workspace_parent ? (
+              <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[11px]">
+                {p.workspace_parent}
+              </span>
+            ) : null}
           </span>
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <span title={p.last_activity_at_utc || undefined}>
+            MàJ {formatActivityDate(p.last_activity_at_utc)}
+          </span>
+          {p.last_activity_source ? <span>{activitySourceLabel(p.last_activity_source)}</span> : null}
+          {p.last_activity_path ? (
+            <span className="max-w-full truncate font-mono" title={p.last_activity_path}>
+              {p.last_activity_path}
+            </span>
+          ) : null}
+        </div>
         <ProjectActions
           p={p}
           miningProjectPath={miningProjectPath}
@@ -129,6 +178,8 @@ function ProjectCard({
 
 export function ProjectsView({
   overview,
+  activeProjectId,
+  onOpenOrg,
   onOpenSkill,
   onRefreshOverview,
   miningProjectPath,
@@ -136,6 +187,8 @@ export function ProjectsView({
   onRunSecurityScan,
 }: {
   overview: OverviewLike | null
+  activeProjectId?: string | null
+  onOpenOrg: (org: string) => void
   onOpenSkill: (path: string) => void
   onRefreshOverview: () => Promise<void> | void
   miningProjectPath?: string | null
@@ -195,6 +248,9 @@ export function ProjectsView({
   const filteredProjects = useMemo(() => {
     const q = filterQuery.trim().toLowerCase()
     let xs = projects
+    if (activeProjectId && projects.some((p) => projectMatchesRoute(p, activeProjectId))) {
+      xs = xs.filter((p) => projectMatchesRoute(p, activeProjectId))
+    }
     if (q) {
       xs = xs.filter((p) => {
         if (p.name.toLowerCase().includes(q)) return true
@@ -210,25 +266,12 @@ export function ProjectsView({
     if (filterOrg !== 'all') xs = xs.filter((p) => p.org === filterOrg)
     if (filterGit === 'git') xs = xs.filter((p) => p.git_repo)
     if (filterGit === 'nogit') xs = xs.filter((p) => !p.git_repo)
-    return xs
-  }, [projects, filterQuery, filterOrg, filterGit])
-
-  const grouped = useMemo(() => {
-    const nested = filteredProjects.filter((p) => p.workspace_parent)
-    const root = filteredProjects.filter((p) => !p.workspace_parent)
-    const byParent = new Map<string, OverviewProject[]>()
-    for (const p of nested) {
-      const key = p.workspace_parent ?? ''
-      if (!byParent.has(key)) byParent.set(key, [])
-      byParent.get(key)!.push(p)
-    }
-    for (const arr of byParent.values()) {
-      arr.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-    }
-    const parentKeys = Array.from(byParent.keys()).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-    root.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-    return { byParent, parentKeys, root }
-  }, [filteredProjects])
+    return [...xs].sort((a, b) => {
+      const recent = activityTime(b) - activityTime(a)
+      if (recent !== 0) return recent
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
+  }, [projects, activeProjectId, filterQuery, filterOrg, filterGit])
 
   const applyDetectedRoots = () => {
     if (detectedRoots.length === 0) {
@@ -429,64 +472,28 @@ export function ProjectsView({
             <ProjectsTable
               projects={filteredProjects}
               shortenHome={shortenHome}
+              activeProjectId={activeProjectId}
+              onOpenOrg={onOpenOrg}
               onOpenSkill={onOpenSkill}
               miningProjectPath={miningProjectPath}
               onMineMemory={onMineMemory}
               onRunSecurityScan={onRunSecurityScan}
             />
           ) : (
-            <div className="space-y-8">
-              {grouped.parentKeys.map((parent) => (
-                <details key={parent} className="space-y-3" open>
-                  <summary className="text-muted-foreground flex cursor-pointer list-none flex-wrap items-baseline gap-2 border-b border-zinc-200 pb-2 text-sm font-medium marker:content-none dark:border-zinc-800 [&::-webkit-details-marker]:hidden">
-                    <span className="text-foreground">{parent}</span>
-                    <span className="font-normal">{t('projects.card.subprojects')}</span>
-                    <span className="font-mono text-[11px] font-normal opacity-80">
-                      {(() => {
-                        const first = (grouped.byParent.get(parent) ?? [])[0]?.path
-                        if (!first) return ''
-                        const segs = first.split('/').filter(Boolean)
-                        segs.pop()
-                        return shortenHome(`/${segs.join('/')}`)
-                      })()}
-                    </span>
-                  </summary>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {(grouped.byParent.get(parent) ?? []).map((p) => (
-                      <ProjectCard
-                        key={p.path}
-                        p={p}
-                        shortenHome={shortenHome}
-                        onOpenSkill={onOpenSkill}
-                        miningProjectPath={miningProjectPath}
-                        onMineMemory={onMineMemory}
-                        onRunSecurityScan={onRunSecurityScan}
-                      />
-                    ))}
-                  </div>
-                </details>
+            <div className="grid gap-3 md:grid-cols-2">
+              {filteredProjects.map((p) => (
+                <ProjectCard
+                  key={p.path}
+                  p={p}
+                  shortenHome={shortenHome}
+                  active={activeProjectId ? projectMatchesRoute(p, activeProjectId) : false}
+                  onOpenOrg={onOpenOrg}
+                  onOpenSkill={onOpenSkill}
+                  miningProjectPath={miningProjectPath}
+                  onMineMemory={onMineMemory}
+                  onRunSecurityScan={onRunSecurityScan}
+                />
               ))}
-
-              {grouped.root.length > 0 ? (
-                <details className="space-y-3" open>
-                  <summary className="text-muted-foreground flex cursor-pointer list-none items-baseline gap-2 border-b border-zinc-200 pb-2 text-sm font-medium marker:content-none dark:border-zinc-800 [&::-webkit-details-marker]:hidden">
-                    À la racine des <code className="font-mono text-[11px]">projects_roots</code>
-                  </summary>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {grouped.root.map((p) => (
-                      <ProjectCard
-                        key={p.path}
-                        p={p}
-                        shortenHome={shortenHome}
-                        onOpenSkill={onOpenSkill}
-                        miningProjectPath={miningProjectPath}
-                        onMineMemory={onMineMemory}
-                        onRunSecurityScan={onRunSecurityScan}
-                      />
-                    ))}
-                  </div>
-                </details>
-              ) : null}
             </div>
           )}
         </>

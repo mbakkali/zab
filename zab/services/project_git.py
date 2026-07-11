@@ -2,14 +2,45 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
 RemoteHost = Literal["github", "gitlab", "other"]
+
+_ACTIVITY_SKIP_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "venv",
+        ".venv",
+        "__pycache__",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "dist",
+        "build",
+        ".next",
+        "target",
+        ".turbo",
+        "coverage",
+        "site-packages",
+    }
+)
+
+
+def _iso_from_timestamp(ts: float | int | None) -> str | None:
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def _read_text_safe(path: Path, *, max_bytes: int = 256_000) -> str | None:
@@ -90,6 +121,121 @@ def _origin_url_from_config(config_path: Path) -> str | None:
     return None
 
 
+def _git_last_commit_iso(project_path: Path) -> str | None:
+    git = shutil.which("git")
+    if not git:
+        return None
+    try:
+        proc = subprocess.run(
+            [git, "-C", str(project_path), "log", "-1", "--format=%ct"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    value = (proc.stdout or "").strip().splitlines()
+    if not value or not value[0].strip():
+        return None
+    try:
+        return _iso_from_timestamp(int(value[0].strip()))
+    except ValueError:
+        return None
+
+
+def _latest_mtime_under(path: Path, *, recursive: bool = False) -> float | None:
+    try:
+        if not path.exists():
+            return None
+    except OSError:
+        return None
+    latest: float | None = None
+    try:
+        latest = path.stat().st_mtime
+    except OSError:
+        pass
+    if not recursive or not path.is_dir():
+        return latest
+    try:
+        for dirpath, dirnames, filenames in os.walk(os.fspath(path), topdown=True, followlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if d not in _ACTIVITY_SKIP_DIRS)
+            for name in filenames:
+                p = Path(dirpath) / name
+                try:
+                    ts = p.stat().st_mtime
+                except OSError:
+                    continue
+                if latest is None or ts > latest:
+                    latest = ts
+    except OSError:
+        return latest
+    return latest
+
+
+def _git_metadata_activity_iso(git_dir: Path) -> str | None:
+    common = _git_common_dir(git_dir)
+    candidates: list[float] = []
+    for p in (
+        git_dir / "HEAD",
+        git_dir / "index",
+        git_dir / "ORIG_HEAD",
+        common / "config",
+        common / "packed-refs",
+        common / "FETCH_HEAD",
+    ):
+        ts = _latest_mtime_under(p)
+        if ts is not None:
+            candidates.append(ts)
+    for p in (git_dir / "refs", common / "refs"):
+        ts = _latest_mtime_under(p, recursive=True)
+        if ts is not None:
+            candidates.append(ts)
+    return _iso_from_timestamp(max(candidates) if candidates else None)
+
+
+def project_file_activity(project_path: Path) -> dict[str, Any]:
+    """Dernière modification de fichier sous projet, en ignorant les arbres lourds."""
+    out: dict[str, Any] = {
+        "last_activity_at_utc": None,
+        "last_activity_source": None,
+        "last_activity_path": None,
+    }
+    try:
+        root = project_path.expanduser().resolve()
+    except OSError:
+        return out
+    if not root.is_dir():
+        return out
+
+    latest_ts: float | None = None
+    latest_path: Path | None = None
+    try:
+        for dirpath, dirnames, filenames in os.walk(os.fspath(root), topdown=True, followlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if d not in _ACTIVITY_SKIP_DIRS)
+            for name in filenames:
+                p = Path(dirpath) / name
+                try:
+                    ts = p.stat().st_mtime
+                except OSError:
+                    continue
+                if latest_ts is None or ts > latest_ts:
+                    latest_ts = ts
+                    latest_path = p
+    except OSError:
+        return out
+
+    out["last_activity_at_utc"] = _iso_from_timestamp(latest_ts)
+    out["last_activity_source"] = "files" if latest_ts is not None else None
+    if latest_path is not None:
+        try:
+            out["last_activity_path"] = str(latest_path.resolve().relative_to(root))
+        except ValueError:
+            out["last_activity_path"] = str(latest_path)
+    return out
+
+
 def _classify_remote_host(url: str) -> RemoteHost | None:
     u = url.strip().lower()
     if not u:
@@ -151,6 +297,9 @@ def project_git_metadata(project_path: Path) -> dict[str, Any]:
         "remote_host": None,
         "origin_url": None,
         "origin_https": None,
+        "last_activity_at_utc": None,
+        "last_activity_source": None,
+        "last_activity_path": None,
     }
     try:
         root = project_path.expanduser().resolve()
@@ -164,6 +313,15 @@ def project_git_metadata(project_path: Path) -> dict[str, Any]:
         return out
 
     out["git_repo"] = True
+    commit_iso = _git_last_commit_iso(root)
+    if commit_iso:
+        out["last_activity_at_utc"] = commit_iso
+        out["last_activity_source"] = "git_commit"
+    else:
+        meta_iso = _git_metadata_activity_iso(git_dir)
+        if meta_iso:
+            out["last_activity_at_utc"] = meta_iso
+            out["last_activity_source"] = "git_metadata"
     common = _git_common_dir(git_dir)
     head_path = git_dir / "HEAD"
     out["git_branch"] = _read_branch_from_head(head_path)

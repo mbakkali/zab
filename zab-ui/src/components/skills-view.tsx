@@ -524,9 +524,9 @@ export function SkillsView({
           </div>
 
           <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950">
-            {filtered.map((row) => (
+            {filtered.map((row, index) => (
               <SkillRow
-                key={row.skill.path}
+                key={`${row.org}:${row.skill.id}:${row.skill.path}:${index}`}
                 row={row}
                 syncHint={hintForSkillPath(syncHints, row.skill.path)}
                 fallbackSkillsRoot={fallbackSkillsRoot}

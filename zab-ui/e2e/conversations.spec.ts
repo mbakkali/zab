@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test'
 
 type SearchApiRow = {
   document_id: string
+  conversation_id?: string | null
   source: string
   wing: string | null
 }
@@ -38,6 +39,7 @@ function providerSlugFromRow(row: SearchApiRow): string {
 async function probeSearchTerm(request: APIRequestContext): Promise<{
   term: string
   firstId: string
+  detailId: string
   slug: string
 } | null> {
   const envTerm = process.env.PLAYWRIGHT_CONVERSATIONS_SEARCH_TERM?.trim()
@@ -53,7 +55,12 @@ async function probeSearchTerm(request: APIRequestContext): Promise<{
     const body = (await r.json()) as { results?: SearchApiRow[] }
     const row = body.results?.[0]
     if (row?.document_id) {
-      return { term, firstId: row.document_id, slug: providerSlugFromRow(row) }
+      return {
+        term,
+        firstId: row.document_id,
+        detailId: row.conversation_id?.trim() || row.document_id,
+        slug: providerSlugFromRow(row),
+      }
     }
   }
   return null
@@ -86,6 +93,8 @@ test.describe('conversations', () => {
     await expect(page.locator('[data-testid="conversations-view"]')).toBeVisible()
     await expect(page.locator('[data-testid="conversations-health-banner"]')).toBeVisible()
     await expect(page.locator('[data-testid="conversations-search"]')).toBeVisible()
+    await page.getByTestId('conversations-add-ai-provider').click()
+    await expect(page).toHaveURL(/#config$/)
   })
 
   test('cartes providers après chargement', async ({ page }) => {
@@ -113,8 +122,16 @@ test.describe('conversations', () => {
       timeout: 45_000,
     })
     await expect(page.locator('[data-testid="conversation-result-row"]').first()).toBeVisible()
+    const detailResponse = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/conversations/document/${encodeURIComponent(first.conversation_id?.trim() || first.document_id)}`) &&
+        r.request().method() === 'GET' &&
+        r.ok(),
+      { timeout: 45_000 },
+    )
     await page.getByTestId(`conversation-open-detail-${first.document_id}`).click()
-    await expect(page.getByRole('dialog', { name: 'Conversation' })).toBeVisible({
+    await detailResponse
+    await expect(page.getByTestId('conversation-detail-dialog')).toBeVisible({
       timeout: 30_000,
     })
   })
@@ -149,42 +166,82 @@ test.describe('conversations', () => {
     })
     await expect(page.locator('[data-testid="conversation-result-row"]').first()).toBeVisible()
 
+    const detailResponse = page.waitForResponse(
+      (r) =>
+        r.url().includes(`/api/conversations/document/${encodeURIComponent(probe.detailId)}`) &&
+        r.request().method() === 'GET' &&
+        r.ok(),
+      { timeout: 45_000 },
+    )
     await page.getByTestId(`conversation-open-detail-${probe.firstId}`).click()
-    await expect(page.getByRole('dialog', { name: 'Conversation' })).toBeVisible({
+    await detailResponse
+    await expect(page.getByTestId('conversation-detail-dialog')).toBeVisible({
       timeout: 30_000,
     })
   })
 
-  test('filtre provider conserve au moins un résultat quand pertinent', async ({
-    page,
-    request,
-  }) => {
-    const probe = await probeSearchTerm(request)
-    test.skip(probe === null, 'Pas de données recherche pour ce filtre.')
+  test('checkbox provider applique un filtre multi-source', async ({ page }) => {
+    test.setTimeout(90_000)
+    const providerIds = ['cursor', 'claude', 'codex', 'hermes', 'gemini', 'kimi']
+    await page.route('**/api/conversations/providers', async (route) => {
+      await route.fulfill({
+        json: {
+          generated_at_utc: '2026-06-09T00:00:00Z',
+          compact_index: { path: '/tmp/conversations-index.json' },
+          providers: providerIds.map((id) => ({
+            id,
+            label: id === 'claude' ? 'Claude Code' : id === 'gemini' ? 'Gemini CLI' : id[0].toUpperCase() + id.slice(1),
+            status: 'synced',
+            postgres_documents: 10,
+            local: {},
+          })),
+        },
+      })
+    })
+    await page.route('**/api/conversations/health', async (route) => {
+      await route.fulfill({
+        json: {
+          severity: 'ok',
+          postgres: { configured: true, connected: true, document_count: 60 },
+          integrity: null,
+          recommendations: [],
+          generated_at_utc: '2026-06-09T00:00:00Z',
+        },
+      })
+    })
+    await page.route('**/api/conversations/documents**', async (route) => {
+      await route.fulfill({ json: { items: [], total: 0, conversation_storage: 'archive' } })
+    })
+    await page.route('**/api/conversations/search**', async (route) => {
+      await route.fulfill({ json: { results: [] } })
+    })
 
     await page.goto('/#conversations')
-    await page.getByTestId('conversations-search').fill(probe.term)
+    await expect(page.getByTestId('conversations-provider-filter-hermes')).toBeChecked()
+    await page.getByTestId('conversations-search').fill('user')
     await page.waitForResponse(
       (r) => r.url().includes('/api/conversations/search') && r.ok(),
       { timeout: 45_000 },
     )
 
-    await page.getByTestId('conversations-provider-filter').selectOption(probe.slug)
-    await page.waitForResponse(
+    const filteredResponse = page.waitForResponse(
       (r) => {
         const u = new URL(r.url())
+        const providers = u.searchParams.get('providers')
         return (
           r.url().includes('/api/conversations/search') &&
           r.ok() &&
-          u.searchParams.get('provider') === probe.slug
+          providers !== null &&
+          !providers.split(',').includes('hermes')
         )
       },
       { timeout: 45_000 },
     )
+    await page.getByTestId('conversations-provider-filter-hermes').click()
+    await filteredResponse
 
-    const rows = page.locator('[data-testid="conversation-result-row"]')
-    await expect(rows.first()).toBeVisible({ timeout: 45_000 })
-    expect(await rows.count()).toBeGreaterThan(0)
+    await expect(page.getByTestId('conversations-provider-filter-hermes')).not.toBeChecked()
+    await expect(page.getByTestId('conversations-provider-filter-summary')).toContainText('5/6')
   })
 })
 
