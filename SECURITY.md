@@ -34,6 +34,18 @@ Run the repository pre-publish check:
 ./scripts/publish-check.sh
 ```
 
+Install the local pre-push hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The same guard is available through zab:
+
+```bash
+zab security publish-check --mode tracked
+```
+
 Also recommended:
 
 ```bash

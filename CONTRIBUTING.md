@@ -31,6 +31,7 @@ uv run pytest zab/tests -v
 - Add or update tests for behavior changes.
 - Do not commit secrets, personal paths, or private infrastructure identifiers.
 - Run `./scripts/publish-check.sh` before opening a PR.
+- Run `git config core.hooksPath .githooks` once per clone to enable the pre-push privacy guard.
 - Update `README.md` when user-facing behavior or installation steps change.
 
 ## Code style

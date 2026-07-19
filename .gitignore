@@ -26,7 +26,18 @@ flowmetrik-openwebui/owui-data/
 .hermes/
 
 # E2E screenshots with real project data
-zab-ui/.screenshots/*.png
+zab-ui/.screenshots/
+
+# Local operator notes, plans, scratch data, and channel exports
+agent.md
+vision.md
+scratch/
+docs/plans/
+evolution-*.json
+evolution-*.png
+evolution-*.jpg
+evolution-*.jpeg
+evolution-*.webp
 
 # Node
 node_modules/

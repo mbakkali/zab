@@ -2266,6 +2266,35 @@ def security_status_cmd(
         typer.echo(f"  dernier rapport   : {payload['latest_report']['key']}")
 
 
+@security_app.command("publish-check")
+def security_publish_check_cmd(
+    *,
+    mode: str = typer.Option(
+        "tracked",
+        "--mode",
+        help="Surface git à scanner : tracked, staged, worktree ou pre-push.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Valide que la surface publiable ne contient ni secrets ni contenu privé."""
+    import sys
+
+    from zab.services.publish_guard import format_report, scan_publish_surface
+
+    stdin_text = sys.stdin.read() if mode == "pre-push" else None
+    try:
+        payload = scan_publish_surface(mode=mode, pre_push_stdin=stdin_text)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    if json_out:
+        typer.echo(json.dumps(payload.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(format_report(payload))
+    if not payload.ok:
+        raise typer.Exit(1)
+
+
 @mcp_app.command("serve")
 def mcp_serve_cmd() -> None:
     """Expose les outils read-only zab via MCP stdio."""

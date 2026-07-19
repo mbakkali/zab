@@ -265,7 +265,8 @@ Rules: use JSON outputs, never print raw secrets, treat Postgres `zab_core` as g
 - Core workflows are **local-only**; zab does not phone home
 - The dashboard tracks env var **presence**, not values
 - Security scans run via local jobs (OSV, npm audit, gitleaks)
-- Before publishing forks, run `./scripts/publish-check.sh`
+- Before publishing forks, run `./scripts/publish-check.sh` or `zab security publish-check --mode tracked`
+- To block risky pushes locally, run `git config core.hooksPath .githooks` once per clone
 
 See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
