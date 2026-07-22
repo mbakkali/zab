@@ -8,8 +8,10 @@ cd "$ROOT"
 
 API_HOST="${ZAB_DASHBOARD_HOST:-127.0.0.1}"
 API_PORT="${ZAB_DASHBOARD_PORT:-8750}"
+UI_HOST="${ZAB_UI_DEV_HOST:-127.0.0.1}"
 UI_PORT="${ZAB_UI_DEV_PORT:-5280}"
 export ZAB_API_ORIGIN="http://${API_HOST}:${API_PORT}"
+export ZAB_UI_DEV_HOST="${UI_HOST}"
 export ZAB_UI_DEV_PORT="${UI_PORT}"
 
 # Le script est souvent invoqué avec un `uv` hors PATH (agents, launchers) : résoudre explicitement.
@@ -60,7 +62,7 @@ if [[ ! -d "$UI_DIR/node_modules" ]]; then
   (cd "$UI_DIR" && npm install)
 fi
 
-echo "→ Vite http://127.0.0.1:${UI_PORT}/ (proxy /api → ${ZAB_API_ORIGIN})"
+echo "→ Vite http://${UI_HOST}:${UI_PORT}/ (proxy /api → ${ZAB_API_ORIGIN})"
 # Sous `uv run`, PATH peut placer le Node « helper » de l’IDE (souvent x64/Rosetta) avant un Node
 # arm64 natif — Rolldown/Vite 8 charge alors des bindings @rolldown/binding-* incompatibles.
 # Ne pas se fier à `uname -m` (Rosetta / agents peuvent mentir) : préférer Homebrew si présent.

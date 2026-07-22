@@ -7,6 +7,7 @@ import queue
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from typing import Any, Literal
 
 from zab.paths import data_dir, mehdi_context_root, skills_root_from_config_file_only, zab_package_dir, zab_repo_root
 from zab.services.mempalace_mine_projects_docs import resolve_mempalace_interpreter
+from zab.services import request_logs
 from zab.services.workspace_projects import project_dir_is_under_projects_roots
 
 
@@ -96,6 +98,34 @@ def _write_security_report(job: Job) -> None:
 
     report.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     job.report_path = str(report)
+
+
+def _log_job_event(job: Job, state: str, *, started: float | None = None, error: str | None = None) -> None:
+    result: dict[str, Any] = {
+        "status": state,
+        "exit_code": job.exit_code,
+    }
+    if started is not None:
+        result["duration_ms"] = round((time.monotonic() - started) * 1000)
+    if error:
+        result["error_type"] = "JobError"
+        result["error_message"] = error[:240]
+    request_logs.record_event(
+        surface="jobs",
+        component="jobs",
+        level="ERROR" if state == "error" else ("WARNING" if state == "cancelled" else "INFO"),
+        actor=request_logs.actor_context(surface="jobs", source="job-store"),
+        scope=request_logs.resolve_scope(project_path=job.cwd, args={"preset": job.preset}),
+        request={
+            "name": job.preset,
+            "tool": "job",
+            "command": " ".join(job.argv),
+            "args_redacted": {"job_id": job.id, "preset": job.preset, "argv": job.argv, "cwd": job.cwd},
+            "input_hash": request_logs.input_hash({"preset": job.preset, "argv": job.argv, "cwd": job.cwd}),
+        },
+        result=result,
+        request_id=job.id,
+    )
 
 
 def list_security_reports() -> list[dict[str, Any]]:
@@ -326,9 +356,12 @@ class JobStore:
         jid = uuid.uuid4().hex[:12]
         job = Job(id=jid, preset=preset, argv=argv, cwd=cwd)
         self._jobs[jid] = job
+        _log_job_event(job, "queued")
 
         def run() -> None:
             job.status = "running"
+            started = time.monotonic()
+            _log_job_event(job, "running")
             palace_lock_held = False
             try:
                 if job.preset == "mempalace_mine":
@@ -393,6 +426,7 @@ class JobStore:
                     _write_security_report(job)
                 except Exception as e:  # noqa: BLE001
                     job.lines.put(f"[zab] Rapport sécurité non persisté : {e}")
+                _log_job_event(job, job.status, started=started, error=job.error)
                 if palace_lock_held:
                     _MEMPALACE_PALACE_LOCK.release()
                 job.lines.put(None)
@@ -411,6 +445,7 @@ class JobStore:
             except subprocess.TimeoutExpired:
                 job._proc.kill()
         job.status = "cancelled"
+        _log_job_event(job, "cancelled")
         job.lines.put(None)
         return True
 

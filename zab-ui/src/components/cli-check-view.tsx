@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { useI18n } from '@/i18n/use-i18n'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type CliCheckStatus = 'ok' | 'warn' | 'fail' | 'skipped' | 'idle'
 
@@ -321,6 +322,14 @@ export function CliCheckView() {
   const routeUrl = useMemo(() => `${window.location.origin}/#cli_check`, [])
   const summary = useMemo(() => scoreRows(rows), [rows])
   const generatedAt = lastRunAt ? new Date(lastRunAt).toLocaleString() : t('cliCheck.neverRun')
+
+  if (configLoading && rows.length === 0) {
+    return (
+      <section className="space-y-6" data-testid="cli-check-view">
+        <LoadingState label={t('common.loading')} />
+      </section>
+    )
+  }
 
   return (
     <section className="space-y-6" data-testid="cli-check-view">

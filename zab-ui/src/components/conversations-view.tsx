@@ -30,6 +30,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/loading-state'
 import { useI18n } from '@/i18n/use-i18n'
 import {
   conversationProviderBadgeClass,
@@ -481,6 +482,10 @@ export function ConversationsView() {
         <h2 className="text-2xl font-semibold tracking-tight">{t('conversationsView.title')}</h2>
         <p className="text-muted-foreground mt-1 text-sm">{t('conversationsView.subtitle')}</p>
       </div>
+
+      {loading && !providers && !health ? (
+        <LoadingState label={t('common.loading') || 'Chargement des conversations…'} />
+      ) : null}
 
       <Card
         data-testid="conversations-health-banner"

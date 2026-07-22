@@ -12,6 +12,9 @@ organizations:
   - personal
   - clients
 
+logging:
+  default_actor: mehdi
+
 cli_watchlist:
   - gh
 
@@ -37,7 +40,20 @@ tracked_env_extra: []
 #   firewall_rule: allow-your-ip
 #   gcloud_config: default
 
-# Optional: communication channels (email, Slack, WhatsApp, Telegram)
+# Optional: Conversation Ledger channel bindings
+# conversation_ledger:
+#   channels:
+#     - channel_id: gmail-flowmetrik-primary
+#       channel_type: gmail
+#       label: Gmail Flowmetrik
+#       tool_id: gmail-search
+#       implementation_id: gmail-gog
+#       connector_ref: gmail
+#       transport: gog
+#       account: you@example.com
+#       enabled: true
+#       read_capability: search
+#       write_capability: none
 # communication_channels:
 #   - id: work-email
 #     label: Work Email

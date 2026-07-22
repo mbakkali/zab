@@ -146,6 +146,11 @@ def test_tools_catalog_cli_commands(monkeypatch, tmp_path: Path):
     assert search_payload["contract"] == "tools-catalog-search"
     assert search_payload["total"] >= 1
 
+    secret_search = runner.invoke(app, ["tools", "search", "api key", "--json"])
+    assert secret_search.exit_code == 0
+    secret_payload = json.loads(secret_search.stdout)
+    assert any(row["id"] == "security-secret-locate" for row in secret_payload["data"])
+
     tools_inspect = runner.invoke(app, ["tools", "inspect", "gmail-search", "--json"])
     assert tools_inspect.exit_code == 0
     inspect_payload = json.loads(tools_inspect.stdout)

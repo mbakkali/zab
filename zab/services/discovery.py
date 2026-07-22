@@ -250,17 +250,32 @@ def _canonical_org_records(
     return [by_org[org] for org in canonical]
 
 
-def _orgs_with_projects_tuple() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _projects_from_index() -> list[dict[str, Any]]:
+    """Projets depuis l'index Postgres/état (section ``projects``) — lecture ~15 ms."""
+    try:
+        from zab.services import postgres_store
+
+        rows = postgres_store.list_state_section("projects")
+        return [x for x in rows if isinstance(x, dict)]
+    except Exception:
+        return []
+
+
+def _orgs_with_projects_tuple(*, from_index: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from zab.services.workspace_projects import discover_projects
 
-    projects = discover_projects()
+    projects: list[dict[str, Any]] = []
+    if from_index:
+        projects = _projects_from_index()
+    if not projects:
+        projects = discover_projects()
     base = list_orgs_skills_repo_only()
     return _canonical_org_records(base_orgs=base, projects=projects), projects
 
 
-def list_orgs_with_skills() -> list[dict[str, Any]]:
+def list_orgs_with_skills(*, from_index: bool = False) -> list[dict[str, Any]]:
     """Dépôt skills + skills découvertes sous ``projects_roots`` (fusion par slug d’org)."""
-    return _orgs_with_projects_tuple()[0]
+    return _orgs_with_projects_tuple(from_index=from_index)[0]
 
 
 def _orgs_from_skills_roots_walk() -> list[dict[str, Any]]:
@@ -463,7 +478,7 @@ def load_plugin_config_summary() -> dict[str, Any]:
     return {"present": False}
 
 
-def overview() -> dict[str, Any]:
+def overview(*, from_index: bool = False) -> dict[str, Any]:
     from zab.services import skills_registry
 
     bases_walk = _repos_walk()
@@ -479,7 +494,7 @@ def overview() -> dict[str, Any]:
             "Remplissez la config : skills_roots dans ~/.config/zab/config.yaml "
             "ou adoptez des skills dans ~/.config/zab/skills-registry.json (zab sync)."
         )
-    orgs, projects = _orgs_with_projects_tuple()
+    orgs, projects = _orgs_with_projects_tuple(from_index=from_index)
     return {
         "skills_root": str(primary) if primary else None,
         "skills_roots": [str(b.resolve()) for b in bases_walk],

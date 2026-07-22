@@ -13,6 +13,7 @@ import { AlertTriangle, CheckCircle2, Loader2, XCircle } from 'lucide-react'
 import { connectorMeta, kindMeta } from '@/lib/connector-meta'
 import { cn } from '@/lib/utils'
 import { useI18n } from '@/i18n/use-i18n'
+import { LoadingState } from '@/components/ui/loading-state'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -592,7 +593,7 @@ export function ConnectorsView() {
         </div>
       </div>
 
-      {loading && <p className="text-muted-foreground text-sm">{t('common.loading')}</p>}
+      {loading && list.length === 0 ? <LoadingState compact label={t('common.loading')} /> : null}
       {loadError && !backendNeedsRestartForAggregators && (
         <div className="text-destructive space-y-2 rounded-xl border border-red-200 bg-red-50/80 px-4 py-3 text-sm whitespace-pre-wrap">
           <p role="alert" data-testid="connectors-load-error">

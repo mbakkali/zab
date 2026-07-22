@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { NavId } from '@/components/sidebar-nav'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type TaskItem = {
   identifier: string
@@ -228,6 +229,14 @@ export function TasksInboxView({ onJump }: { onJump?: (id: NavId) => void } = {}
     } finally {
       setAddingSource(false)
     }
+  }
+
+  if (loading && !data) {
+    return (
+      <div className="space-y-6" data-testid="tasks-inbox-view">
+        <LoadingState label="Chargement de l'inbox des tâches…" />
+      </div>
+    )
   }
 
   return (

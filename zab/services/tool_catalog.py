@@ -363,6 +363,57 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     zab_cli_examples = [item.get("name") for item in scan.get("cli_commands") or [] if isinstance(item, dict) and item.get("name")]
     return [
         _generic_tool(
+            tool_id="security-secret-locate",
+            label="Localisation secrets .env",
+            kind="security_query",
+            keywords=[
+                "secret",
+                "secrets",
+                "api key",
+                "apikey",
+                "token",
+                "env",
+                ".env",
+                "variable environnement",
+                "clé api",
+                "cle api",
+                "payfit",
+                "qonto",
+                "pennylane",
+                "security",
+                "locate",
+            ],
+            examples=[
+                "trouve moi l'api key PayFit",
+                "localise la clé API Qonto sans afficher la valeur",
+                "cherche le token Pennylane dans les .env connus",
+            ],
+            skill_refs=["zab-orchestrator"],
+            safety="read_first",
+            coverage="full",
+            origin_refs=[
+                {"section": "capabilities", "key": "security.locate"},
+                {"section": "security", "key": "env"},
+            ],
+            implementations=[
+                {
+                    "id": "zab-security-locate-cli",
+                    "kind": "cli",
+                    "provider": "zab",
+                    "role": "primary",
+                    "priority": 5,
+                    "command": "zab security locate <query> --json",
+                    "smoke_command": ["zab", "security", "locate", "payfit", "--json"],
+                    "coverage": "full",
+                }
+            ],
+            probe={"kind": "cli", "binary": "zab", "smoke_command": ["zab", "security", "locate", "payfit", "--json"]},
+            commands=[
+                "zab security locate <query> --json",
+                "zab security status --json",
+            ],
+        ),
+        _generic_tool(
             tool_id="gmail-search",
             label="Recherche Gmail",
             kind="communication_search",
@@ -382,7 +433,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "trouve une facture SaaS dans mes mails",
                 "cherche le mail avec la pièce jointe",
             ],
-            skill_refs=["email-search", "common-workflows"],
+            skill_refs=["email-mehdi", "google-workspace"],
             safety="read_first",
             coverage="full",
             origin_refs=[
@@ -438,12 +489,12 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "cherche les transcripts Fireflies sur le budget",
                 "trouve le compte rendu du call client",
             ],
-            skill_refs=["meeting-search"],
+            skill_refs=["fireflies-video-to-notion-recap", "teams-meeting-pipeline"],
             safety="read_first",
             coverage="partial",
             origin_refs=[
                 {"section": "connectors", "key": "fireflies"},
-                {"section": "skills", "key": "meeting-search"},
+                {"section": "skills", "key": "fireflies-video-to-notion-recap"},
             ],
             implementations=[
                 {
@@ -490,7 +541,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "cherche la conversation Evolution sur le chiffrage",
                 "trouve le dernier échange client sur WhatsApp",
             ],
-            skill_refs=["whatsapp-search"],
+            skill_refs=["mehdi-cowork-whatsapp"],
             safety="read_first",
             coverage="full",
             origin_refs=[
@@ -531,12 +582,12 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "retrouve le justificatif d'un débit SaaS",
                 "cherche un paiement client",
             ],
-            skill_refs=["finance-ops"],
+            skill_refs=["flowmetrik-compta"],
             safety="read_first",
             coverage="partial",
             origin_refs=[
                 {"section": "connectors", "key": "qonto"},
-                {"section": "skills", "key": "finance-ops"},
+                {"section": "skills", "key": "flowmetrik-compta"},
             ],
             implementations=[
                 {
@@ -549,7 +600,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                     "coverage": "partial",
                 }
             ],
-            probe={"kind": "connector", "slug": "qonto", "skill_refs": ["finance-ops"]},
+            probe={"kind": "connector", "slug": "qonto", "skill_refs": ["flowmetrik-compta"]},
             commands=["zab inspect connectors qonto --json", "zab search qonto --json"],
         ),
         _generic_tool(
@@ -572,7 +623,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "cherche le devis validé",
                 "liste les factures de la semaine",
             ],
-            skill_refs=["pennylane-pilot", "finance-ops"],
+            skill_refs=["pennylane-pilot", "flowmetrik-compta"],
             safety="read_first",
             coverage="partial",
             origin_refs=[
@@ -613,12 +664,12 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "retrouve une fiche company",
                 "liste les contacts liés à un deal",
             ],
-            skill_refs=["attio-cockpit", "crm-workflows"],
+            skill_refs=["crm-stakeholder-enrichment"],
             safety="read_first",
             coverage="partial",
             origin_refs=[
                 {"section": "connectors", "key": "attio"},
-                {"section": "skills", "key": "attio-cockpit"},
+                {"section": "skills", "key": "crm-stakeholder-enrichment"},
             ],
             implementations=[
                 {
@@ -631,7 +682,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                     "coverage": "partial",
                 }
             ],
-            probe={"kind": "connector", "slug": "attio", "skill_refs": ["attio-cockpit"]},
+            probe={"kind": "connector", "slug": "attio", "skill_refs": ["crm-stakeholder-enrichment"]},
             commands=["zab inspect connectors attio --json", "zab search attio --json"],
         ),
         _generic_tool(
@@ -654,7 +705,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "retrouve un deal synchronisé",
                 "liste les companies HubSpot récentes",
             ],
-            skill_refs=["crm-workflows"],
+            skill_refs=["crm-stakeholder-enrichment"],
             safety="read_first",
             coverage="partial",
             origin_refs=[
@@ -694,7 +745,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "retrouve une daily note qui parle de Qonto",
                 "liste les notes liées à un projet",
             ],
-            skill_refs=["knowledge-search"],
+            skill_refs=["obsidian", "research-knowledge-sources"],
             safety="read_first",
             coverage="full",
             origin_refs=[
@@ -734,7 +785,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "retrouve une conversation sur le pitch",
                 "liste les mémoires liées à un projet",
             ],
-            skill_refs=["memory-search"],
+            skill_refs=["research-knowledge-sources"],
             safety="read_first",
             coverage="full",
             origin_refs=[
@@ -773,7 +824,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "cherche le calendrier partagé",
                 "liste les prochains meetings",
             ],
-            skill_refs=["calendar-search"],
+            skill_refs=["mehdi-calendar-sync", "google-workspace"],
             safety="read_first",
             coverage="partial",
             origin_refs=[
@@ -790,7 +841,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                     "coverage": "partial",
                 }
             ],
-            probe={"kind": "connector", "slug": "googlecalendar", "skill_refs": ["calendar-search"]},
+            probe={"kind": "connector", "slug": "googlecalendar", "skill_refs": ["mehdi-calendar-sync"]},
             commands=["zab inspect connectors googlecalendar --json", "zab search calendar --json"],
         ),
         _generic_tool(
@@ -813,7 +864,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "cherche un deck commercial",
                 "trouve le document de proposition",
             ],
-            skill_refs=["drive-search", "document-workflows"],
+            skill_refs=["google-workspace"],
             safety="read_first",
             coverage="partial",
             origin_refs=[
@@ -853,7 +904,7 @@ def _domain_tools(state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
                 "zab sync --json",
                 "zab search qonto --json",
             ],
-            skill_refs=["zab-context"],
+            skill_refs=["zab-orchestrator"],
             safety="read_first",
             coverage="full",
             origin_refs=[
@@ -1200,16 +1251,8 @@ def _summarize_tools(tools: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_tools_catalog(*, state: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Construit le catalogue canonique des tools Zab."""
-
-    if state is None:
-        try:
-            from zab.services import state_index
-
-            state = state_index.load_state()
-        except Exception:
-            state = {}
+def _collect_raw_tools(state: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Assemble les specs brutes (domaine + code tools + annotations) avant matérialisation."""
 
     raw_tools: list[dict[str, Any]] = []
     raw_tools.extend(_domain_tools(state))
@@ -1244,6 +1287,157 @@ def build_tools_catalog(*, state: dict[str, Any] | None = None) -> dict[str, Any
             by_id[tid] = _merge_tool(by_id[tid], tool)
         else:
             by_id[tid] = dict(tool)
+    return by_id, duplicate_ids
+
+
+def recheck_tool(
+    tool_id: str,
+    *,
+    state: dict[str, Any] | None = None,
+    persist: bool = False,
+) -> dict[str, Any] | None:
+    """Re-matérialise un seul tool *en direct* (relance les probes de connexion),
+    en contournant le chemin rapide de l'index. Relit aussi les annotations sur disque.
+
+    Si ``persist`` est vrai, écrit le tool re-matérialisé dans l'index local-first pour
+    que le statut fraîchement sondé survive à un rechargement (sans ``zab sync`` complet)."""
+
+    if state is None:
+        try:
+            from zab.services import state_index
+
+            state = state_index.load_state()
+        except Exception:
+            state = {}
+    by_id, _ = _collect_raw_tools(state)
+    key = tool_id.strip().lower()
+    match = next((tool for tid, tool in by_id.items() if str(tid).lower() == key), None)
+    if not match:
+        return None
+    materialized = _materialize_tool(match, state=state)
+    if persist:
+        try:
+            from zab.services import postgres_store as state_store
+
+            state_store.upsert_state_item("tools", str(materialized.get("id") or tool_id), materialized)
+        except Exception:
+            pass
+    return materialized
+
+
+_EDITABLE_STRING_FIELDS = ("label", "kind", "coverage", "safety", "notes")
+_EDITABLE_LIST_FIELDS = ("keywords", "examples", "skill_refs", "commands")
+
+
+def editable_tool_fields(tool_id: str, *, state: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Valeurs effectives éditables d'un tool (pour préremplir le formulaire)."""
+
+    tool = recheck_tool(tool_id, state=state)
+    if not tool:
+        return None
+    fields: dict[str, Any] = {field: tool.get(field) for field in _EDITABLE_STRING_FIELDS}
+    for field in _EDITABLE_LIST_FIELDS:
+        fields[field] = _string_list(tool.get(field))
+    return fields
+
+
+def _clean_annotation_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for field in _EDITABLE_STRING_FIELDS:
+        if field in patch and patch[field] is not None:
+            out[field] = str(patch[field]).strip()
+    for field in _EDITABLE_LIST_FIELDS:
+        if field in patch and patch[field] is not None:
+            out[field] = _string_list(patch[field])
+    return out
+
+
+def update_tool_annotations(tool_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+    """Écrit/merge les champs éditables d'un tool dans ``~/.config/zab/tools.yaml``
+    puis renvoie le tool re-matérialisé en direct. Retourne ``None`` si tool inconnu."""
+
+    tid = tool_id.strip()
+    if not tid:
+        return None
+    # Refuser un id inconnu : on ne crée pas de tool ex nihilo depuis l'UI.
+    if recheck_tool(tid) is None:
+        return None
+
+    cleaned = _clean_annotation_patch(patch)
+    path = tools_catalog_config_path()
+    doc = _read_yaml(path)
+    if not isinstance(doc, dict) or doc.get("_error"):
+        doc = {}
+    tools_section = doc.get("tools")
+    if not isinstance(tools_section, dict):
+        tools_section = {}
+    existing = tools_section.get(tid)
+    existing = dict(existing) if isinstance(existing, dict) else {}
+    existing.update(cleaned)
+    existing.setdefault("id", tid)
+    tools_section[tid] = existing
+    doc["tools"] = tools_section
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    updated = recheck_tool(tid)
+    # Refléter immédiatement l'édition dans l'index local-first (chemin rapide de
+    # lecture) sans attendre un ``zab sync`` complet.
+    if updated is not None:
+        try:
+            from zab.services import postgres_store as state_store
+
+            key = str(updated.get("id") or tid)
+            state_store.upsert_state_item("tools", key, _sanitize_payload(updated))
+        except Exception:
+            pass
+    return updated
+
+
+def build_tools_catalog(*, state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Construit le catalogue canonique des tools Zab."""
+
+    loaded_from_index = False
+    if state is None:
+        try:
+            from zab.services import state_index
+
+            state = state_index.load_state()
+            loaded_from_index = True
+        except Exception:
+            state = {}
+
+    # Chemin rapide (lecture) : réutiliser les tools déjà matérialisés par
+    # ``zab sync`` dans l'index plutôt que de re-matérialiser à chaque appel
+    # (~3 s de _materialize_tool). Le build canonique reste inchangé quand un
+    # ``state`` explicite est fourni (cas de state_index.build_state).
+    if loaded_from_index and isinstance(state, dict):
+        prebuilt = state.get("tools")
+        if isinstance(prebuilt, dict) and prebuilt:
+            reused_by_id = {
+                str(t.get("id") or key): dict(t)
+                for key, t in prebuilt.items()
+                if isinstance(t, dict) and str(t.get("id") or key).strip()
+            }
+            for tool in _domain_tools(state):
+                tid = str(tool.get("id") or "").strip()
+                if tid and tid not in reused_by_id:
+                    reused_by_id[tid] = _materialize_tool(tool, state=state)
+            reused = list(reused_by_id.values())
+            reused = sorted(reused, key=lambda x: str(x.get("label") or x.get("id") or "").casefold())
+            payload = {
+                "contract": TOOLS_CATALOG_CONTRACT,
+                "contract_version": TOOLS_CATALOG_CONTRACT_VERSION,
+                "generated_at_utc": state.get("last_sync_at") or _now(),
+                "annotations_path": str(tools_catalog_config_path()),
+                "duplicate_ids": [],
+                "summary": _summarize_tools(reused),
+                "tools": reused,
+            }
+            return _sanitize_payload(payload)
+
+    by_id, duplicate_ids = _collect_raw_tools(state)
 
     tools = [_materialize_tool(tool, state=state) for tool in by_id.values()]
     tools = sorted(tools, key=lambda x: str(x.get("label") or x.get("id") or "").casefold())

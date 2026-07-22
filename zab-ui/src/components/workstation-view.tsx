@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type WorkstationStatus = {
   found: boolean
@@ -165,6 +166,14 @@ export function WorkstationView() {
   const state = (status?.status || 'unknown').toUpperCase()
   const canStart = status?.found && !['RUNNING', 'STARTING', 'PROVISIONING'].includes(state)
   const canStop = status?.found && !['TERMINATED', 'STOPPED', 'STOPPING'].includes(state)
+
+  if (loading && !status) {
+    return (
+      <div className="space-y-6" data-testid="workstation-view">
+        <LoadingState label="Chargement de la workstation…" />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

@@ -136,19 +136,35 @@ def _tool_result(tool: dict[str, Any], *, validation_issues: list[dict[str, Any]
     }
 
 
-def check_tool(tool_id: str, *, state: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    catalog = tool_catalog.build_tools_catalog(state=state)
-    key = tool_id.strip().lower()
-    tool = next((row for row in catalog.get("tools") or [] if str(row.get("id") or "").lower() == key), None)
-    if not tool:
-        return None
+def check_tool(
+    tool_id: str,
+    *,
+    state: dict[str, Any] | None = None,
+    refresh: bool = False,
+) -> dict[str, Any] | None:
+    if refresh:
+        # Recheck unitaire *en direct* : relance les probes de connexion pour ce seul
+        # tool au lieu de relire le statut mis en cache par ``zab sync``.
+        tool = tool_catalog.recheck_tool(tool_id, state=state, persist=True)
+        if not tool:
+            return None
+        generated_at = tool.get("last_checked_at_utc") or _now()
+    else:
+        catalog = tool_catalog.build_tools_catalog(state=state)
+        key = tool_id.strip().lower()
+        tool = next((row for row in catalog.get("tools") or [] if str(row.get("id") or "").lower() == key), None)
+        if not tool:
+            return None
+        generated_at = catalog.get("generated_at_utc")
+
     by_tool = _validation_issues(state=state)
     result = _tool_result(tool, validation_issues=by_tool.get(str(tool.get("id") or ""), []))
     result.update(
         {
             "contract": "tools-check",
             "contract_version": tool_catalog.TOOLS_CATALOG_CONTRACT_VERSION,
-            "generated_at_utc": catalog.get("generated_at_utc"),
+            "generated_at_utc": generated_at,
+            "refreshed": bool(refresh),
         }
     )
     return result

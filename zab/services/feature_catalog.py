@@ -119,6 +119,14 @@ FEATURES: list[dict[str, Any]] = [
         "files": ["~/.local/share/zab/audit.log"],
     },
     {
+        "id": "request-logs",
+        "category": "observability",
+        "summary": "Journalise les requêtes Zab redacted par surface CLI, API/dashboard, MCP et jobs.",
+        "cli": ["zab logs tail", "zab logs query --json", "zab logs summary --json"],
+        "api": ["GET /api/logs/events", "GET /api/logs/summary", "GET /api/logs/tail"],
+        "files": ["~/.local/share/zab/logs/requests.jsonl", "~/.local/share/zab/logs/errors.jsonl"],
+    },
+    {
         "id": "dashboard",
         "category": "ui",
         "summary": "Dashboard FastAPI + React pour explorer l'inventaire et lancer jobs/probes.",
@@ -187,6 +195,13 @@ def agent_guide() -> dict[str, Any]:
             {
                 "goal": "Discover available connectors and required env vars",
                 "commands": ["zab inventory connectors --json", "zab inspect connectors <slug> --json"],
+            },
+            {
+                "goal": "Locate an API key/token name without exposing the raw value",
+                "commands": [
+                    "zab security locate <service-or-keyword> --json",
+                    "zab security status --json",
+                ],
             },
             {
                 "goal": "Prepare context for a web agent",

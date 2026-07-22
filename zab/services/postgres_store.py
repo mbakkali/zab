@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -15,7 +15,7 @@ from zab.paths import config_dir, data_dir
 from zab.services.postgres_dsn import resolve_postgres_dsn
 from zab.services.memory_db import _pg_connect_timeout, memory_psycopg_available
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 SCHEMA = "zab_core"
 TABLES = (
     "sync_meta",
@@ -28,6 +28,7 @@ TABLES = (
     "cron_runs",
     "communication_channels",
     "dashboard_actions",
+    "request_events",
     "search_index",
     "brain_conversations",
     "brain_messages",
@@ -103,20 +104,29 @@ def _json_loads(value: Any, default: Any) -> Any:
         return default
 
 
+# DSN déjà migrés dans ce process : la migration (CREATE TABLE/INDEX IF NOT
+# EXISTS ×30) coûte ~1 s et n'a besoin de tourner qu'une fois par process. Sans
+# ce garde-fou, chaque connexion (donc chaque log de requête, chaque lecture)
+# relançait tout le DDL. Cf. profilage middleware.
+_MIGRATED_DSNS: set[str] = set()
+
+
 def _connect(*, migrate: bool = True):
     if not memory_psycopg_available():
         raise PostgresUnavailable("psycopg absent ; exécuter `uv sync --extra memory`.")
+    dsn = _dsn()
     try:
         import psycopg
         from psycopg.rows import dict_row
 
-        conn = psycopg.connect(_dsn(), connect_timeout=_pg_connect_timeout(), row_factory=dict_row)
+        conn = psycopg.connect(dsn, connect_timeout=_pg_connect_timeout(), row_factory=dict_row)
     except PostgresStoreError:
         raise
     except Exception as exc:  # noqa: BLE001 - normalize external driver errors
         raise PostgresUnavailable(str(exc)) from exc
-    if migrate:
+    if migrate and dsn not in _MIGRATED_DSNS:
         migrate_schema(conn)
+        _MIGRATED_DSNS.add(dsn)
     return conn
 
 
@@ -161,6 +171,18 @@ def migrate_schema(conn: Any | None = None) -> dict[str, Any]:
                 cur.execute(
                     f"INSERT INTO {SCHEMA}.schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
                     (2,)
+                )
+            if current < 3:
+                _migrate_v3(cur)
+                cur.execute(
+                    f"INSERT INTO {SCHEMA}.schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
+                    (3,)
+                )
+            if current < 4:
+                _migrate_v4(cur)
+                cur.execute(
+                    f"INSERT INTO {SCHEMA}.schema_migrations (version) VALUES (%s) ON CONFLICT (version) DO NOTHING",
+                    (4,)
                 )
             conn.commit()
             return {
@@ -342,6 +364,105 @@ def _migrate_v2(cur: Any) -> None:
         cur.execute(
             f"CREATE TABLE IF NOT EXISTS {SCHEMA}.{table} (id text PRIMARY KEY, payload jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())"
         )
+
+
+def _migrate_v3(cur: Any) -> None:
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.request_events (
+            event_id text PRIMARY KEY,
+            ts timestamptz NOT NULL,
+            level text NOT NULL,
+            component text,
+            surface text,
+            request_id text,
+            actor_id text,
+            actor_kind text,
+            org text,
+            project_id text,
+            project_path text,
+            task_source_id text,
+            request_name text,
+            status text,
+            duration_ms integer,
+            http_status integer,
+            exit_code integer,
+            payload jsonb NOT NULL
+        )
+        """
+    )
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_request_events_ts ON {SCHEMA}.request_events(ts DESC)")
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_request_events_surface ON {SCHEMA}.request_events(surface)")
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_request_events_component ON {SCHEMA}.request_events(component)")
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_request_events_actor ON {SCHEMA}.request_events(actor_id)")
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_request_events_org ON {SCHEMA}.request_events(org)")
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_request_events_project ON {SCHEMA}.request_events(project_id)")
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_request_events_status ON {SCHEMA}.request_events(status)")
+
+
+def _migrate_v4(cur: Any) -> None:
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.ledger_events (
+            event_id text PRIMARY KEY,
+            source text NOT NULL,
+            native_id text NOT NULL,
+            channel_id text,
+            timestamp timestamptz,
+            payload_json jsonb NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE(source, native_id)
+        )
+        """
+    )
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_zab_core_ledger_events_ts ON {SCHEMA}.ledger_events(timestamp DESC)")
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.ledger_workpackets (
+            workpacket_id text PRIMARY KEY,
+            display_id text UNIQUE,
+            state text,
+            organization_id text,
+            client_workstream_id text,
+            payload_json jsonb NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """
+    )
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.ledger_projection_states (
+            workpacket_id text NOT NULL,
+            target text NOT NULL,
+            status text,
+            payload_json jsonb NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (workpacket_id, target)
+        )
+        """
+    )
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.ledger_organizations (
+            organization_id text PRIMARY KEY,
+            label text NOT NULL,
+            payload_json jsonb NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """
+    )
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA}.ledger_workstreams (
+            client_workstream_id text PRIMARY KEY,
+            organization_id text NOT NULL,
+            label text NOT NULL,
+            payload_json jsonb NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """
+    )
 
 
 def schema_version(conn: Any | None = None) -> int:
@@ -564,6 +685,38 @@ def get_state_item(section: str, key: str) -> dict[str, Any] | None:
         ):
             return {"key": str(item["item_key"]), **payload}
     return None
+
+
+def upsert_state_item(section: str, key: str, payload: dict[str, Any]) -> None:
+    """Met à jour un seul item de l'index (state + search) sans reconstruire tout l'état.
+
+    Permet à une édition unitaire (ex: annotation d'un tool) d'être immédiatement visible
+    par le chemin rapide de lecture, sans ``zab sync`` complet."""
+
+    if not resolve_postgres_dsn():
+        from zab.services import local_db as sqlite_store
+
+        return sqlite_store.upsert_state_item(section, key, payload)
+    if not has_state():
+        return
+    now = utc_now()
+    payload = payload if isinstance(payload, dict) else {"value": payload}
+    with transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO {SCHEMA}.state_sections (section, item_key, payload, updated_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (section, item_key)
+                DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at
+                """,
+                (section, str(key), _jsonb(payload), now),
+            )
+            cur.execute(
+                f"DELETE FROM {SCHEMA}.search_index WHERE section = %s AND item_key = %s",
+                (section, str(key)),
+            )
+            _upsert_search_index(cur, section, str(key), payload)
 
 
 def search_state(query: str, *, sections: list[str] | None = None, limit: int = 20) -> list[dict[str, Any]]:
@@ -998,6 +1151,119 @@ def update_dashboard_action(action_id: str, patch: dict[str, Any]) -> dict[str, 
     return updated
 
 
+def save_request_event(event: dict[str, Any]) -> None:
+    if not resolve_postgres_dsn():
+        from zab.services import local_db as sqlite_store
+
+        return sqlite_store.save_request_event(event)
+    actor = event.get("actor") if isinstance(event.get("actor"), dict) else {}
+    scope = event.get("scope") if isinstance(event.get("scope"), dict) else {}
+    request = event.get("request") if isinstance(event.get("request"), dict) else {}
+    result = event.get("result") if isinstance(event.get("result"), dict) else {}
+    with transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO {SCHEMA}.request_events
+                  (event_id, ts, level, component, surface, request_id, actor_id, actor_kind,
+                   org, project_id, project_path, task_source_id, request_name, status,
+                   duration_ms, http_status, exit_code, payload)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO UPDATE SET
+                  ts = EXCLUDED.ts,
+                  level = EXCLUDED.level,
+                  component = EXCLUDED.component,
+                  surface = EXCLUDED.surface,
+                  request_id = EXCLUDED.request_id,
+                  actor_id = EXCLUDED.actor_id,
+                  actor_kind = EXCLUDED.actor_kind,
+                  org = EXCLUDED.org,
+                  project_id = EXCLUDED.project_id,
+                  project_path = EXCLUDED.project_path,
+                  task_source_id = EXCLUDED.task_source_id,
+                  request_name = EXCLUDED.request_name,
+                  status = EXCLUDED.status,
+                  duration_ms = EXCLUDED.duration_ms,
+                  http_status = EXCLUDED.http_status,
+                  exit_code = EXCLUDED.exit_code,
+                  payload = EXCLUDED.payload
+                """,
+                (
+                    str(event.get("event_id") or ""),
+                    event.get("ts") or utc_now(),
+                    str(event.get("level") or "INFO"),
+                    event.get("component"),
+                    event.get("surface"),
+                    event.get("request_id"),
+                    actor.get("id"),
+                    actor.get("kind"),
+                    scope.get("org"),
+                    scope.get("project_id"),
+                    scope.get("project_path"),
+                    scope.get("task_source_id"),
+                    request.get("name") or request.get("path") or request.get("tool") or request.get("command"),
+                    result.get("status"),
+                    _int_or_none(result.get("duration_ms")),
+                    _int_or_none(result.get("http_status")),
+                    _int_or_none(result.get("exit_code")),
+                    _jsonb(event),
+                ),
+            )
+
+
+def query_request_events(filters: dict[str, Any] | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
+    if not resolve_postgres_dsn():
+        from zab.services import local_db as sqlite_store
+
+        return sqlite_store.query_request_events(filters, limit=limit)
+    filters = filters or {}
+    capped = max(1, min(1000, int(limit)))
+    where: list[str] = []
+    params: list[Any] = []
+    for key, column in (
+        ("surface", "surface"),
+        ("component", "component"),
+        ("actor", "actor_id"),
+        ("org", "org"),
+        ("project", "project_id"),
+        ("status", "status"),
+    ):
+        value = filters.get(key)
+        if value not in (None, ""):
+            where.append(f"LOWER(COALESCE({column}, '')) LIKE %s")
+            params.append(f"%{str(value).lower()}%")
+    since = _since_to_iso(filters.get("since"))
+    if since:
+        where.append("ts >= %s")
+        params.append(since)
+    q = str(filters.get("q") or "").strip()
+    if q:
+        where.append("LOWER(payload::text) LIKE %s")
+        params.append(f"%{q.lower()}%")
+    level = filters.get("level")
+    if level:
+        ranks = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+        allowed = [name for name, rank in ranks.items() if rank >= ranks.get(str(level).upper(), 20)]
+        where.append("level = ANY(%s)")
+        params.append(allowed)
+    sql_where = " AND ".join(where) if where else "true"
+    params.append(capped)
+    with _connect(migrate=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT payload
+                FROM {SCHEMA}.request_events
+                WHERE {sql_where}
+                ORDER BY ts DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            )
+            rows = cur.fetchall()
+    return [_json_loads(r["payload"], {}) for r in rows]
+
+
 def export_database(*, fmt: str = "json") -> str:
     if not resolve_postgres_dsn():
         from zab.services import local_db as sqlite_store
@@ -1020,6 +1286,7 @@ def export_database(*, fmt: str = "json") -> str:
         "cron_runs": _dump_table("cron_runs"),
         "communication_channels": _dump_table("communication_channels"),
         "dashboard_actions": _dump_table("dashboard_actions"),
+        "request_events": _dump_table("request_events"),
     }
     if fmt == "yaml":
         return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
@@ -1037,6 +1304,36 @@ def _dump_table(name: str) -> list[dict[str, Any]]:
         clean.pop("tsv", None)
         out.append(_json_safe(clean))
     return out
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _since_to_iso(raw: Any) -> str | None:
+    if raw in (None, ""):
+        return None
+    text = str(raw).strip().lower()
+    if text.endswith(("s", "m", "h", "d")) and text[:-1].isdigit():
+        value = int(text[:-1])
+        unit = text[-1]
+        delta = {
+            "s": 1,
+            "m": 60,
+            "h": 3600,
+            "d": 86400,
+        }[unit]
+        return (datetime.now(timezone.utc) - timedelta(seconds=value * delta)).isoformat()
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
+    except ValueError:
+        return None
 
 
 def import_legacy() -> dict[str, Any]:

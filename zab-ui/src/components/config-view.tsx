@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock3,
   Code2,
   Copy,
   ExternalLink,
@@ -19,6 +20,7 @@ import {
 import { toast } from 'sonner'
 import { useI18n } from '@/i18n/use-i18n'
 import type { TranslationVars } from '@/i18n/types'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type TFn = (key: string, vars?: TranslationVars) => string
 
@@ -172,6 +174,79 @@ type TaskSourceSecretLocation = {
   suggested_paths?: string[]
 }
 
+type ConfigSyncStatus = {
+  status?: string | null
+  last_synced_at?: string | null
+  source?: string | null
+  detail?: string | null
+}
+
+type ConfigSyncPayload = {
+  generated_at_utc?: string
+  state_last_sync_at?: string | null
+  sections?: Record<string, ConfigSyncStatus>
+  items?: Record<string, Record<string, ConfigSyncStatus>>
+}
+
+function formatConfigSyncDate(value: string, intlLocale: string, compact = false): string {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return new Intl.DateTimeFormat(
+    intlLocale,
+    compact
+      ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+      : { dateStyle: 'medium', timeStyle: 'short' },
+  ).format(d)
+}
+
+function configSyncLabel(
+  status: ConfigSyncStatus | undefined,
+  intlLocale: string,
+  t: TFn,
+  compact = false,
+): string {
+  const when = status?.last_synced_at
+  if (!when) return t('config.sync.never')
+  return compact
+    ? t('config.sync.lastCompact', { date: formatConfigSyncDate(when, intlLocale, true) })
+    : t('config.sync.lastFull', { date: formatConfigSyncDate(when, intlLocale, false) })
+}
+
+function ConfigSyncBadge({
+  status,
+  compact = false,
+}: {
+  status: ConfigSyncStatus | undefined
+  compact?: boolean
+}) {
+  const { t, intlLocale } = useI18n()
+  const hasDate = Boolean(status?.last_synced_at)
+  const label = configSyncLabel(status, intlLocale, t, compact)
+  const title = [
+    configSyncLabel(status, intlLocale, t, false),
+    status?.source ? t('config.sync.source', { source: status.source }) : '',
+    status?.detail ? t('config.sync.detail', { detail: status.detail }) : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return (
+    <span
+      className={cn(
+        'inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+        hasDate
+          ? 'border-sky-200 bg-sky-50 text-sky-800'
+          : 'border-zinc-200 bg-muted/60 text-muted-foreground',
+        compact ? 'max-w-full px-1.5' : 'shrink-0',
+      )}
+      title={title}
+    >
+      <Clock3 size={11} className="shrink-0" />
+      <span className="truncate">{label}</span>
+    </span>
+  )
+}
+
 type FieldProps = {
   value: unknown
   onChange: (next: unknown) => void
@@ -179,6 +254,7 @@ type FieldProps = {
   depth?: number
   fieldKey?: string
   secretHintsById?: Record<string, TaskSourceSecretLocation>
+  syncItemsById?: Record<string, ConfigSyncStatus>
 }
 
 function FieldRenderer({
@@ -188,6 +264,7 @@ function FieldRenderer({
   depth = 0,
   fieldKey,
   secretHintsById,
+  syncItemsById,
 }: FieldProps) {
   const { t } = useI18n()
   if (value === null || value === undefined) {
@@ -241,6 +318,7 @@ function FieldRenderer({
           readOnly={readOnly}
           depth={depth}
           secretHintsById={secretHintsById}
+          syncItemsById={syncItemsById}
         />
       )
     }
@@ -261,6 +339,7 @@ function FieldRenderer({
         readOnly={readOnly}
         depth={depth}
         secretHintsById={secretHintsById}
+        syncItemsById={syncItemsById}
       />
     )
   }
@@ -656,12 +735,14 @@ function ObjectListField({
   readOnly,
   depth = 0,
   secretHintsById,
+  syncItemsById,
 }: {
   value: Record<string, unknown>[]
   onChange: (next: Record<string, unknown>[]) => void
   readOnly?: boolean
   depth?: number
   secretHintsById?: Record<string, TaskSourceSecretLocation>
+  syncItemsById?: Record<string, ConfigSyncStatus>
 }) {
   const { t } = useI18n()
   const [openIdx, setOpenIdx] = useState<number | null>(null)
@@ -686,6 +767,12 @@ function ObjectListField({
       <ul className="space-y-1.5">
         {value.map((item, idx) => {
           const open = openIdx === idx
+          const itemSyncKey =
+            (typeof item.id === 'string' && item.id) ||
+            (typeof item.key === 'string' && item.key) ||
+            (typeof item.name === 'string' && item.name) ||
+            ''
+          const itemSync = itemSyncKey ? syncItemsById?.[itemSyncKey] : undefined
           return (
             <li key={idx} className="border-border rounded-lg border">
               <div className="flex items-center gap-2 px-3 py-2">
@@ -703,6 +790,7 @@ function ObjectListField({
                 <span className="text-muted-foreground text-[10px]">
                   {t('config.ui.fieldsCount', { count: String(Object.keys(item).length) })}
                 </span>
+                {itemSync ? <ConfigSyncBadge status={itemSync} compact /> : null}
                 <div className="ml-auto flex gap-1">
                   {!readOnly && (
                     <button
@@ -724,6 +812,7 @@ function ObjectListField({
                     readOnly={readOnly}
                     depth={depth + 1}
                     secretHintsById={secretHintsById}
+                    syncItemsById={syncItemsById}
                   />
                 </div>
               )}
@@ -791,12 +880,14 @@ function ObjectField({
   readOnly,
   depth = 0,
   secretHintsById,
+  syncItemsById,
 }: {
   value: Record<string, unknown>
   onChange: (next: Record<string, unknown>) => void
   readOnly?: boolean
   depth?: number
   secretHintsById?: Record<string, TaskSourceSecretLocation>
+  syncItemsById?: Record<string, ConfigSyncStatus>
 }) {
   const { t } = useI18n()
   const entries = Object.entries(value)
@@ -817,6 +908,7 @@ function ObjectField({
               readOnly={readOnly}
               depth={depth + 1}
               fieldKey={k}
+              syncItemsById={syncItemsById}
             />
             {k === 'env_token' && typeof value.id === 'string' ? (
               <EnvTokenSourceHint
@@ -839,7 +931,7 @@ function ObjectField({
 // ────────────────────────────────────────────────────────────────────────────
 
 export function ConfigView() {
-  const { t } = useI18n()
+  const { t, intlLocale } = useI18n()
   const [rows, setRows] = useState<ConfigFileSummary[]>([])
   const [chosen] = useState<string>(USER_CONFIG_KEY)
   const [rawText, setRawText] = useState<string>('')
@@ -853,6 +945,10 @@ export function ConfigView() {
   const [viewMode, setViewMode] = useState<'form' | 'yaml'>('form')
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [secretHintsById, setSecretHintsById] = useState<Record<string, TaskSourceSecretLocation>>({})
+  const [syncStatusBySection, setSyncStatusBySection] = useState<Record<string, ConfigSyncStatus>>({})
+  const [syncItemsBySection, setSyncItemsBySection] = useState<
+    Record<string, Record<string, ConfigSyncStatus>>
+  >({})
   const aggregatorStale = false
 
   const editable = chosen === USER_CONFIG_KEY
@@ -939,6 +1035,22 @@ export function ConfigView() {
         setSecretHintsById(map)
       } catch {
         setSecretHintsById({})
+      }
+    })()
+  }, [chosen, reloadNonce])
+
+  useEffect(() => {
+    if (chosen !== USER_CONFIG_KEY) return
+    void (async () => {
+      try {
+        const r = await fetch('/api/config/sync-status')
+        if (!r.ok) return
+        const j = (await r.json()) as ConfigSyncPayload
+        setSyncStatusBySection(j.sections ?? {})
+        setSyncItemsBySection(j.items ?? {})
+      } catch {
+        setSyncStatusBySection({})
+        setSyncItemsBySection({})
       }
     })()
   }, [chosen, reloadNonce])
@@ -1069,6 +1181,14 @@ export function ConfigView() {
 
   const backendNeedsRestart = detectsStaleZabAggregatorBackend(banner)
   const yamlHasComments = hasYamlComments(rawText)
+
+  if (busy && !meta) {
+    return (
+      <div className="space-y-4" data-testid="connectors-config-panel">
+        <LoadingState label={t('common.loading')} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4" data-testid="connectors-config-panel">
@@ -1260,19 +1380,32 @@ export function ConfigView() {
                         {keys.map((key) => {
                           const active = key === activeSection
                           const count = countItems(sectionValueByKey[key])
+                          const syncStatus = syncStatusBySection[key]
                           return (
                             <li key={key}>
                               <button
                                 type="button"
                                 onClick={() => setActiveSection(key)}
                                 className={cn(
-                                  'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition',
+                                  'flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition',
                                   active
                                     ? 'bg-zinc-900 text-white'
                                     : 'text-foreground hover:bg-muted',
                                 )}
                               >
-                                <span className="truncate">{configSectionLabel(key, t)}</span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">{configSectionLabel(key, t)}</span>
+                                  {syncStatus ? (
+                                    <span
+                                      className={cn(
+                                        'block truncate text-[10px]',
+                                        active ? 'text-white/65' : 'text-muted-foreground',
+                                      )}
+                                    >
+                                      {configSyncLabel(syncStatus, intlLocale, t, true)}
+                                    </span>
+                                  ) : null}
+                                </span>
                                 {count !== null && (
                                   <span
                                     className={cn(
@@ -1304,6 +1437,8 @@ export function ConfigView() {
                   onChange={(next) => updateSection(activeSection, next)}
                   readOnly={!editable || aggregatorStale}
                   secretHintsById={activeSection === 'task_sources' ? secretHintsById : undefined}
+                  syncStatus={syncStatusBySection[activeSection]}
+                  syncItemsById={syncItemsBySection[activeSection]}
                 />
               )}
             </section>
@@ -1324,26 +1459,33 @@ function SectionPanel({
   onChange,
   readOnly,
   secretHintsById,
+  syncStatus,
+  syncItemsById,
 }: {
   sectionKey: string
   value: unknown
   onChange: (next: unknown) => void
   readOnly?: boolean
   secretHintsById?: Record<string, TaskSourceSecretLocation>
+  syncStatus?: ConfigSyncStatus
+  syncItemsById?: Record<string, ConfigSyncStatus>
 }) {
   const { t } = useI18n()
   const description = configSectionDescription(sectionKey, t)
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-1">
-        <div className="flex items-baseline gap-2">
-          <h3 className="text-lg font-semibold">{configSectionLabel(sectionKey, t)}</h3>
-          <code className="text-muted-foreground font-mono text-[11px]">{sectionKey}</code>
-          <span className="text-muted-foreground text-[11px]">{describeType(value, t)}</span>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h3 className="text-lg font-semibold">{configSectionLabel(sectionKey, t)}</h3>
+            <code className="text-muted-foreground font-mono text-[11px]">{sectionKey}</code>
+            <span className="text-muted-foreground text-[11px]">{describeType(value, t)}</span>
+          </div>
+          {description ? (
+            <p className="text-muted-foreground text-xs">{description}</p>
+          ) : null}
         </div>
-        {description ? (
-          <p className="text-muted-foreground text-xs">{description}</p>
-        ) : null}
+        {syncStatus ? <ConfigSyncBadge status={syncStatus} /> : null}
       </div>
 
       <div className="rounded-lg border border-border p-4">
@@ -1353,6 +1495,7 @@ function SectionPanel({
           readOnly={readOnly}
           fieldKey={sectionKey}
           secretHintsById={secretHintsById}
+          syncItemsById={syncItemsById}
         />
       </div>
     </div>

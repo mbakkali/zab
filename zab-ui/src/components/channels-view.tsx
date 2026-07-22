@@ -30,6 +30,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/loading-state'
 
 export type ChannelSyncSummary = {
   unread_count: number
@@ -322,6 +323,7 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
 
   return (
     <section className="space-y-5" data-testid="channels-view">
+      {loading && !data ? <LoadingState label="Chargement des canaux…" /> : null}
       <header className="flex flex-col gap-3 border-b pb-4 md:flex-row md:items-start md:justify-between">
         <div>
           <p className="text-muted-foreground text-sm font-medium uppercase">Communication</p>

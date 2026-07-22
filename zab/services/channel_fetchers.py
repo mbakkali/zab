@@ -23,7 +23,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Tuple
 
 import httpx
 
@@ -81,7 +81,7 @@ def _clean_stderr(text: str) -> str:
     return " ".join(keep)
 
 
-FetcherResult = tuple[list[dict[str, Any]], dict[str, Any] | None, str, str | None]
+FetcherResult = Tuple[list[dict[str, Any]], Optional[dict[str, Any]], str, Optional[str]]
 
 
 def _slug(value: str) -> str:
@@ -115,10 +115,10 @@ def fetch_gmail_via_gog(channel: dict[str, Any], now_dt: datetime) -> FetcherRes
         return [], None, "degraded", "missing_email_address"
 
     base_cmd = ["gog", "gmail", "messages", "search", "is:unread", "-a", address, "-j", "--no-input"]
-    # gog gère des clients OAuth nommés (un par compte). Si on connaît le client à partir
-    # de l'org du canal (carrefour, flowmetrik, upfund…), on le passe explicitement.
-    client_name = (channel.get("org") or "").strip().lower()
-    if client_name and client_name not in ("personal", "perso"):
+    # gog gère des clients OAuth nommés (un par compte). `gog_client` permet de
+    # dissocier l'organisation métier du client OAuth réellement stocké.
+    client_name = (channel.get("gog_client") or channel.get("org") or "").strip().lower()
+    if client_name and client_name not in ("auto",):
         base_cmd.extend(["--client", client_name])
 
     def _run(extra_flags: list[str]) -> tuple[int, str, str]:

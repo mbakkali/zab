@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { useI18n } from '@/i18n/use-i18n'
+import { LoadingState } from '@/components/ui/loading-state'
 
 interface CronDetail {
   project?: string
@@ -221,6 +222,10 @@ export default function CronsView() {
           </button>
         </div>
       </div>
+
+      {loading && crons.length === 0 ? (
+        <LoadingState label={t('crons.loading')} />
+      ) : null}
 
       {/* Grid principale : liste de gauche, logs à droite */}
       <div className="flex min-h-0 flex-1 gap-6 overflow-hidden">

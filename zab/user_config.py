@@ -56,6 +56,10 @@ cli_watchlist: []
 #   - personal
 #   - clients
 
+# Observabilité locale. Les logs restent redacted et écrits sous ~/.local/share/zab/logs par défaut.
+# logging:
+#   default_actor: mehdi
+
 # Création/synchronisation optionnelle d'un dépôt personnel de skills.
 # Par défaut, les opérations réseau restent explicites (`zab skill sync --push`).
 # skills_sync:

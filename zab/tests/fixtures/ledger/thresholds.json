@@ -1,0 +1,4 @@
+{
+  "clustering_precision_min": 0.8,
+  "ambiguity_rate_max": 0.35
+}

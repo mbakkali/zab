@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import yaml
 from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
 from zab.api.app import create_app
+from zab.cli import app
+from zab.services import agent_context
+from zab.services.secrets_scan import locate_secret_names
 from zab.user_config import security_env_paths_resolved, security_env_paths_strings_ordered
 
 
@@ -92,3 +96,66 @@ def test_security_env_files_api(monkeypatch, tmp_path):
     assert r2.status_code == 200
     r3 = client.get(f"/api/security/env-file?path={files[1]['path']}")
     assert r3.json()["content"] == "X=hermes\n"
+
+
+def test_security_locate_finds_untracked_env_name_without_value(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env_path = tmp_path / ".env"
+    raw_secret = "payfit-secret-value"
+    env_path.write_text(f"MEHDI_PAYFIT_APIKEY={raw_secret}\n", encoding="utf-8")
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(
+        yaml.safe_dump({"security_env_paths": [str(env_path.resolve())], "cli_watchlist": []}),
+        encoding="utf-8",
+    )
+
+    payload = locate_secret_names("api key payfit")
+
+    assert payload["contract"] == "security-secret-locate"
+    assert payload["total"] == 1
+    match = payload["matches"][0]
+    assert match["name"] == "MEHDI_PAYFIT_APIKEY"
+    assert match["present"] is True
+    assert match["sources"][0]["line"] == 1
+    dumped = str(payload)
+    assert raw_secret not in dumped
+    assert match["masked"].endswith("alue")
+
+
+def test_security_locate_cli_api_mcp_and_search(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env_path = tmp_path / ".env"
+    raw_secret = "payfit-secret-value"
+    env_path.write_text(f"MEHDI_PAYFIT_APIKEY={raw_secret}\n", encoding="utf-8")
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(
+        yaml.safe_dump({"security_env_paths": [str(env_path.resolve())], "cli_watchlist": []}),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    cli = runner.invoke(app, ["security", "locate", "payfit", "--json"])
+    assert cli.exit_code == 0, cli.output
+    assert raw_secret not in cli.stdout
+    assert "MEHDI_PAYFIT_APIKEY" in cli.stdout
+
+    search_cli = runner.invoke(app, ["search", "payfit", "--json"])
+    assert search_cli.exit_code == 0, search_cli.output
+    assert raw_secret not in search_cli.stdout
+    assert "MEHDI_PAYFIT_APIKEY" in search_cli.stdout
+
+    client = TestClient(create_app())
+    api = client.get("/api/security/locate?q=payfit")
+    assert api.status_code == 200
+    assert api.json()["matches"][0]["name"] == "MEHDI_PAYFIT_APIKEY"
+    assert raw_secret not in api.text
+
+    mcp = agent_context.call_mcp_tool("security_locate", {"query": "payfit"})
+    assert mcp["matches"][0]["name"] == "MEHDI_PAYFIT_APIKEY"
+    assert raw_secret not in str(mcp)
+
+    search = agent_context.search("payfit", limit=5)
+    assert any(row.get("section") == "security" and row.get("key") == "MEHDI_PAYFIT_APIKEY" for row in search["data"])
+    assert raw_secret not in str(search)

@@ -160,6 +160,30 @@ def _fetch_linear(token: str, team_keys: list[str], project_id: str | None = Non
         }
         """
         payload = {"query": query, "variables": {"id": project_id, "first": max(_PER_PAGE, 40)}}
+    elif team_keys:
+        query = """
+        query TeamIssues($keys: [String!], $first: Int!) {
+          teams(first: 20, filter: { key: { in: $keys } }) {
+            nodes {
+              key
+              issues(first: $first, filter: { state: { type: { nin: ["completed", "canceled"] } } }) {
+                nodes {
+                  identifier
+                  title
+                  url
+                  updatedAt
+                  state { name type }
+                  team { key }
+                }
+              }
+            }
+          }
+        }
+        """
+        payload = {
+            "query": query,
+            "variables": {"keys": [k.upper() for k in team_keys], "first": max(_PER_PAGE, 40)},
+        }
     else:
         query = """
         query AssignedIssues($first: Int!) {
@@ -199,6 +223,23 @@ def _fetch_linear(token: str, team_keys: list[str], project_id: str | None = Non
         if not isinstance(project_data, dict):
             return []
         nodes = project_data.get("issues", {}).get("nodes")
+    elif team_keys:
+        team_blocks = data.get("teams")
+        if not isinstance(team_blocks, dict):
+            return []
+        team_nodes = team_blocks.get("nodes")
+        if not isinstance(team_nodes, list):
+            return []
+        nodes = []
+        for team_node in team_nodes:
+            if not isinstance(team_node, dict):
+                continue
+            issues_block = team_node.get("issues")
+            if not isinstance(issues_block, dict):
+                continue
+            issue_nodes = issues_block.get("nodes")
+            if isinstance(issue_nodes, list):
+                nodes.extend(issue_nodes)
     else:
         viewer = data.get("viewer")
         if not isinstance(viewer, dict):
@@ -241,6 +282,21 @@ def _fetch_linear(token: str, team_keys: list[str], project_id: str | None = Non
         )
         if len(out) >= _PER_PAGE:
             break
+    return out
+
+
+def _dedupe_task_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Avoid duplicate issues when broad and project-specific sources overlap."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        identifier = str(item.get("identifier") or item.get("url") or item.get("title") or "")
+        source_label = str(item.get("source_label") or "")
+        key = (source_label, identifier)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
     return out
 
 
@@ -523,7 +579,7 @@ def sync_tasks_inbox() -> dict[str, Any]:
     def _sort_key(item: dict[str, Any]) -> str:
         return item.get("updated_at") or ""
 
-    all_items_sorted = sorted(all_items, key=_sort_key, reverse=True)
+    all_items_sorted = sorted(_dedupe_task_items(all_items), key=_sort_key, reverse=True)
 
     result = {
         "generated_at_utc": _iso_now(),

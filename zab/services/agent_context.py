@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from zab.paths import config_dir, data_dir, resolve_skills_root
-from zab.services import jobs, obsidian_vault, postgres_store as local_db, state_index
+from zab.services import jobs, obsidian_vault, postgres_store as local_db, request_logs, state_index
 from zab.services.capabilities import get_capabilities
 from zab.services.feature_catalog import agent_guide, catalog
 from zab.services.memory_db import fetch_status as fetch_memory_status
-from zab.services.secrets_scan import scan_secret_presence
+from zab.services.secrets_scan import locate_secret_names, scan_secret_presence
 from zab.services.workspace_projects import discover_projects
 from zab.user_config import load_user_config, tracked_env_names_for_security, user_config_path
 
@@ -24,6 +25,8 @@ SAFE_AGENT_ACTIONS = {
     "bootstrap": "lecture_sure",
     "source_health": "lecture_sure",
     "research": "lecture_sure",
+    "workpacket_intake": "lecture_sure",
+    "workpacket_intake_rule": "lecture_sure",
     "search": "lecture_sure",
     "inspect": "lecture_sure",
     "skills_manifest": "lecture_sure",
@@ -31,6 +34,7 @@ SAFE_AGENT_ACTIONS = {
     "project_handoff": "lecture_sure",
     "memory_status": "lecture_sure",
     "security_status": "lecture_sure",
+    "security_locate": "lecture_sure",
 }
 
 
@@ -97,6 +101,14 @@ def security_status() -> dict[str, Any]:
     return payload
 
 
+def security_locate(query: str, *, limit: int = 20) -> dict[str, Any]:
+    """Locate secret/env variable names and sources without exposing raw values."""
+
+    payload = locate_secret_names(query, limit=limit)
+    append_audit_event("security_locate", {"result_count": payload.get("total", 0)})
+    return payload
+
+
 def agent_bootstrap(*, refresh: bool = False) -> dict[str, Any]:
     if refresh:
         path, state = state_index.sync_state()
@@ -144,12 +156,14 @@ def agent_bootstrap(*, refresh: bool = False) -> dict[str, Any]:
             "handoff": "zab agent handoff --project <name-or-path> --json",
             "context_pack": "zab context-pack --query <query> --stdout",
             "security": "zab security status --json",
+            "security_locate": "zab security locate <query> --json",
         },
         "quick_start": [
             "Use `zab agent skills --json` to list available skills across configured repos and projects.",
             "Use `zab tools list --json` to inspect actionable tools, their implementations and linked skills.",
             "Use `zab search <topic> --json` before scanning files manually.",
             "Use `zab security status --json` before any connector requiring secrets; it returns presence and paths, never values.",
+            "Use `zab security locate <query> --json` to find API key/token variable names and sources without printing values.",
             "Use `zab agent handoff --project <name> --json` for project-specific context.",
             "Use `zab context-pack --query <topic> --stdout` when a compact prompt pack is needed.",
         ],
@@ -297,6 +311,35 @@ def search(query: str, *, limit: int = 20, sections: list[str] | None = None, re
         item["terms_missing"] = missing_terms
         item["match_type"] = "exact_or_complete" if terms and not missing_terms else ("partial" if terms else "unfiltered")
         results.append(item)
+    if q and (sections is None or any(str(section).lower() in {"security", "secrets", "env"} for section in sections)):
+        located = locate_secret_names(q, limit=limit)
+        for match in located.get("matches") or []:
+            name = str(match.get("name") or "")
+            if not name:
+                continue
+            identity = ("security", name)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            results.append(
+                {
+                    "section": "security",
+                    "key": name,
+                    "id": name,
+                    "kind": "secret_env_name",
+                    "display_name": name,
+                    "description": "Secret/env variable name located safely; raw value is never returned.",
+                    "present": bool(match.get("present")),
+                    "masked": match.get("masked") or "",
+                    "sources": match.get("sources") or [],
+                    "score": 100,
+                    "match_reasons": [f"security_locate: {reason}" for reason in (match.get("match_reasons") or ["name"])],
+                    "terms_matched": located.get("terms") or [],
+                    "terms_missing": [],
+                    "match_type": "security_locate",
+                    "secret_values_exposed": False,
+                }
+            )
     results.sort(key=lambda x: (-int(x.get("score") or 0), str(x.get("section")), str(x.get("key"))))
     capped = max(1, min(100, limit))
     append_audit_event("search", {"query": q, "limit": capped})
@@ -808,6 +851,36 @@ def research(
     return result
 
 
+def workpacket_intake_rule() -> dict[str, Any]:
+    from zab.services.workpacket_intake import get_global_rule
+
+    result = get_global_rule()
+    append_audit_event("workpacket_intake_rule", {})
+    return result
+
+
+def workpacket_intake(
+    signal: str,
+    *,
+    source: str = "manual",
+    project: str | None = None,
+    requested_by: str | None = None,
+) -> dict[str, Any]:
+    from zab.services.workpacket_intake import intake_from_params
+
+    result = intake_from_params(signal, source=source, project=project, requested_by=requested_by)
+    append_audit_event(
+        "workpacket_intake",
+        {
+            "source": source,
+            "project": project,
+            "event_type": result.get("event_type", {}).get("type"),
+            "should_create": result.get("workpacket", {}).get("should_create"),
+        },
+    )
+    return result
+
+
 def cli_auth_check(only: list[str] | None = None) -> dict[str, Any]:
     from zab.services.cli_check import run_cli_checks
 
@@ -865,6 +938,25 @@ def mcp_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "workpacket_intake_rule",
+            "description": "Retourne la règle globale d'intake Work Packet : états, autorité, invariants et definition of done.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "workpacket_intake",
+            "description": "Classifie un signal entrant en Work Packet déterministe avec autorité, sources requises, projections et preuves attendues.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "signal": {"type": "string"},
+                    "source": {"type": "string", "default": "manual"},
+                    "project": {"type": "string"},
+                    "requested_by": {"type": "string"},
+                },
+                "required": ["signal"],
+            },
+        },
+        {
             "name": "project_handoff",
             "description": "Compose un pack de contexte projet + skills/connecteurs associés pour un agent.",
             "inputSchema": {
@@ -880,6 +972,18 @@ def mcp_tools() -> list[dict[str, Any]]:
             "name": "security_status",
             "description": "Statut de présence des secrets/env vars et chemins de fichiers, sans jamais retourner de valeur brute.",
             "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "security_locate",
+            "description": "Recherche une clé/API key/token par nom de variable dans les .env connus et le process, sans retourner la valeur brute.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required": ["query"],
+            },
         },
         {
             "name": "memory_status",
@@ -1045,6 +1149,33 @@ def mcp_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "logs_summary",
+            "description": "Synthèse read-only des requêtes Zab récentes, redacted et groupée par surface, composant, acteur, org et projet.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"since": {"type": "string", "default": "24h"}},
+            },
+        },
+        {
+            "name": "logs_query",
+            "description": "Recherche read-only dans les logs structurés Zab. Ne retourne que des événements redacted.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "surface": {"type": "string"},
+                    "component": {"type": "string"},
+                    "level": {"type": "string"},
+                    "actor": {"type": "string"},
+                    "org": {"type": "string"},
+                    "project": {"type": "string"},
+                    "status": {"type": "string"},
+                    "q": {"type": "string"},
+                    "since": {"type": "string"},
+                    "limit": {"type": "integer", "default": 100},
+                },
+            },
+        },
+        {
             "name": "vault_list",
             "description": "Liste les notes du vault Obsidian (chemins relatifs). Optionnel: sous-dossier.",
             "inputSchema": {
@@ -1101,132 +1232,206 @@ def mcp_tools() -> list[dict[str, Any]]:
     ]
 
 
-def call_mcp_tool(name: str, args: dict[str, Any] | None = None) -> Any:
+def call_mcp_tool(name: str, args: dict[str, Any] | None = None, *, client_info: dict[str, Any] | None = None) -> Any:
     """Call a Zab MCP tool implementation by name and return its raw payload."""
 
     args = args or {}
+    started = time.monotonic()
+    try:
+        result = _call_mcp_tool_impl(name, args)
+    except Exception as exc:
+        _record_mcp_tool_event(name, args, started, client_info=client_info, error=exc)
+        raise
+    append_audit_event(name, {"source": "mcp"})
+    _record_mcp_tool_event(name, args, started, client_info=client_info)
+    return result
+
+
+def _call_mcp_tool_impl(name: str, args: dict[str, Any]) -> Any:
     if name == "capabilities":
-        result = get_capabilities()
-    elif name == "agent_bootstrap":
-        result = agent_bootstrap(refresh=bool(args.get("refresh") or False))
-    elif name == "source_health":
-        result = source_health(refresh=bool(args.get("refresh") or False))
-    elif name == "research":
-        result = research(
+        return get_capabilities()
+    if name == "agent_bootstrap":
+        return agent_bootstrap(refresh=bool(args.get("refresh") or False))
+    if name == "source_health":
+        return source_health(refresh=bool(args.get("refresh") or False))
+    if name == "research":
+        return research(
             str(args.get("query") or ""),
             project=args.get("project") or None,
             mode=str(args.get("mode") or "plan"),
             max_tokens=int(args.get("max_tokens") or 6000),
             refresh=bool(args.get("refresh") or False),
         )
-    elif name == "project_handoff":
-        result = project_handoff(str(args.get("project") or ""), limit=int(args.get("limit") or 80))
-    elif name == "security_status":
-        result = security_status()
-    elif name == "memory_status":
-        result = memory_status()
-    elif name == "memory_search":
-        result = memory_search(
+    if name == "workpacket_intake_rule":
+        return workpacket_intake_rule()
+    if name == "workpacket_intake":
+        return workpacket_intake(
+            str(args.get("signal") or ""),
+            source=str(args.get("source") or "manual"),
+            project=args.get("project") or None,
+            requested_by=args.get("requested_by") or None,
+        )
+    if name == "project_handoff":
+        return project_handoff(str(args.get("project") or ""), limit=int(args.get("limit") or 80))
+    if name == "security_status":
+        return security_status()
+    if name == "security_locate":
+        return security_locate(str(args.get("query") or ""), limit=int(args.get("limit") or 20))
+    if name == "memory_status":
+        return memory_status()
+    if name == "memory_search":
+        return memory_search(
             str(args.get("query") or ""),
             limit=int(args.get("limit") or 10),
             source=args.get("source") or None,
             wing=args.get("wing") or None,
         )
-    elif name == "connectors_list":
-        result = connectors_list(
+    if name == "connectors_list":
+        return connectors_list(
             q=str(args.get("q") or ""),
             kind=args.get("kind") or None,
             tag=args.get("tag") or None,
             limit=int(args.get("limit") or 50),
             include_details=bool(args.get("include_details") or False),
         )
-    elif name == "connector_status":
-        result = connector_status(
+    if name == "connector_status":
+        return connector_status(
             str(args.get("slug") or ""),
             include_checks=bool(args.get("include_checks", True)),
         )
-    elif name == "composio_connections":
-        result = composio_connections(
+    if name == "composio_connections":
+        return composio_connections(
             toolkit=args.get("toolkit") or None,
             active_only=bool(args.get("active_only", True)),
             resolve_identities=bool(args.get("resolve_identities") or False),
         )
-    elif name == "task_sources_status":
-        result = task_sources_status()
-    elif name == "tasks_list":
-        result = tasks_list(
+    if name == "task_sources_status":
+        return task_sources_status()
+    if name == "tasks_list":
+        return tasks_list(
             q=str(args.get("q") or ""),
             source=args.get("source") or None,
             status=args.get("status") or None,
             limit=int(args.get("limit") or 50),
             refresh=bool(args.get("refresh") or False),
         )
-    elif name == "tasks_sync":
-        result = tasks_sync()
-    elif name == "task_source_check":
-        result = task_source_check(str(args.get("source_id") or ""))
-    elif name == "channels_list":
-        result = channels_list(
+    if name == "tasks_sync":
+        return tasks_sync()
+    if name == "task_source_check":
+        return task_source_check(str(args.get("source_id") or ""))
+    if name == "channels_list":
+        return channels_list(
             include_actions=bool(args.get("include_actions", True)),
             refresh=bool(args.get("refresh") or False),
             limit=int(args.get("limit") or 50),
         )
-    elif name == "cli_auth_check":
+    if name == "cli_auth_check":
         only_arg = args.get("only")
         only = [str(x) for x in only_arg] if isinstance(only_arg, list) else None
-        result = cli_auth_check(only=only)
-    elif name == "system_health_check":
-        result = system_health_check()
-    elif name == "search":
+        return cli_auth_check(only=only)
+    if name == "system_health_check":
+        return system_health_check()
+    if name == "search":
         section_arg = args.get("section")
         sections = [str(section_arg)] if section_arg else None
-        result = search(str(args.get("query") or ""), limit=int(args.get("limit") or 10), sections=sections)
-    elif name == "inspect":
-        result = state_index.get_section_item(str(args.get("section") or ""), str(args.get("key") or ""))
-    elif name == "skills_manifest":
-        result = skills_manifest(
+        return search(str(args.get("query") or ""), limit=int(args.get("limit") or 10), sections=sections)
+    if name == "inspect":
+        return state_index.get_section_item(str(args.get("section") or ""), str(args.get("key") or ""))
+    if name == "skills_manifest":
+        return skills_manifest(
             org=args.get("org") or None,
             project=args.get("project") or None,
             query=args.get("query") or None,
             limit=int(args.get("limit") or 200),
         )
-    elif name == "context_pack":
+    if name == "context_pack":
         _, pack_md = state_index.build_context_pack(
             org=args.get("org") or None,
             project=args.get("project") or None,
             query=args.get("query") or None,
             limit=int(args.get("limit") or 80),
         )
-        result = {"content": pack_md}
-    elif name == "vault_list":
-        result = obsidian_vault.list_notes(subdir=args.get("subdir") or None, limit=int(args.get("limit") or 500))
-    elif name == "vault_read":
-        result = obsidian_vault.read_note(str(args.get("rel") or ""))
-    elif name == "vault_search":
-        result = obsidian_vault.vault_search(
+        return {"content": pack_md}
+    if name == "logs_summary":
+        return request_logs.summary(since=args.get("since") or "24h")
+    if name == "logs_query":
+        return request_logs.query_events(
+            surface=args.get("surface") or None,
+            component=args.get("component") or None,
+            level=args.get("level") or None,
+            actor=args.get("actor") or None,
+            org=args.get("org") or None,
+            project=args.get("project") or None,
+            status=args.get("status") or None,
+            q=args.get("q") or None,
+            since=args.get("since") or None,
+            limit=int(args.get("limit") or 100),
+        )
+    if name == "vault_list":
+        return obsidian_vault.list_notes(subdir=args.get("subdir") or None, limit=int(args.get("limit") or 500))
+    if name == "vault_read":
+        return obsidian_vault.read_note(str(args.get("rel") or ""))
+    if name == "vault_search":
+        return obsidian_vault.vault_search(
             str(args.get("query") or ""),
             limit=int(args.get("limit") or 100),
             case_sensitive=bool(args.get("case_sensitive") or False),
         )
-    elif name == "daily_append":
+    if name == "daily_append":
         path = obsidian_vault.daily_append(str(args.get("block") or ""))
-        result = {"ok": True, "path": str(path)}
-    elif name == "inbox_create":
+        return {"ok": True, "path": str(path)}
+    if name == "inbox_create":
         try:
             path = obsidian_vault.inbox_create(str(args.get("filename") or ""), str(args.get("body") or ""))
-            result = {"ok": True, "path": str(path)}
+            return {"ok": True, "path": str(path)}
         except (ValueError, FileExistsError) as exc:
-            result = {"ok": False, "error": str(exc)}
-    else:
-        raise KeyError(f"Unknown tool: {name}")
-    append_audit_event(name, {"source": "mcp"})
-    return result
+            return {"ok": False, "error": str(exc)}
+    raise KeyError(f"Unknown tool: {name}")
+
+
+def _record_mcp_tool_event(
+    name: str,
+    args: dict[str, Any],
+    started: float,
+    *,
+    client_info: dict[str, Any] | None,
+    error: Exception | None = None,
+) -> None:
+    client = None
+    if isinstance(client_info, dict):
+        client_name = client_info.get("name")
+        client_version = client_info.get("version")
+        client = f"{client_name}/{client_version}" if client_name and client_version else (str(client_name) if client_name else None)
+    result: dict[str, Any] = {
+        "status": "error" if error else "ok",
+        "duration_ms": round((time.monotonic() - started) * 1000),
+    }
+    level = "INFO"
+    if error:
+        level = "ERROR"
+        result["error_type"] = type(error).__name__
+        result["error_message"] = str(error)[:240]
+    request_logs.record_event(
+        surface="mcp",
+        component="mcp.tool",
+        level=level,
+        actor=request_logs.actor_context(surface="mcp", source="mcp", client=client),
+        scope=request_logs.resolve_scope(args=args),
+        request={
+            "name": name,
+            "tool": name,
+            "args_redacted": request_logs.redacted_args(args),
+            "input_hash": request_logs.input_hash(args),
+        },
+        result=result,
+    )
 
 
 def run_mcp_stdio() -> None:
     """Small MCP-compatible JSON-RPC stdio server for read-only zab tools."""
 
     tools = mcp_tools()
+    client_info: dict[str, Any] = {}
 
     def respond(req_id: Any, result: Any = None, error: Any = None) -> None:
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id}
@@ -1244,6 +1449,10 @@ def run_mcp_stdio() -> None:
             req_id = req.get("id")
             params = req.get("params") or {}
             if method == "initialize":
+                if isinstance(params.get("clientInfo"), dict):
+                    client_info = dict(params["clientInfo"])
+                elif isinstance(params.get("client_info"), dict):
+                    client_info = dict(params["client_info"])
                 respond(
                     req_id,
                     {
@@ -1254,11 +1463,24 @@ def run_mcp_stdio() -> None:
                 )
             elif method == "tools/list":
                 respond(req_id, {"tools": tools})
+                request_logs.record_event(
+                    surface="mcp",
+                    component="mcp.list",
+                    level="DEBUG",
+                    actor=request_logs.actor_context(
+                        surface="mcp",
+                        source="mcp",
+                        client=str(client_info.get("name") or "") if client_info else None,
+                    ),
+                    request={"name": "tools/list", "tool": "tools/list"},
+                    result={"status": "ok", "tool_count": len(tools)},
+                    index=True,
+                )
             elif method == "tools/call":
                 name = str(params.get("name") or "")
                 args = params.get("arguments") or {}
                 try:
-                    result = call_mcp_tool(name, args)
+                    result = call_mcp_tool(name, args, client_info=client_info)
                 except KeyError:
                     respond(req_id, error={"code": -32601, "message": f"Unknown tool: {name}"})
                     continue

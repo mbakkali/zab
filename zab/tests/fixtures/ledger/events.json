@@ -1,0 +1,35 @@
+[
+  {
+    "event_id": "gmail:fixture-1",
+    "source": "gmail",
+    "native_id": "fixture-1",
+    "channel_id": "gmail-flowmetrik-primary",
+    "timestamp": "2026-07-10T16:09:00+00:00",
+    "source_account": "mehdi@flowmetrik.com",
+    "title": "Audit outils et process commerciaux",
+    "snippet": "Audit suivi commercial",
+    "expected_workstream": "cw_audit_crm"
+  },
+  {
+    "event_id": "gmail:fixture-2",
+    "source": "gmail",
+    "native_id": "fixture-2",
+    "channel_id": "gmail-flowmetrik-primary",
+    "timestamp": "2026-07-11T10:00:00+00:00",
+    "source_account": "mehdi@flowmetrik.com",
+    "title": "Formation Explorateurs IA - prochaine session",
+    "snippet": "formation intelligence artificielle",
+    "expected_workstream": "cw_explorateurs_ia"
+  },
+  {
+    "event_id": "gmail:fixture-3",
+    "source": "gmail",
+    "native_id": "fixture-3",
+    "channel_id": "gmail-flowmetrik-primary",
+    "timestamp": "2026-07-12T11:00:00+00:00",
+    "source_account": "mehdi@flowmetrik.com",
+    "title": "Accès Deessi et revue sécurité",
+    "snippet": "deessi accès azure ad",
+    "expected_workstream": "cw_securite_deessi"
+  }
+]

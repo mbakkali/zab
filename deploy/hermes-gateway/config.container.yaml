@@ -1,0 +1,42 @@
+# Minimal Hermes config baked into the Cloud Run image.
+# Credentials (Telegram token, model keys, DB DSN) come from Secret Manager
+# as env vars at deploy time — never hardcode them here.
+model:
+  default: google/gemini-3-flash-preview
+  provider: custom:vertex-gemini
+providers:
+  vertex-gemini:
+    name: vertex-gemini
+    base_url: https://aiplatform.googleapis.com/v1beta1/projects/YOUR_GCP_PROJECT/locations/global/endpoints/openapi
+    key_env: VERTEX_ACCESS_TOKEN
+    api_mode: chat_completions
+    models:
+      google/gemini-3-flash-preview: {}
+  op:
+    name: op
+    base_url: https://openrouter.ai/api/v1
+    key_env: OPENROUTER_API_KEY
+    api_mode: chat_completions
+    model: deepseek/deepseek-v4-pro
+    models:
+      deepseek/deepseek-v4-pro: {}
+      z-ai/glm-5.1: {}
+      google/gemini-3.1-flash-lite-preview: {}
+      minimax/minimax-m2.7: {}
+mcp_servers:
+  zab:
+    command: zab
+    args: ["mcp", "serve"]
+    env:
+      ZAB_SKILLS_ROOT: /config/skills
+      ZAB_PROJECTS_ROOT: /workspace/projects
+terminal:
+  backend: local
+  cwd: /workspace
+delegation:
+  max_iterations: 50
+  max_concurrent_children: 3
+  max_spawn_depth: 2
+platforms:
+  telegram:
+    require_mention: false

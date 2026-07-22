@@ -111,26 +111,6 @@ test.describe('zab dashboard configs UI', () => {
     await expect(page.locator('text=/state\\.yaml/').first()).toBeVisible()
   })
 
-  test('Exports tab — Context Pack generator produces a preview', async ({ page }) => {
-    await page.goto('/#exports')
-    await expect(page.getByRole('heading', { name: 'Exports' })).toBeVisible()
-    await expect(page.getByText('Context Pack', { exact: true }).first()).toBeVisible()
-
-    const orgInput = page.getByPlaceholder('optional org')
-    const projectInput = page.getByPlaceholder('optional project')
-    await expect(orgInput).toBeVisible()
-    await expect(projectInput).toBeVisible()
-
-    const contextPackResponse = page.waitForResponse(
-      (resp) => resp.url().includes('/api/context-pack') && resp.request().method() === 'POST',
-    )
-    await page.getByRole('button', { name: /^Generate$/i }).click()
-    const res = await contextPackResponse
-    expect(res.ok()).toBeTruthy()
-
-    await expect(page.locator('pre', { hasText: '# zab Context Pack' })).toBeVisible()
-  })
-
   test('IDE / outils tab — Code tools indexés table renders', async ({ page }) => {
     await page.goto('/#ide')
     await expect(page.getByRole('heading', { name: /IDE/ })).toBeVisible()

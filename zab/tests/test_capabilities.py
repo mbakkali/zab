@@ -31,12 +31,15 @@ def test_capability_manifest_core_contract() -> None:
         "capabilities.manifest",
         "source.health",
         "research.packet",
+        "workpacket.intake",
+        "workpacket.intake_rule",
         "tasks.list",
         "agent.bootstrap",
         "search.global",
         "connectors.list",
         "connectors.status",
         "tools.catalog",
+        "security.locate",
         "composio.connections",
         "tasks.sources_status",
         "channels.list",
@@ -49,6 +52,9 @@ def test_capability_manifest_core_contract() -> None:
     assert manifest["ui"] == "Capabilities"
     assert manifest["risk"] == "read"
     assert manifest["status"] == "complete"
+    locate = next(cap for cap in capabilities if cap["id"] == "security.locate")
+    assert locate["cli"] == "zab security locate <query> --json"
+    assert locate["mcp"] == "security_locate"
 
 
 def test_capabilities_cli_json() -> None:
@@ -115,6 +121,8 @@ def test_capabilities_mcp_tool_is_declared_and_callable() -> None:
         "agent_bootstrap",
         "source_health",
         "research",
+        "workpacket_intake",
+        "workpacket_intake_rule",
         "connectors_list",
         "connector_status",
         "composio_connections",
@@ -124,6 +132,7 @@ def test_capabilities_mcp_tool_is_declared_and_callable() -> None:
         "task_source_check",
         "channels_list",
         "security_status",
+        "security_locate",
         "memory_status",
         "memory_search",
         "cli_auth_check",

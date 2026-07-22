@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ProjectActions, type OverviewProject } from '@/components/project-actions'
 import { ProjectsTable } from '@/components/projects-table'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type OverviewLike = {
   user_config_path?: string
@@ -321,6 +322,14 @@ export function ProjectsView({
   if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
 
   const cfgPath = (overview.user_config_path ?? '').replace(/^\/Users\/[^/]+/, '~')
+
+  if (!overview) {
+    return (
+      <div className="space-y-6" data-testid="projects-view">
+        <LoadingState label={t('common.loading')} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

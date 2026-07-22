@@ -54,7 +54,10 @@ from zab.services.capabilities import get_capabilities
 from zab.services.command_center_context import build_context_packet, write_context_packet
 from zab.services.feature_catalog import agent_guide, agent_guide_markdown, catalog
 from zab.services.state_index import build_context_pack, get_section_item, list_section, state_summary, sync_state
+from zab.services.workpacket_intake import get_global_rule as get_workpacket_intake_rule
+from zab.services.workpacket_intake import intake_from_params as workpacket_intake_from_params
 from zab.services import agent_context, cli_check as cli_check_svc, cli_update_status as cli_update_svc, composio_connectors as composio_svc
+from zab.services import request_logs
 from zab.services import tool_catalog, tool_checks
 from zab.services.hermes_config import update_external_dirs
 from zab.services.skill_ai_router import choose_skill_placement
@@ -90,6 +93,8 @@ skill_app = typer.Typer(help="Créer, synchroniser et exposer des Agent Skills."
 app.add_typer(skill_app, name="skill")
 tools_app = typer.Typer(help="Catalogue des tools actionnables Zab.", no_args_is_help=True)
 app.add_typer(tools_app, name="tools")
+logs_app = typer.Typer(help="Logs structurés Zab (CLI/API/MCP/jobs).", no_args_is_help=True)
+app.add_typer(logs_app, name="logs")
 db_app = typer.Typer(help="Base Postgres canonique Zab.", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 ws_app = typer.Typer(help="Cloud Workstation : sync bidirectionnelle env/CLIs.", no_args_is_help=True)
@@ -105,6 +110,434 @@ app.add_typer(brain_app, name="brain")
 
 command_center_app = typer.Typer(help="Packets Command Center pour Hermes.", no_args_is_help=True)
 app.add_typer(command_center_app, name="command-center")
+
+workpacket_app = typer.Typer(help="Contrats Work Packet : règle globale et intake de signaux.", no_args_is_help=True)
+app.add_typer(workpacket_app, name="workpacket")
+
+interactions_app = typer.Typer(help="Conversation Ledger : channels, sync et timeline.", no_args_is_help=True)
+app.add_typer(interactions_app, name="interactions")
+
+ledger_app = typer.Typer(help="Conversation Ledger : eval et preflight.", no_args_is_help=True)
+app.add_typer(ledger_app, name="ledger")
+
+
+@workpacket_app.command("rule")
+def workpacket_rule_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Expose la règle globale d'intake Work Packet."""
+    payload = get_workpacket_intake_rule()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(payload["name"], fg=typer.colors.GREEN, bold=True))
+    typer.echo(payload["summary"])
+    typer.echo("  states : " + " -> ".join(payload["state_machine"]))
+    typer.echo("  json   : zab workpacket rule --json")
+
+
+@workpacket_app.command("intake")
+def workpacket_intake_cmd(
+    signal: str = typer.Argument(..., help="Signal, message ou instruction à classifier"),
+    *,
+    source: str = typer.Option("manual", "--source", help="Source du signal : codex, claude, channel, cron, manual..."),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Projet ou chemin associé"),
+    requested_by: Optional[str] = typer.Option(None, "--requested-by", help="Humain ou agent demandeur"),
+    markdown: bool = typer.Option(False, "--markdown", help="Affiche le packet Markdown compact"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Transforme un signal entrant en contrat Work Packet déterministe."""
+    payload = workpacket_intake_from_params(signal, source=source, project=project, requested_by=requested_by)
+    if markdown:
+        typer.echo(str(payload.get("markdown") or "").rstrip())
+        return
+    if json_out:
+        typer.echo(json.dumps({k: v for k, v in payload.items() if k != "markdown"}, ensure_ascii=False, indent=2))
+        return
+    packet = payload.get("workpacket") or {}
+    typer.echo(typer.style("Work Packet intake", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  event     : {payload.get('event_type', {}).get('type')} / {payload.get('event_type', {}).get('action')}")
+    typer.echo(f"  intent    : {packet.get('intent', {}).get('kind')}")
+    typer.echo(f"  authority : {packet.get('authority', {}).get('level')}")
+    typer.echo(f"  key       : {packet.get('idempotency_key')}")
+    typer.echo("  json      : zab workpacket intake <signal> --json")
+
+
+@workpacket_app.command("list")
+def workpacket_list_cmd(
+    *,
+    state: str = typer.Option("", "--state", help="Filtrer par états CSV: active,candidate"),
+    organization: Optional[str] = typer.Option(None, "--organization", help="Filtrer par organization_id ou label"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import list_workpackets
+
+    states = [s.strip() for s in state.split(",") if s.strip()] or None
+    with local_db.transaction() as conn:
+        items = list_workpackets(conn, states=states, limit=200)
+    if organization:
+        needle = organization.lower()
+        items = [
+            p
+            for p in items
+            if needle in str(p.get("organization_id", "")).lower()
+            or needle in str(p.get("organization_label", "")).lower()
+        ]
+    payload = {"contract": "workpacket-list", "count": len(items), "items": items}
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for item in items:
+        typer.echo(f"{item.get('display_id')}  {item.get('state')}  {item.get('title')}")
+
+
+@workpacket_app.command("show")
+def workpacket_show_cmd(
+    wp_id: str = typer.Argument(..., help="workpacket_id ou display_id"),
+    *,
+    fmt: str = typer.Option("md", "--format", help="md|json"),
+    json_out: bool = typer.Option(False, "--json", help="Alias --format json"),
+) -> None:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import get_workpacket, list_workpackets
+    from zab.services.conversation_ledger.workpacket_builder import format_workpacket_markdown
+
+    with local_db.transaction() as conn:
+        packet = get_workpacket(conn, wp_id)
+        if not packet:
+            for candidate in list_workpackets(conn, limit=500):
+                if candidate.get("display_id") == wp_id:
+                    packet = candidate
+                    break
+    if not packet:
+        typer.echo(f"WorkPacket introuvable: {wp_id}", err=True)
+        raise typer.Exit(1)
+    if json_out or fmt == "json":
+        typer.echo(json.dumps(packet, ensure_ascii=False, indent=2))
+        return
+    typer.echo(format_workpacket_markdown(packet))
+
+
+@workpacket_app.command("discover")
+def workpacket_discover_cmd(
+    *,
+    since: str = typer.Option("90d", "--since"),
+    min_confidence: float = typer.Option(0.65, "--min-confidence"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.workpacket_builder import discover_workpackets
+
+    payload = discover_workpackets(since=since, min_confidence=min_confidence, dry_run=dry_run)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Candidates: {payload.get('candidate_count')}")
+
+
+@workpacket_app.command("reconstruct")
+def workpacket_reconstruct_cmd(
+    *,
+    dry_run: bool = typer.Option(True, "--dry-run/--apply"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.workpacket_builder import reconstruct_seed_candidates
+
+    payload = reconstruct_seed_candidates(dry_run=dry_run)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Reconstructed: {payload.get('count')}")
+
+
+@workpacket_app.command("project-linear")
+def workpacket_project_linear_cmd(
+    wp_id: str = typer.Argument(..., help="workpacket_id"),
+    *,
+    dry_run: bool = typer.Option(True, "--dry-run/--apply"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.projections.linear import project_linear
+
+    payload = project_linear(wp_id, dry_run=dry_run)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(payload.get("description_markdown") or "")
+
+
+@workpacket_app.command("daily-digest")
+def workpacket_daily_digest_cmd(
+    *,
+    since: str = typer.Option("yesterday", "--since"),
+    fmt: str = typer.Option("md", "--format"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.digest import digest_payload
+
+    payload = digest_payload(since=since)
+    if json_out or fmt == "json":
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(payload.get("markdown") or "")
+
+
+@interactions_app.command("channels")
+def interactions_channels_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.channel_bindings import list_channels
+
+    payload = list_channels(check=True)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for channel in payload.get("channels") or []:
+        typer.echo(f"{channel.get('channel_id')}  {channel.get('last_check_status')}  {channel.get('tool_id')}")
+
+
+@interactions_app.command("sync")
+def interactions_sync_cmd(
+    *,
+    since: str = typer.Option("90d", "--since"),
+    sources: str = typer.Option("", "--sources", help="CSV gmail,calendar,fireflies"),
+    channels: str = typer.Option("", "--channels", help="CSV channel_ids"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.sync import sync_channels
+
+    source_list = [s.strip() for s in sources.split(",") if s.strip()] or None
+    channel_list = [s.strip() for s in channels.split(",") if s.strip()] or None
+    payload = sync_channels(since=since, sources=source_list, channel_ids=channel_list, dry_run=dry_run)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Events: {payload.get('summary', {}).get('events_created')}")
+
+
+@interactions_app.command("timeline")
+def interactions_timeline_cmd(
+    *,
+    organization: Optional[str] = typer.Option(None, "--organization"),
+    client_workstream: Optional[str] = typer.Option(None, "--client-workstream"),
+    since: Optional[str] = typer.Option(None, "--since"),
+    fmt: str = typer.Option("md", "--format"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import list_events
+    from zab.services.conversation_ledger.sync import build_timeline_markdown
+
+    if json_out or fmt == "json":
+        with local_db.transaction() as conn:
+            events = list_events(conn, limit=200)
+        typer.echo(json.dumps({"events": events}, ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        build_timeline_markdown(
+            organization=organization,
+            client_workstream=client_workstream,
+            since=since,
+        )
+    )
+
+
+@interactions_app.command("reindex")
+def interactions_reindex_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.sync import reindex_entity_links
+
+    payload = reindex_entity_links()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Reindexed: {payload.get('updated')}")
+
+
+@interactions_app.command("enrich-content")
+def interactions_enrich_content_cmd(
+    organization: str = typer.Option("", "--organization", help="Organization id or label (empty = all indexed)"),
+    *,
+    limit: int = typer.Option(500, "--limit"),
+    max_fetch: int = typer.Option(0, "--max-fetch", help="Cap Gmail fetches (0 = no cap)"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.content_enrichment import enrich_events_content, enrich_organization_content
+    from zab.services.conversation_ledger.entity_resolver import DEFAULT_ORGANIZATIONS
+    from zab.services.conversation_ledger.store import list_events
+    from zab.services import local_db
+
+    cap = max_fetch if max_fetch > 0 else None
+    if organization:
+        org_id = None
+        needle = organization.lower()
+        for oid, org in DEFAULT_ORGANIZATIONS.items():
+            if oid == organization or org["label"].lower() == needle:
+                org_id = oid
+                break
+        if not org_id:
+            raise typer.BadParameter(f"organization not recognized: {organization}")
+        payload = enrich_organization_content(org_id, limit=limit, max_fetch=cap)
+    else:
+        with local_db.transaction() as conn:
+            events = list_events(conn, limit=limit)
+        enriched, stats = enrich_events_content(events, persist=True, max_fetch=cap)
+        payload = {
+            "contract": "conversation-ledger-enrich-content",
+            "events_scanned": len(enriched),
+            "events_with_body": sum(1 for e in enriched if e.get("body")),
+            **stats,
+        }
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"Enriched: fetched={payload.get('fetched')} "
+        f"with_body={payload.get('events_with_body')} "
+        f"scanned={payload.get('events_scanned')}"
+    )
+
+
+@interactions_app.command("sync-org")
+def interactions_sync_org_cmd(
+    organization: str = typer.Option(..., "--organization"),
+    *,
+    since: str = typer.Option("90d", "--since"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.sync import sync_organization
+
+    payload = sync_organization(organization, since=since, dry_run=dry_run)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Events: {payload.get('events_created')} org={payload.get('organization', {}).get('label')}")
+
+
+@interactions_app.command("unclassified")
+def interactions_unclassified_cmd(
+    *,
+    since: str = typer.Option("", "--since"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.resolve import list_unclassified
+
+    payload = list_unclassified(since=since or None)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Ambiguous events: {payload.get('count')}")
+
+
+@interactions_app.command("resolve")
+def interactions_resolve_cmd(
+    *,
+    organization: str = typer.Option(..., "--organization"),
+    client_workstream: Optional[str] = typer.Option(None, "--client-workstream"),
+    since: Optional[str] = typer.Option(None, "--since"),
+    dry_run: bool = typer.Option(True, "--dry-run/--apply"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.resolve import resolve_preview
+
+    payload = resolve_preview(
+        organization=organization,
+        client_workstream=client_workstream,
+        since=since,
+        dry_run=dry_run,
+    )
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Events: {payload.get('event_count')} clusters: {payload.get('cluster_count')}")
+
+
+@interactions_app.command("link")
+def interactions_link_cmd(
+    event_id: str = typer.Argument(..., help="event_id"),
+    *,
+    organization: str = typer.Option(..., "--organization"),
+    client_workstream: str = typer.Option(..., "--client-workstream"),
+    confirm: bool = typer.Option(False, "--confirm"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.resolve import link_event
+
+    payload = link_event(
+        event_id,
+        organization=organization,
+        client_workstream=client_workstream,
+        confirm=confirm,
+    )
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"Linked {event_id} confirmed={confirm}")
+
+
+@workpacket_app.command("projections")
+def workpacket_projections_cmd(
+    wp_id: str = typer.Argument(..., help="workpacket_id"),
+    *,
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import get_workpacket, list_projections, list_workpackets
+
+    with local_db.transaction() as conn:
+        packet = get_workpacket(conn, wp_id)
+        if not packet:
+            for candidate in list_workpackets(conn, limit=500):
+                if candidate.get("display_id") == wp_id:
+                    packet = candidate
+                    break
+        if not packet:
+            typer.echo(f"WorkPacket introuvable: {wp_id}", err=True)
+            raise typer.Exit(1)
+        items = list_projections(conn, packet["workpacket_id"])
+    payload = {"contract": "workpacket-projections", "workpacket_id": packet["workpacket_id"], "items": items}
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for item in items:
+        typer.echo(f"{item.get('target')}: {item.get('status')}")
+
+
+@ledger_app.command("eval")
+def ledger_eval_cmd(
+    *,
+    suite: str = typer.Option("all", "--suite", help="all|hard|quality"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.eval import run_eval
+
+    payload = run_eval(suite=suite)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"score={payload.get('score')} blockers={len(payload.get('blockers') or [])}")
+
+
+@ledger_app.command("preflight")
+def ledger_preflight_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.preflight import run_preflight
+
+    payload = run_preflight()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(json.dumps(payload.get("gog"), ensure_ascii=False))
+
 
 @tasks_app.command(name="sync")
 def tasks_sync() -> None:
@@ -893,6 +1326,133 @@ def source_health_cmd(
     typer.echo(f"  sources : {len(payload.get('sources') or [])}")
     typer.echo("  status  : " + " · ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
     typer.echo("  json    : zab source-health --json")
+
+
+@logs_app.command("tail")
+def logs_tail_cmd(
+    *,
+    file: str = typer.Option("requests", "--file", help="requests|cli|api|mcp|jobs|errors"),
+    lines: int = typer.Option(100, "--lines", "-n", min=1, max=1000),
+    level: Optional[str] = typer.Option(None, "--level", help="Niveau minimal DEBUG|INFO|WARNING|ERROR"),
+    component: Optional[str] = typer.Option(None, "--component", help="Filtrer par composant"),
+    surface: Optional[str] = typer.Option(None, "--surface", help="Filtrer par surface cli|api|mcp|jobs"),
+    actor: Optional[str] = typer.Option(None, "--actor", help="Filtrer par acteur"),
+    org: Optional[str] = typer.Option(None, "--org", help="Filtrer par organisation"),
+    project: Optional[str] = typer.Option(None, "--project", help="Filtrer par projet"),
+    status: Optional[str] = typer.Option(None, "--status", help="Filtrer par statut"),
+    q: Optional[str] = typer.Option(None, "--q", help="Recherche texte"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Affiche les derniers événements structurés Zab."""
+    has_filters = any([level, component, surface, actor, org, project, status, q])
+    if has_filters and file.strip().lower().replace(".jsonl", "") == "requests":
+        payload = request_logs.query_events(
+            surface=surface,
+            component=component,
+            level=level,
+            actor=actor,
+            org=org,
+            project=project,
+            status=status,
+            q=q,
+            limit=lines,
+        )
+    else:
+        payload = request_logs.tail_file(file=file, lines=lines * 5 if has_filters else lines)
+        if has_filters:
+            events = request_logs.filter_events(
+                [event for event in payload.get("events") or [] if isinstance(event, dict)],
+                surface=surface,
+                component=component,
+                level=level,
+                actor=actor,
+                org=org,
+                project=project,
+                status=status,
+                q=q,
+            )[:lines]
+            payload = {**payload, "events": events, "total": len(events)}
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    events = payload.get("events") or []
+    typer.echo(typer.style(f"zab logs ({len(events)})", bold=True))
+    for event in events:
+        if isinstance(event, dict):
+            typer.echo(_format_log_event(event))
+
+
+@logs_app.command("query")
+def logs_query_cmd(
+    *,
+    surface: Optional[str] = typer.Option(None, "--surface", help="Surface cli|api|mcp|jobs"),
+    component: Optional[str] = typer.Option(None, "--component", help="Composant"),
+    level: Optional[str] = typer.Option(None, "--level", help="Niveau minimal"),
+    actor: Optional[str] = typer.Option(None, "--actor", help="Acteur"),
+    org: Optional[str] = typer.Option(None, "--org", help="Organisation"),
+    project: Optional[str] = typer.Option(None, "--project", help="Projet"),
+    status: Optional[str] = typer.Option(None, "--status", help="Statut"),
+    q: Optional[str] = typer.Option(None, "--q", help="Recherche texte"),
+    since: Optional[str] = typer.Option(None, "--since", help="Depuis ex. 24h, 30m ou ISO timestamp"),
+    limit: int = typer.Option(100, "--limit", min=1, max=1000),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Recherche dans l'index ou les fichiers de logs structurés."""
+    payload = request_logs.query_events(
+        surface=surface,
+        component=component,
+        level=level,
+        actor=actor,
+        org=org,
+        project=project,
+        status=status,
+        q=q,
+        since=since,
+        limit=limit,
+    )
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"zab logs query ({payload.get('total', 0)})", bold=True))
+    for event in payload.get("events") or []:
+        if isinstance(event, dict):
+            typer.echo(_format_log_event(event))
+
+
+@logs_app.command("summary")
+def logs_summary_cmd(
+    *,
+    since: Optional[str] = typer.Option("24h", "--since", help="Fenêtre relative ou timestamp ISO"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Synthèse des requêtes Zab récentes."""
+    payload = request_logs.summary(since=since)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style("zab logs summary", bold=True))
+    typer.echo(f"  total : {payload.get('total', 0)}")
+    for label, key in (("surfaces", "by_surface"), ("statuts", "by_status"), ("acteurs", "by_actor"), ("projets", "by_project")):
+        values = payload.get(key) or []
+        rendered = " · ".join(f"{row.get('id')}: {row.get('count')}" for row in values[:8] if isinstance(row, dict))
+        typer.echo(f"  {label}: {rendered or '—'}")
+
+
+def _format_log_event(event: dict[str, Any]) -> str:
+    ts = str(event.get("ts") or "")[:19].replace("T", " ")
+    level = str(event.get("level") or "INFO")
+    component = str(event.get("component") or "")
+    request = event.get("request") if isinstance(event.get("request"), dict) else {}
+    result = event.get("result") if isinstance(event.get("result"), dict) else {}
+    actor = event.get("actor") if isinstance(event.get("actor"), dict) else {}
+    scope = event.get("scope") if isinstance(event.get("scope"), dict) else {}
+    name = request.get("name") or request.get("path") or request.get("tool") or request.get("command") or "?"
+    status = result.get("status") or "?"
+    duration = result.get("duration_ms")
+    actor_id = actor.get("id") or "?"
+    project = scope.get("project_id") or scope.get("org") or "—"
+    suffix = f" {duration}ms" if duration is not None else ""
+    return f"{ts} {level:<7} {component:<16} {status:<7} {actor_id:<12} {project:<18} {name}{suffix}"
 
 
 @app.command("research")
@@ -2266,6 +2826,31 @@ def security_status_cmd(
         typer.echo(f"  dernier rapport   : {payload['latest_report']['key']}")
 
 
+@security_app.command("locate")
+def security_locate_cmd(
+    query: str = typer.Argument(..., help="Nom ou intention à chercher (ex. payfit, qonto api key)"),
+    *,
+    limit: int = typer.Option(20, "--limit", min=1, max=100),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Localise des noms de variables sensibles sans afficher les valeurs brutes."""
+
+    payload = agent_context.security_locate(query, limit=limit)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(typer.style(f"Recherche secret: {query}", bold=True))
+    typer.echo(f"  résultats : {payload['total']}")
+    for row in payload.get("matches") or []:
+        sources = row.get("sources") or []
+        first_source = sources[0] if sources else {}
+        where = first_source.get("path_display") or first_source.get("kind") or "source inconnue"
+        line = first_source.get("line")
+        line_text = f":{line}" if line else ""
+        masked = row.get("masked") or "(vide/non présent)"
+        typer.echo(f"  · {row.get('name')}  {masked}  {where}{line_text}")
+
+
 @security_app.command("publish-check")
 def security_publish_check_cmd(
     *,
@@ -2891,7 +3476,33 @@ def main() -> None:
     from zab.user_config import ensure_user_config_exists
 
     ensure_user_config_exists()
-    app()
+    request_id, started = request_logs.log_cli_start()
+    try:
+        app()
+    except typer.Exit as exc:
+        exit_code = int(getattr(exc, "exit_code", 1) or 0)
+        request_logs.log_cli_end(
+            request_id,
+            started,
+            exit_code=exit_code,
+            error=exc if exit_code else None,
+        )
+        raise
+    except SystemExit as exc:
+        raw_code = exc.code
+        exit_code = raw_code if isinstance(raw_code, int) else (0 if raw_code is None else 1)
+        request_logs.log_cli_end(
+            request_id,
+            started,
+            exit_code=exit_code,
+            error=exc if exit_code else None,
+        )
+        raise
+    except BaseException as exc:
+        request_logs.log_cli_end(request_id, started, exit_code=1, error=exc)
+        raise
+    else:
+        request_logs.log_cli_end(request_id, started, exit_code=0)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, CircleDot, Copy, RefreshCw, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, CircleDot, Copy, Pencil, RefreshCw, Save, X, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type ToolStatus = 'ok' | 'warn' | 'fail' | 'skipped'
 
@@ -100,6 +101,43 @@ type ToolsValidationPayload = {
   issues: ToolIssue[]
 }
 
+type ToolCheckEntry = {
+  id: string
+  status: ToolStatus
+  message: string
+  detail?: Record<string, unknown>
+}
+
+type ToolCheckResult = {
+  tool_id: string
+  label?: string
+  status: ToolStatus
+  availability_tag?: string
+  status_reason?: string
+  checks: ToolCheckEntry[]
+  refreshed?: boolean
+  last_checked_at_utc?: string
+}
+
+type ToolEditForm = {
+  label: string
+  kind: string
+  coverage: string
+  safety: string
+  notes: string
+  keywords: string
+  examples: string
+  skill_refs: string
+  commands: string
+}
+
+function linesToList(value: string): string[] {
+  return value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 function statusTone(status: ToolStatus): string {
   if (status === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
   if (status === 'warn') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
@@ -118,14 +156,75 @@ function countLabel(value: number | undefined | null): string {
   return typeof value === 'number' ? String(value) : '—'
 }
 
-export function ToolsCatalogView() {
+const IMPL_KIND_LABELS: Record<string, string> = {
+  mcp: 'MCP',
+  api: 'API call',
+  'api+skill': 'API + skill',
+  cli: 'CLI',
+  composio: 'Composio',
+  channel: 'Channel',
+  memory: 'Memory',
+}
+
+function implKindLabel(kind?: string | null): string {
+  const key = (kind ?? '').trim().toLowerCase()
+  if (!key) return '—'
+  return IMPL_KIND_LABELS[key] ?? key
+}
+
+function implKindTone(kind?: string | null): string {
+  const key = (kind ?? '').trim().toLowerCase()
+  if (key === 'mcp') return 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-300'
+  if (key === 'api' || key === 'api+skill') return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300'
+  if (key === 'cli') return 'border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300'
+  if (key === 'composio') return 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300'
+  if (key === 'channel') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+  if (key === 'memory') return 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300'
+  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+}
+
+function primaryImplementation(tool: ToolsCatalogTool): ToolImplementation | undefined {
+  const impls = tool.implementations ?? []
+  if (!impls.length) return undefined
+  if (tool.primary_implementation_id) {
+    const match = impls.find((impl) => impl.id === tool.primary_implementation_id)
+    if (match) return match
+  }
+  const nonFallback = impls.filter((impl) => (impl.role ?? 'primary') !== 'fallback')
+  const pool = nonFallback.length ? nonFallback : impls
+  return [...pool].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50))[0]
+}
+
+function fallbackKinds(tool: ToolsCatalogTool, primaryKind?: string | null): string[] {
+  const primary = (primaryKind ?? '').trim().toLowerCase()
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const impl of tool.implementations ?? []) {
+    const key = (impl.kind ?? '').trim().toLowerCase()
+    if (!key || key === primary || seen.has(key)) continue
+    seen.add(key)
+    out.push(key)
+  }
+  return out
+}
+
+type ToolsCatalogViewProps = {
+  initialToolId?: string | null
+}
+
+export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) {
   const [catalog, setCatalog] = useState<ToolsCatalogPayload | null>(null)
   const [validation, setValidation] = useState<ToolsValidationPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | ToolStatus>('all')
-  const [selectedToolId, setSelectedToolId] = useState<string | null>(null)
+  const [selectedToolId, setSelectedToolId] = useState<string | null>(initialToolId ?? null)
+  const [checkResult, setCheckResult] = useState<ToolCheckResult | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editForm, setEditForm] = useState<ToolEditForm | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -159,6 +258,10 @@ export function ToolsCatalogView() {
     void load()
   }, [load])
 
+  useEffect(() => {
+    if (initialToolId) setSelectedToolId(initialToolId)
+  }, [initialToolId])
+
   const filtered = useMemo(() => {
     const rows = catalog?.tools ?? []
     const q = query.trim().toLowerCase()
@@ -179,6 +282,7 @@ export function ToolsCatalogView() {
         ...(tool.skill_refs ?? []),
         ...(tool.providers ?? []),
         ...(tool.origin ? [tool.origin] : []),
+        ...(tool.implementations ?? []).map((impl) => impl.kind ?? ''),
       ]
         .filter(Boolean)
         .join(' ')
@@ -196,6 +300,94 @@ export function ToolsCatalogView() {
     [selectedTool, validation],
   )
 
+  useEffect(() => {
+    setCheckResult(null)
+    setEditing(false)
+    setEditForm(null)
+  }, [selectedToolId])
+
+  const patchCatalogTool = useCallback((toolId: string, patch: Partial<ToolsCatalogTool>) => {
+    setCatalog((prev) => (prev ? { ...prev, tools: prev.tools.map((t) => (t.id === toolId ? { ...t, ...patch } : t)) } : prev))
+  }, [])
+
+  const replaceCatalogTool = useCallback((tool: ToolsCatalogTool) => {
+    setCatalog((prev) => (prev ? { ...prev, tools: prev.tools.map((t) => (t.id === tool.id ? tool : t)) } : prev))
+  }, [])
+
+  const recheckTool = useCallback(
+    async (toolId: string) => {
+      setChecking(true)
+      try {
+        const resp = await fetch(`/api/tools/check?tool_id=${encodeURIComponent(toolId)}&refresh=true`)
+        if (!resp.ok) throw new Error(await resp.text())
+        const data = (await resp.json()) as ToolCheckResult
+        setCheckResult(data)
+        patchCatalogTool(toolId, {
+          status: data.status,
+          status_reason: data.status_reason,
+          availability_tag: data.availability_tag,
+          last_checked_at_utc: data.last_checked_at_utc,
+        })
+        toast.success(`Recheck ${toolId} : ${data.status}`)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      } finally {
+        setChecking(false)
+      }
+    },
+    [patchCatalogTool],
+  )
+
+  const startEdit = useCallback((tool: ToolsCatalogTool) => {
+    setEditForm({
+      label: tool.label ?? '',
+      kind: tool.kind ?? '',
+      coverage: tool.coverage ?? '',
+      safety: tool.safety ?? '',
+      notes: tool.notes ?? '',
+      keywords: (tool.keywords ?? []).join('\n'),
+      examples: (tool.examples ?? []).join('\n'),
+      skill_refs: (tool.skill_refs ?? []).join('\n'),
+      commands: (tool.commands ?? []).join('\n'),
+    })
+    setCheckResult(null)
+    setEditing(true)
+  }, [])
+
+  const saveEdit = useCallback(
+    async (toolId: string, form: ToolEditForm) => {
+      setSaving(true)
+      try {
+        const body = {
+          label: form.label.trim(),
+          kind: form.kind.trim(),
+          coverage: form.coverage.trim(),
+          safety: form.safety.trim(),
+          notes: form.notes,
+          keywords: linesToList(form.keywords),
+          examples: linesToList(form.examples),
+          skill_refs: linesToList(form.skill_refs),
+          commands: linesToList(form.commands),
+        }
+        const resp = await fetch(`/api/tools/${encodeURIComponent(toolId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (!resp.ok) throw new Error(await resp.text())
+        const data = (await resp.json()) as { tool: ToolsCatalogTool }
+        if (data.tool) replaceCatalogTool(data.tool)
+        setEditing(false)
+        toast.success('Tool mis à jour')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      } finally {
+        setSaving(false)
+      }
+    },
+    [replaceCatalogTool],
+  )
+
   const duplicateIds = catalog?.duplicate_ids ?? []
   const summary = catalog?.summary
   const validationSummary = validation?.summary
@@ -205,6 +397,14 @@ export function ToolsCatalogView() {
       .filter(([, value]) => typeof value === 'number' && value > 0)
       .sort(([a], [b]) => a.localeCompare(b))
   }, [catalog])
+
+  if (loading && !catalog) {
+    return (
+      <section className="space-y-6" data-testid="tools-catalog-view">
+        <LoadingState label="Chargement du Tools Catalog…" />
+      </section>
+    )
+  }
 
   return (
     <section className="space-y-6" data-testid="tools-catalog-view">
@@ -318,6 +518,7 @@ export function ToolsCatalogView() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Tool</TableHead>
+                    <TableHead>Type</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Primary</TableHead>
                     <TableHead>Skills</TableHead>
@@ -325,7 +526,11 @@ export function ToolsCatalogView() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((tool) => (
+                  {filtered.map((tool) => {
+                    const primaryImpl = primaryImplementation(tool)
+                    const primaryKind = primaryImpl?.kind
+                    const otherKinds = fallbackKinds(tool, primaryKind)
+                    return (
                     <TableRow
                       key={tool.id}
                       className="cursor-pointer"
@@ -334,6 +539,20 @@ export function ToolsCatalogView() {
                       <TableCell className="align-top">
                         <div className="font-mono text-sm font-semibold">{tool.label}</div>
                         <div className="text-muted-foreground mt-1 text-xs">{tool.id} · {tool.kind}</div>
+                      </TableCell>
+                      <TableCell className="align-top text-xs">
+                        <span className={cn('inline-flex items-center rounded-full border px-2 py-1 font-medium', implKindTone(primaryKind))}>
+                          {implKindLabel(primaryKind)}
+                        </span>
+                        {otherKinds.length ? (
+                          <div className="text-muted-foreground mt-1 flex flex-wrap gap-1">
+                            {otherKinds.map((kind) => (
+                              <span key={kind} className="bg-muted rounded-full px-2 py-0.5 text-[10px]">
+                                {implKindLabel(kind)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </TableCell>
                       <TableCell className="align-top">
                         <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-medium', statusTone(tool.status))}>
@@ -362,7 +581,8 @@ export function ToolsCatalogView() {
                         ) : null}
                       </TableCell>
                     </TableRow>
-                  ))}
+                    )
+                  })}
                 </TableBody>
               </Table>
               {!filtered.length ? (
@@ -396,6 +616,27 @@ export function ToolsCatalogView() {
                 <Button
                   type="button"
                   size="sm"
+                  variant="default"
+                  onClick={() => void recheckTool(selectedTool.id)}
+                  disabled={checking}
+                >
+                  <RefreshCw className={cn('mr-1.5 size-4', checking ? 'animate-spin' : '')} />
+                  Re-vérifier
+                </Button>
+                {editing ? (
+                  <Button type="button" size="sm" variant="outline" onClick={() => setEditing(false)} disabled={saving}>
+                    <X className="mr-1.5 size-4" />
+                    Annuler
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" variant="outline" onClick={() => startEdit(selectedTool)}>
+                    <Pencil className="mr-1.5 size-4" />
+                    Éditer
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
                   variant="outline"
                   onClick={() => {
                     void navigator.clipboard
@@ -424,6 +665,136 @@ export function ToolsCatalogView() {
                   </Button>
                 ) : null}
               </div>
+
+              {checkResult ? (
+                <Card className="border-sky-200">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <span>Recheck</span>
+                      <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', statusTone(checkResult.status))}>
+                        <StatusIcon status={checkResult.status} />
+                        {checkResult.status}
+                      </span>
+                    </CardTitle>
+                    <CardDescription>
+                      {checkResult.status_reason ?? '—'}
+                      {checkResult.last_checked_at_utc ? ` · ${new Date(checkResult.last_checked_at_utc).toLocaleTimeString()}` : ''}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-xs">
+                    {(checkResult.checks ?? []).map((entry) => (
+                      <div key={entry.id} className="flex items-start gap-2">
+                        <span className={statusTone(entry.status).split(' ').find((c) => c.startsWith('text-')) ?? ''}>
+                          <StatusIcon status={entry.status} />
+                        </span>
+                        <span>
+                          <code className="font-mono">{entry.id}</code>
+                          <span className="text-muted-foreground"> — {entry.message}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {editing && editForm ? (
+                <Card className="border-amber-200">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Éditer le tool</CardTitle>
+                    <CardDescription>
+                      Enregistré dans <code className="font-mono">~/.config/zab/tools.yaml</code>. Les listes (mots-clés,
+                      exemples, skills, commandes) sont <strong>ajoutées</strong> aux valeurs par défaut du tool.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-xs">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="space-y-1">
+                        <span className="text-muted-foreground">Label</span>
+                        <input
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          value={editForm.label}
+                          onChange={(e) => setEditForm({ ...editForm, label: e.target.value })}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-muted-foreground">Kind</span>
+                        <input
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          value={editForm.kind}
+                          onChange={(e) => setEditForm({ ...editForm, kind: e.target.value })}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-muted-foreground">Coverage</span>
+                        <input
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          value={editForm.coverage}
+                          onChange={(e) => setEditForm({ ...editForm, coverage: e.target.value })}
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-muted-foreground">Safety</span>
+                        <input
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          value={editForm.safety}
+                          onChange={(e) => setEditForm({ ...editForm, safety: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                    <label className="space-y-1 block">
+                      <span className="text-muted-foreground">Notes</span>
+                      <Textarea
+                        value={editForm.notes}
+                        onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                        className="text-xs min-h-16"
+                      />
+                    </label>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="space-y-1 block">
+                        <span className="text-muted-foreground">Mots-clés (1 par ligne)</span>
+                        <Textarea
+                          value={editForm.keywords}
+                          onChange={(e) => setEditForm({ ...editForm, keywords: e.target.value })}
+                          className="font-mono text-xs min-h-24"
+                        />
+                      </label>
+                      <label className="space-y-1 block">
+                        <span className="text-muted-foreground">Skills liés (1 par ligne)</span>
+                        <Textarea
+                          value={editForm.skill_refs}
+                          onChange={(e) => setEditForm({ ...editForm, skill_refs: e.target.value })}
+                          className="font-mono text-xs min-h-24"
+                        />
+                      </label>
+                      <label className="space-y-1 block">
+                        <span className="text-muted-foreground">Exemples (1 par ligne)</span>
+                        <Textarea
+                          value={editForm.examples}
+                          onChange={(e) => setEditForm({ ...editForm, examples: e.target.value })}
+                          className="text-xs min-h-24"
+                        />
+                      </label>
+                      <label className="space-y-1 block">
+                        <span className="text-muted-foreground">Commandes (1 par ligne)</span>
+                        <Textarea
+                          value={editForm.commands}
+                          onChange={(e) => setEditForm({ ...editForm, commands: e.target.value })}
+                          className="font-mono text-xs min-h-24"
+                        />
+                      </label>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setEditing(false)} disabled={saving}>
+                        Annuler
+                      </Button>
+                      <Button type="button" size="sm" onClick={() => void saveEdit(selectedTool.id, editForm)} disabled={saving}>
+                        <Save className={cn('mr-1.5 size-4', saving ? 'animate-pulse' : '')} />
+                        Enregistrer
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
 
               {selectedTool.status_reason ? (
                 <Card>

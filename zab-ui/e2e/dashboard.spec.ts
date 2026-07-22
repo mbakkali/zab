@@ -42,6 +42,22 @@ test.describe('zab dashboard', () => {
     await expect(page.getByRole('button', { name: /^Overview$/i })).toBeVisible()
   })
 
+  test('sidebar desktop scroll quand la navigation dépasse la hauteur', async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 500 })
+    await page.goto('/#security')
+
+    const sidebar = page.locator('aside').first()
+    await expect(sidebar).toBeVisible()
+    await expect
+      .poll(async () => sidebar.evaluate((el) => el.scrollHeight > el.clientHeight))
+      .toBeTruthy()
+    await expect(sidebar).toHaveCSS('overflow-y', 'auto')
+
+    await sidebar.hover()
+    await page.mouse.wheel(0, 500)
+    await expect.poll(async () => sidebar.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+  })
+
   test('language switcher EN par défaut puis FR', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: /^Overview$/i })).toBeVisible()
@@ -130,34 +146,89 @@ test.describe('zab dashboard', () => {
     await expect(page.getByText('zab_inventory')).toBeVisible()
   })
 
-  test('research UI builds packet', async ({ page }) => {
-    await page.route('**/api/research', async (route) => {
+  test('logs UI', async ({ page }) => {
+    const event = {
+      event_id: 'evt-1',
+      ts: '2026-07-13T12:00:00+00:00',
+      level: 'INFO',
+      component: 'mcp.tool',
+      surface: 'mcp',
+      request_id: 'req-1',
+      actor: { kind: 'agent', id: 'mehdi', client: 'pytest-agent/1', source: 'mcp' },
+      request: { name: 'capabilities', tool: 'capabilities', args_redacted: {}, input_hash: 'hash' },
+      scope: { org: 'nous', project_id: 'zab', project_path: '/tmp/zab', resolution: 'explicit_project' },
+      result: { status: 'ok', duration_ms: 12 },
+    }
+    await page.route('**/api/logs/files', async (route) => {
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          contract: 'research-packet',
+          contract: 'zab-request-log-files',
           contract_version: '1.0',
-          generated_at_utc: '2026-06-09T00:00:00+00:00',
-          query: 'comment rendre Zab dynamique ?',
-          mode: 'plan',
-          project: { id: 'zab', path: '/tmp/zab', confidence: 'high' },
-          freshness: {},
-          source_status: [{ source: 'zab_inventory', kind: 'inventory', status: 'ok', freshness: 'local', items_considered: 3 }],
-          context_packet_markdown: '# Research Packet\n\n## Mission\ncomment rendre Zab dynamique ?',
-          citations: [{ id: 'src_1', kind: 'contract', label: 'source-health', reason: 'Freshness.' }],
-          conflicts: [],
-          recommended_next_actions: ['Read the packet.'],
-          warnings: [],
+          log_dir: '/tmp/zab/logs',
+          files: [
+            { id: 'requests', filename: 'requests.jsonl', path: '/tmp/zab/logs/requests.jsonl', exists: true, bytes: 120, updated_at: event.ts },
+            { id: 'mcp', filename: 'mcp.jsonl', path: '/tmp/zab/logs/mcp.jsonl', exists: true, bytes: 120, updated_at: event.ts },
+          ],
+        }),
+      })
+    })
+    await page.route('**/api/logs/summary**', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          contract: 'zab-request-log-summary',
+          contract_version: '1.0',
+          since: '24h',
+          source: 'index',
+          total: 1,
+          by_surface: [{ id: 'mcp', count: 1 }],
+          by_component: [{ id: 'mcp.tool', count: 1 }],
+          by_level: [{ id: 'INFO', count: 1 }],
+          by_status: [{ id: 'ok', count: 1 }],
+          by_actor: [{ id: 'mehdi', count: 1 }],
+          by_org: [{ id: 'nous', count: 1 }],
+          by_project: [{ id: 'zab', count: 1 }],
+          top_requests: [{ id: 'capabilities', count: 1 }],
+          errors: [],
+        }),
+      })
+    })
+    await page.route('**/api/logs/events**', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          contract: 'zab-request-log-query',
+          contract_version: '1.0',
+          source: 'index',
+          filters: {},
+          events: [event],
+          total: 1,
+        }),
+      })
+    })
+    await page.route('**/api/logs/tail**', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          contract: 'zab-request-log-tail',
+          contract_version: '1.0',
+          file: 'mcp',
+          path: '/tmp/zab/logs/mcp.jsonl',
+          lines: [JSON.stringify(event)],
+          events: [event],
         }),
       })
     })
 
-    await page.goto('/#research')
-    await expect(page.locator('[data-testid="research-view"]')).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Research' })).toBeVisible()
-    await page.getByRole('button', { name: 'Run research' }).click()
-    await expect(page.locator('[data-testid="research-packet"]')).toContainText('Research Packet')
-    await expect(page.getByText('source-health')).toBeVisible()
+    await page.goto('/#logs')
+    await expect(page.locator('[data-testid="logs-view"]')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Logs' })).toBeVisible()
+    await expect(page.locator('[data-testid="logs-total"]')).toHaveText('1')
+    await expect(page.getByRole('table').getByText('capabilities', { exact: true })).toBeVisible()
+    await page.locator('[data-testid="logs-filter-surface"]').selectOption('mcp')
+    await page.locator('[data-testid="logs-auto-refresh"]').check()
+    await expect(page.locator('[data-testid="logs-auto-refresh"]')).toBeChecked()
   })
 
   test('cli check UI', async ({ page, request }) => {

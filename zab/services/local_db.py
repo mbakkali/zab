@@ -6,7 +6,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -14,7 +14,7 @@ import yaml
 
 from zab.paths import config_dir, data_dir
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 4
 DEFAULT_FILENAME = "zab.db"
 
 
@@ -93,8 +93,15 @@ def migrate_schema(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
         if current < 1:
             _migrate_v1(conn)
+        if current < 2:
+            _migrate_v2(conn)
+        if current < 3:
+            _migrate_v3(conn)
+        if current < 4:
+            _migrate_v4(conn)
+        if current < SCHEMA_VERSION:
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            conn.commit()
+        conn.commit()
         return {"path": str(database_path()), "schema_version": schema_version(conn), "created": current == 0}
     finally:
         if own_conn:
@@ -233,6 +240,103 @@ def _migrate_v1(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v2(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS request_events (
+            event_id TEXT PRIMARY KEY,
+            ts TEXT NOT NULL,
+            level TEXT NOT NULL,
+            component TEXT,
+            surface TEXT,
+            request_id TEXT,
+            actor_id TEXT,
+            actor_kind TEXT,
+            org TEXT,
+            project_id TEXT,
+            project_path TEXT,
+            task_source_id TEXT,
+            request_name TEXT,
+            status TEXT,
+            duration_ms INTEGER,
+            http_status INTEGER,
+            exit_code INTEGER,
+            payload_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_request_events_ts ON request_events(ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_request_events_surface ON request_events(surface);
+        CREATE INDEX IF NOT EXISTS idx_request_events_component ON request_events(component);
+        CREATE INDEX IF NOT EXISTS idx_request_events_actor ON request_events(actor_id);
+        CREATE INDEX IF NOT EXISTS idx_request_events_org ON request_events(org);
+        CREATE INDEX IF NOT EXISTS idx_request_events_project ON request_events(project_id);
+        CREATE INDEX IF NOT EXISTS idx_request_events_status ON request_events(status);
+        """
+    )
+
+
+def _migrate_v3(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS ledger_events (
+            event_id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            native_id TEXT NOT NULL,
+            channel_id TEXT,
+            timestamp TEXT,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(source, native_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ledger_events_timestamp ON ledger_events(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_ledger_events_channel ON ledger_events(channel_id);
+
+        CREATE TABLE IF NOT EXISTS ledger_workpackets (
+            workpacket_id TEXT PRIMARY KEY,
+            display_id TEXT UNIQUE,
+            state TEXT,
+            organization_id TEXT,
+            client_workstream_id TEXT,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ledger_workpackets_state ON ledger_workpackets(state);
+        CREATE INDEX IF NOT EXISTS idx_ledger_workpackets_org ON ledger_workpackets(organization_id);
+
+        CREATE TABLE IF NOT EXISTS ledger_projection_states (
+            workpacket_id TEXT NOT NULL,
+            target TEXT NOT NULL,
+            status TEXT,
+            payload_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (workpacket_id, target)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ledger_projection_status ON ledger_projection_states(status);
+        """
+    )
+
+
+def _migrate_v4(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS ledger_organizations (
+            organization_id TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ledger_workstreams (
+            client_workstream_id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ledger_workstreams_org ON ledger_workstreams(organization_id);
+        """
+    )
+
+
 def schema_version(conn: sqlite3.Connection | None = None) -> int:
     own_conn = conn is None
     if conn is None:
@@ -270,6 +374,7 @@ def status() -> dict[str, Any]:
                 "cron_runs",
                 "communication_channels",
                 "dashboard_actions",
+                "request_events",
             ]
             payload["tables"] = {
                 name: int(conn.execute(f"SELECT count(*) FROM {name}").fetchone()[0])
@@ -396,6 +501,34 @@ def get_state_item(section: str, key: str) -> dict[str, Any] | None:
         if str(item["item_key"]) == key or str(payload.get("id") or "").lower() == key.lower():
             return {"key": str(item["item_key"]), **payload}
     return None
+
+
+def upsert_state_item(section: str, key: str, payload: dict[str, Any]) -> None:
+    """Met à jour un seul item de l'index local (state + search) sans reconstruire tout l'état.
+
+    Utile après une édition unitaire (ex: annotation d'un tool) pour que le chemin
+    rapide de lecture reflète immédiatement le changement, sans ``zab sync`` complet."""
+
+    if not has_state():
+        return
+    now = utc_now()
+    payload = payload if isinstance(payload, dict) else {"value": payload}
+    payload_json = _json_dumps(payload)
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO state_sections (section, item_key, payload_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(section, item_key)
+            DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
+            """,
+            (section, str(key), payload_json, now),
+        )
+        conn.execute(
+            "DELETE FROM search_index WHERE section = ? AND item_key = ?",
+            (section, str(key)),
+        )
+        _upsert_search_index(conn, section, str(key), payload, payload_json)
 
 
 def search_state(query: str, *, sections: list[str] | None = None, limit: int = 20) -> list[dict[str, Any]]:
@@ -756,6 +889,110 @@ def update_dashboard_action(action_id: str, patch: dict[str, Any]) -> dict[str, 
     return updated
 
 
+def save_request_event(event: dict[str, Any]) -> None:
+    actor = event.get("actor") if isinstance(event.get("actor"), dict) else {}
+    scope = event.get("scope") if isinstance(event.get("scope"), dict) else {}
+    request = event.get("request") if isinstance(event.get("request"), dict) else {}
+    result = event.get("result") if isinstance(event.get("result"), dict) else {}
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO request_events
+              (event_id, ts, level, component, surface, request_id, actor_id, actor_kind,
+               org, project_id, project_path, task_source_id, request_name, status,
+               duration_ms, http_status, exit_code, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+              ts = excluded.ts,
+              level = excluded.level,
+              component = excluded.component,
+              surface = excluded.surface,
+              request_id = excluded.request_id,
+              actor_id = excluded.actor_id,
+              actor_kind = excluded.actor_kind,
+              org = excluded.org,
+              project_id = excluded.project_id,
+              project_path = excluded.project_path,
+              task_source_id = excluded.task_source_id,
+              request_name = excluded.request_name,
+              status = excluded.status,
+              duration_ms = excluded.duration_ms,
+              http_status = excluded.http_status,
+              exit_code = excluded.exit_code,
+              payload_json = excluded.payload_json
+            """,
+            (
+                str(event.get("event_id") or ""),
+                str(event.get("ts") or utc_now()),
+                str(event.get("level") or "INFO"),
+                event.get("component"),
+                event.get("surface"),
+                event.get("request_id"),
+                actor.get("id"),
+                actor.get("kind"),
+                scope.get("org"),
+                scope.get("project_id"),
+                scope.get("project_path"),
+                scope.get("task_source_id"),
+                request.get("name") or request.get("path") or request.get("tool") or request.get("command"),
+                result.get("status"),
+                _int_or_none(result.get("duration_ms")),
+                _int_or_none(result.get("http_status")),
+                _int_or_none(result.get("exit_code")),
+                _json_dumps(event),
+            ),
+        )
+
+
+def query_request_events(filters: dict[str, Any] | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
+    filters = filters or {}
+    capped = max(1, min(1000, int(limit)))
+    where: list[str] = []
+    params: list[Any] = []
+    for key, column in (
+        ("surface", "surface"),
+        ("component", "component"),
+        ("actor", "actor_id"),
+        ("org", "org"),
+        ("project", "project_id"),
+        ("status", "status"),
+    ):
+        value = filters.get(key)
+        if value not in (None, ""):
+            where.append(f"LOWER(COALESCE({column}, '')) LIKE ?")
+            params.append(f"%{str(value).lower()}%")
+    since = _since_to_iso(filters.get("since"))
+    if since:
+        where.append("ts >= ?")
+        params.append(since)
+    q = str(filters.get("q") or "").strip()
+    if q:
+        where.append("LOWER(payload_json) LIKE ?")
+        params.append(f"%{q.lower()}%")
+    sql_where = " AND ".join(where) if where else "1 = 1"
+    params.append(capped * 5 if filters.get("level") else capped)
+    with connect(migrate=True) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT payload_json
+            FROM request_events
+            WHERE {sql_where}
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    events = [_json_loads(r["payload_json"], {}) for r in rows]
+    level = filters.get("level")
+    if level:
+        min_rank = _level_rank(str(level))
+        events = [
+            event for event in events
+            if isinstance(event, dict) and _level_rank(str(event.get("level") or "INFO")) >= min_rank
+        ]
+    return [e for e in events if isinstance(e, dict)][:capped]
+
+
 def export_database(*, fmt: str = "json") -> str:
     payload = {
         "meta": {
@@ -773,6 +1010,7 @@ def export_database(*, fmt: str = "json") -> str:
         "cron_runs": _dump_table("cron_runs"),
         "communication_channels": _dump_table("communication_channels"),
         "dashboard_actions": _dump_table("dashboard_actions"),
+        "request_events": _dump_table("request_events"),
     }
     if fmt == "yaml":
         return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
@@ -783,6 +1021,40 @@ def _dump_table(name: str) -> list[dict[str, Any]]:
     with connect(migrate=True) as conn:
         rows = conn.execute(f"SELECT * FROM {name}").fetchall()
     return [dict(r) for r in rows]
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _level_rank(level: str) -> int:
+    return {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}.get(level.upper(), 20)
+
+
+def _since_to_iso(raw: Any) -> str | None:
+    if raw in (None, ""):
+        return None
+    text = str(raw).strip().lower()
+    if text.endswith(("s", "m", "h", "d")) and text[:-1].isdigit():
+        value = int(text[:-1])
+        unit = text[-1]
+        delta = {
+            "s": 1,
+            "m": 60,
+            "h": 3600,
+            "d": 86400,
+        }[unit]
+        return (datetime.now(timezone.utc) - timedelta(seconds=value * delta)).isoformat()
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
+    except ValueError:
+        return None
 
 
 def import_legacy() -> dict[str, Any]:

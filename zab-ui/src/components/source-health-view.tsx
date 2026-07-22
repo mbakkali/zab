@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type SourceStatus = 'ok' | 'local_ok' | 'needs_auth' | 'error' | 'legacy_reference' | 'not_verified' | 'stale'
 
@@ -125,7 +126,7 @@ export function SourceHealthView() {
           <CardDescription>Contract: {payload?.contract ?? 'loading'} v{payload?.contract_version ?? '—'}</CardDescription>
         </CardHeader>
         <CardContent>
-          {loading && !payload ? <p className="text-muted-foreground text-sm">Loading Source Health…</p> : null}
+          {loading && !payload ? <LoadingState compact label="Chargement de Source Health…" /> : null}
           {payload ? (
             <div className="overflow-x-auto">
               <Table>

@@ -13,6 +13,7 @@ import { skillIconFor, skillOrgIcon } from '@/lib/connector-meta'
 import { shortenHomeInPath, vscodeFileHrefForSkill } from '@/lib/skill-open'
 import { cn } from '@/lib/utils'
 import { useI18n } from '@/i18n/use-i18n'
+import { LoadingState } from '@/components/ui/loading-state'
 
 type Skill = {
   id: string
@@ -132,6 +133,7 @@ export function SkillsView({
   const [syncBusy, setSyncBusy] = useState<string | null>(null)
   const [scanReport, setScanReport] = useState<string | null>(null)
   const [autoSyncReport, setAutoSyncReport] = useState<string | null>(null)
+  const [initialLoading, setInitialLoading] = useState(true)
 
   const loadIndexed = useCallback(async () => {
     const acc: IndexedSkill[] = []
@@ -188,6 +190,8 @@ export function SkillsView({
         await loadIndexed()
       } catch (e) {
         if (!cancelled) setIndexError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setInitialLoading(false)
       }
     })()
     return () => {
@@ -277,6 +281,14 @@ export function SkillsView({
         (registryCounts.conflict ?? 0) > 0 ? ` · conflits ${registryCounts.conflict}` : ''
       }`
     : null
+
+  if (initialLoading && indexed.length === 0 && !indexError) {
+    return (
+      <div className="space-y-6" data-testid="skills-view">
+        <LoadingState label={t('common.loading')} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

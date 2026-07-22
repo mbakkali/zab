@@ -1,0 +1,51 @@
+# Hermes Gateway — Cloud Run image (Phase 2/3 of hermes_telegram_orchestration)
+#
+# Strategy: extend the official Hermes image (built locally from the upstream
+# source) with zab, Composio, and Cloud SQL access. Cloud Run's built-in
+# Cloud SQL connector exposes a Unix socket at /cloudsql/<conn> when the
+# service is deployed with --add-cloudsql-instances, so NO proxy sidecar /
+# binary is needed in the image.
+#
+# Build the base first (from ~/.hermes/hermes-agent):
+#   docker build -t hermes-agent:base ~/.hermes/hermes-agent
+# Then build this image (context = this directory; expects ./zab to be a
+# copy/checkout of the zab repo, see deploy-hermes-gateway.sh which stages it):
+#   docker build -f Dockerfile.hermes-gateway -t <registry>/hermes-gateway:latest .
+
+FROM hermes-agent:base
+
+USER root
+
+# --- zab (read-only MCP server + CLI) ---
+# zab repo is staged into ./zab by deploy-hermes-gateway.sh (rsync, no .venv).
+COPY --chown=hermes:hermes zab /opt/zab
+RUN uv pip install --no-cache-dir /opt/zab
+
+# --- Composio SDK + CLI (connectors: Gmail, Calendar, ...) ---
+RUN uv pip install --no-cache-dir composio_core composio_openai || \
+    uv pip install --no-cache-dir composio
+
+# --- Skills bundle ---
+# Staged by deploy-hermes-gateway.sh from ~/projects/skills/
+COPY --chown=hermes:hermes skills /config/skills
+ENV ZAB_SKILLS_ROOT=/config/skills
+
+# --- Projects + home scan context ---
+# Staged by deploy-hermes-gateway.sh from projects and home scan context
+COPY --chown=hermes:hermes projects /workspace/projects
+COPY --chown=hermes:hermes home /workspace/home
+ENV ZAB_PROJECTS_ROOT=/workspace/projects
+
+# --- Embedded Hermes config for the container ---
+# Minimal config.yaml: registers zab MCP + points skills root. Telegram /
+# model creds come from env (Secret Manager) at deploy time.
+COPY --chown=hermes:hermes config.container.yaml /opt/data/config.yaml
+
+USER hermes
+
+# HERMES_HOME=/opt/data is the volume in the base image. On Cloud Run there
+# is no persistent volume; that's fine — state is ephemeral per instance and
+# durable state lives in Cloud SQL (mehdi_mcp_memory) + the Telegram chat.
+#
+# Entrypoint (tini + docker/entrypoint.sh) is inherited from the base image.
+# The deployed Cloud Run command runs: hermes gateway run

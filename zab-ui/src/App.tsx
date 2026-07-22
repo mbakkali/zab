@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react'
 import {
@@ -24,32 +24,71 @@ import {
   MessageMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { ChevronDown, ChevronRight, Menu, CheckCircle2, XCircle, AlertTriangle, Loader2, Download, Wrench } from 'lucide-react'
+import { LoadingState } from '@/components/ui/loading-state'
+import { ChevronDown, ChevronRight, Menu, CheckCircle2, XCircle, AlertTriangle, Loader2, Download, Copy, LogIn, RefreshCw, ShieldCheck, ExternalLink } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { SidebarNav, MobileNavDrawer, type NavId } from '@/components/sidebar-nav'
-import { ConnectorsView } from '@/components/connectors-view'
-import { CliCheckView } from '@/components/cli-check-view'
-import { ConfigView } from '@/components/config-view'
-import { SkillsView } from '@/components/skills-view'
-import { ProjectsView } from '@/components/projects-view'
-import { TasksInboxView } from '@/components/tasks-inbox-view'
-import { ConversationsView } from '@/components/conversations-view'
-import { WorkstationView } from '@/components/workstation-view'
-import { CapabilitiesView } from '@/components/capabilities-view'
-import { SourceHealthView } from '@/components/source-health-view'
-import { ResearchView } from '@/components/research-view'
-import { ToolsCatalogView } from '@/components/tools-catalog-view'
-import CronsView from '@/components/crons-view'
-import { ChannelsView, type ChannelItem } from '@/components/channels-view'
+import type { ChannelItem } from '@/components/channels-view'
+
+// Chaque vue est chargée à la demande (code-splitting) : le bundle initial ne
+// contient que le shell + la vue « overview », les autres pages téléchargent
+// leur chunk au premier affichage. Cf. <Suspense> plus bas.
+const ConnectorsView = lazy(() =>
+  import('@/components/connectors-view').then((m) => ({ default: m.ConnectorsView })),
+)
+const CliCheckView = lazy(() =>
+  import('@/components/cli-check-view').then((m) => ({ default: m.CliCheckView })),
+)
+const ConfigView = lazy(() =>
+  import('@/components/config-view').then((m) => ({ default: m.ConfigView })),
+)
+const SkillsView = lazy(() =>
+  import('@/components/skills-view').then((m) => ({ default: m.SkillsView })),
+)
+const ProjectsView = lazy(() =>
+  import('@/components/projects-view').then((m) => ({ default: m.ProjectsView })),
+)
+const TasksInboxView = lazy(() =>
+  import('@/components/tasks-inbox-view').then((m) => ({ default: m.TasksInboxView })),
+)
+const ConversationsView = lazy(() =>
+  import('@/components/conversations-view').then((m) => ({ default: m.ConversationsView })),
+)
+const InteractionsView = lazy(() =>
+  import('@/components/interactions-view').then((m) => ({ default: m.InteractionsView })),
+)
+const WorkpacketsView = lazy(() =>
+  import('@/components/workpackets-view').then((m) => ({ default: m.WorkpacketsView })),
+)
+const WorkstationView = lazy(() =>
+  import('@/components/workstation-view').then((m) => ({ default: m.WorkstationView })),
+)
+const CapabilitiesView = lazy(() =>
+  import('@/components/capabilities-view').then((m) => ({ default: m.CapabilitiesView })),
+)
+const SourceHealthView = lazy(() =>
+  import('@/components/source-health-view').then((m) => ({ default: m.SourceHealthView })),
+)
+const LogsView = lazy(() =>
+  import('@/components/logs-view').then((m) => ({ default: m.LogsView })),
+)
+const ToolsCatalogView = lazy(() =>
+  import('@/components/tools-catalog-view').then((m) => ({ default: m.ToolsCatalogView })),
+)
+const CronsView = lazy(() => import('@/components/crons-view'))
+const ChannelsView = lazy(() =>
+  import('@/components/channels-view').then((m) => ({ default: m.ChannelsView })),
+)
 import { vscodeFileHref } from '@/lib/env-open'
 import { shortenHomeInPath, vscodeFileHrefForSkill } from '@/lib/skill-open'
 import {
@@ -67,12 +106,6 @@ import { LanguageSwitcher } from '@/components/language-switcher'
 import { useI18n } from '@/i18n/use-i18n'
 import { NAV_I18N_KEY } from '@/i18n/nav-labels'
 import { useFormatDate } from '@/i18n/format'
-
-const HERMES_OPENWEBUI_URL = 'http://127.0.0.1:3000'
-/** Port hôte du bridge (mapping docker-compose 8081:8080). */
-const HERMES_BRIDGE_HEALTH_URL = 'http://127.0.0.1:8081/health'
-/** Chemin sous le dépôt zab ; validation projects_roots (petit-enfant de ~/projects). */
-const FLOWMETRIK_OPENWEBUI_PROJECT = '~/projects/zab/flowmetrik-openwebui'
 
 type McpOverviewBlock = {
   source: string
@@ -233,8 +266,8 @@ function useJobRunner() {
 }
 
 const VALID_TABS: NavId[] = [
-  'overview', 'system_check', 'cli_check', 'capabilities', 'source_health', 'research', 'orgs', 'projects', 'tasks_inbox', 'channels', 'conversations', 'plugins', 'connectors', 'config',
-  'tests', 'security', 'exports', 'memory', 'ide', 'models', 'workstation', 'hermes', 'skills', 'catalog', 'crons',
+  'overview', 'system_check', 'cli_check', 'capabilities', 'source_health', 'logs', 'orgs', 'projects', 'tasks_inbox', 'channels', 'conversations', 'interactions', 'workpackets', 'plugins', 'connectors', 'config',
+  'tests', 'security', 'memory', 'ide', 'models', 'workstation', 'skills', 'catalog', 'crons',
 ]
 
 type HashRoute = {
@@ -273,7 +306,6 @@ export default function App() {
   const { t } = useI18n()
   const [overview, setOverview] = useState<Overview | null>(null)
   const [toolsLocal, setToolsLocal] = useState<Record<string, unknown> | null>(null)
-  const [exportHints, setExportHints] = useState<Record<string, unknown> | null>(null)
   const [stateSummary, setStateSummary] = useState<StateSummary | null>(null)
   const { lines, jobId, running, runPreset } = useJobRunner()
   const {
@@ -337,31 +369,40 @@ export default function App() {
       if (route.tab) {
         setTab(route.tab)
         setRouteId(route.id)
+      } else if (window.location.hash) {
+        setTab('overview')
+        setRouteId(null)
+        window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#overview`)
       }
     }
+    handler()
     window.addEventListener('hashchange', handler)
     return () => window.removeEventListener('hashchange', handler)
   }, [])
 
   useEffect(() => {
+    // Les appels sont volontairement découplés : l'overview ne doit dépendre que
+    // des endpoints rapides (/api/overview, /api/state). Le scan des outils
+    // (/api/tools/scan) est lent à froid (plusieurs secondes) et ne sert qu'à
+    // l'onglet IDE + aux stats de « rescan » ; on le charge en arrière-plan
+    // sans bloquer le rendu initial du tableau de bord.
     void (async () => {
       try {
-        const [ov, tl, ex, sc, st] = await Promise.all([
-          apiJson<Overview>('/api/overview'),
-          apiJson<Record<string, unknown>>('/api/tools/local'),
-          apiJson<Record<string, unknown>>('/api/exports/hints'),
-          apiJson<ScanToolsPayload>('/api/tools/scan'),
-          apiJson<StateSummary>('/api/state'),
-        ])
+        const ov = await apiJson<Overview>('/api/overview')
         setOverview(ov)
-        setToolsLocal(tl)
-        setExportHints(ex)
-        setScanTools(sc)
-        setStateSummary(st)
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e))
       }
     })()
+    void apiJson<StateSummary>('/api/state')
+      .then(setStateSummary)
+      .catch(() => {})
+    void apiJson<Record<string, unknown>>('/api/tools/local')
+      .then(setToolsLocal)
+      .catch(() => {})
+    void apiJson<ScanToolsPayload>('/api/tools/scan')
+      .then(setScanTools)
+      .catch(() => {})
   }, [])
 
   const totalSkills = useMemo(
@@ -504,6 +545,7 @@ export default function App() {
           </div>
 
           <div className="mx-auto w-full max-w-7xl px-6 py-8">
+            <Suspense fallback={<ViewFallback />}>
             {tab === 'overview' && (
               <OverviewSection
                 overview={overview}
@@ -520,8 +562,8 @@ export default function App() {
             {tab === 'cli_check' && <CliCheckView />}
             {tab === 'capabilities' && <CapabilitiesView />}
             {tab === 'source_health' && <SourceHealthView />}
-            {tab === 'research' && <ResearchView />}
-            {tab === 'catalog' && <ToolsCatalogView />}
+            {tab === 'logs' && <LogsView />}
+            {tab === 'catalog' && <ToolsCatalogView initialToolId={routeId} />}
             {tab === 'channels' && (
               <ChannelsView
                 orgs={overview?.orgs}
@@ -563,6 +605,10 @@ export default function App() {
             )}
             {tab === 'tasks_inbox' && <TasksInboxView onJump={navigateTab} />}
             {tab === 'conversations' && <ConversationsView />}
+            {tab === 'interactions' && (
+              <InteractionsView onOpenTool={(toolId) => navigateRoute('catalog', toolId)} />
+            )}
+            {tab === 'workpackets' && <WorkpacketsView />}
             {tab === 'plugins' && <PluginsSection overview={overview} onJump={navigateTab} />}
             {tab === 'connectors' && <ConnectorsView />}
             {tab === 'config' && <ConfigView />}
@@ -587,9 +633,6 @@ export default function App() {
                 jobLines={securityLines}
               />
             )}
-            {tab === 'exports' && (
-              <ExportsSection running={running} runPreset={runPreset} hints={exportHints} />
-            )}
             {tab === 'memory' && (
               <MemorySection
                 projects={overview?.projects ?? []}
@@ -603,8 +646,8 @@ export default function App() {
             {tab === 'ide' && <IdeSection toolsLocal={toolsLocal} scanTools={scanTools} probe={probe} />}
             {tab === 'models' && <ModelsCodySection />}
             {tab === 'workstation' && <WorkstationView />}
-            {tab === 'hermes' && <HermesSection />}
             {tab === 'crons' && <CronsView />}
+            </Suspense>
           </div>
         </main>
       </div>
@@ -619,6 +662,17 @@ export default function App() {
         open={editorOpen}
         onOpenChange={setEditorOpen}
       />
+    </div>
+  )
+}
+
+function ViewFallback() {
+  return (
+    <div
+      data-testid="view-fallback"
+      className="flex min-h-[40vh] items-center justify-center"
+    >
+      <Loader2 className="text-muted-foreground size-6 animate-spin" />
     </div>
   )
 }
@@ -777,33 +831,7 @@ function SystemCheckSection() {
     toast.error(t('systemCheck.runFirst'))
   }, [report, summary, checks, t])
 
-  const [fixing, setFixing] = useState(false)
-
-  const handleFix = useCallback(async () => {
-    setFixing(true)
-    try {
-      const r = await fetch('/api/system/fix', { method: 'POST' })
-      if (!r.ok) {
-        const t = await r.text()
-        toast.error(t || r.statusText)
-      } else {
-        const data = await r.json() as { launched?: boolean; reason?: string; issues_count?: number }
-        if (data.launched) {
-          toast.success(t('systemCheck.toast.hermesIssues', { count: String(data.issues_count ?? 0) }))
-        } else {
-          toast.success(t('systemCheck.toast.allOk'))
-        }
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setFixing(false)
-    }
-  }, [t])
-
   const checkList = useMemo(() => Object.values(checks), [checks])
-
-  const hasIssues = checkList.some((c) => c.status === 'warn' || c.status === 'fail')
 
   const grouped = useMemo(() => {
     return checkList.reduce<Record<string, SystemCheckItem[]>>((acc, row) => {
@@ -846,12 +874,6 @@ function SystemCheckSection() {
             <Download className="mr-2 size-4" />
             {t('systemCheck.downloadReport')}
           </Button>
-          {hasIssues && (
-            <Button onClick={() => void handleFix()} disabled={fixing} variant="outline">
-              {fixing ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Wrench className="mr-2 size-4" />}
-              {t('systemCheck.fixWithHermes')}
-            </Button>
-          )}
         </div>
       </div>
 
@@ -979,7 +1001,7 @@ function OverviewSection({
     })()
   }
 
-  if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
+  if (!overview) return <LoadingState label={t('common.loading')} />
 
   const stats = [
     {
@@ -1403,7 +1425,7 @@ function OrgsSection({
   onJump: (id: NavId) => void
 }) {
   const { t } = useI18n()
-  if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
+  if (!overview) return <LoadingState label={t('common.loading')} />
   const selectedOrg = activeOrgId ? overview.orgs.find((o) => o.org === activeOrgId) : undefined
   const visibleOrgs = selectedOrg ? [selectedOrg] : overview.orgs
   return (
@@ -1449,7 +1471,7 @@ function PluginsSection({
   onJump: (id: NavId) => void
 }) {
   const { t } = useI18n()
-  if (!overview) return <p className="text-muted-foreground">{t('common.loading')}</p>
+  if (!overview) return <LoadingState label={t('common.loading')} />
   return (
     <div className="space-y-6">
       <header>
@@ -1592,6 +1614,31 @@ type SecurityEnvProcessSource = {
   keys: string[]
 }
 
+type SecurityDashlaneMatch = {
+  id: string
+  title: string
+  reference: string
+  web_url?: string
+  match: 'exact' | 'fuzzy' | string
+  score: number
+}
+
+type SecurityEnvSyncRow = {
+  name: string
+  status: 'synced' | 'pending' | 'missing' | string
+  provider: string | null
+  recommended_provider: string | null
+  dashlane_title: string
+  dashlane_reference_value: string
+  dashlane_reference_template: string
+  dashlane_web_url?: string
+  dashlane_match_status: 'matched' | 'not_found' | string
+  dashlane_matches: SecurityDashlaneMatch[]
+  reference_hint: string
+  note_template: string
+  source_count: number
+}
+
 type SecurityEnvVarRow = {
   name: string
   present: boolean
@@ -1599,6 +1646,132 @@ type SecurityEnvVarRow = {
   in_file: boolean
   masked: string
   sources: (SecurityEnvFileSource | SecurityEnvProcessSource)[]
+  sync?: SecurityEnvSyncRow | null
+}
+
+type SecuritySecretSyncPayload = {
+  provider: string
+  status: string
+  generated_at_utc: string
+  write_supported: boolean
+  counts: {
+    synced: number
+    pending: number
+    missing: number
+    total: number
+  }
+  dashlane_inventory?: {
+    available: boolean
+    status: string
+    count: number
+    status_detail?: string | null
+    items?: {
+      id: string
+      title: string
+      reference: string
+      web_url?: string
+    }[]
+  }
+  variables: SecurityEnvSyncRow[]
+  manual_steps?: string[]
+  message?: string
+}
+
+type SecuritySecretProvider = {
+  id: string
+  label: string
+  available: boolean
+  implemented: boolean
+  enabled: boolean
+  cli?: string
+  cli_path?: string | null
+  status: string
+  status_label: string
+  status_detail?: string | null
+  login_command?: string
+  check_command?: string
+  capabilities?: string[]
+  limitations?: string[]
+  write_supported?: boolean
+  local_reference_write_supported?: boolean
+}
+
+type SecurityDashlaneApplyResult = {
+  name: string
+  status: 'synced' | 'skipped' | 'error' | 'create_required' | string
+  provider?: string
+  reason?: string
+  reference_hint?: string
+  dashlane_title?: string
+  dashlane_reference_value?: string
+  dashlane_web_url?: string
+  dashlane_secret_status?: string
+  hint?: string
+  changed_files?: {
+    path: string
+    path_display: string
+    keys: string[]
+    storage?: string
+  }[]
+}
+
+type SecurityDashlaneApplyResponse = {
+  provider: 'dashlane'
+  result: SecurityDashlaneApplyResult
+  secret_sync?: SecuritySecretSyncPayload
+}
+
+type SecurityDashlaneCopyValueResponse = {
+  copied: boolean
+  name: string
+  dashlane_title: string
+}
+
+type SecurityEnvOverviewPayload = {
+  files: SecurityEnvFileRow[]
+  variables: SecurityEnvVarRow[]
+  secret_sync?: SecuritySecretSyncPayload
+}
+
+type SecuritySubmenuId = 'env_files' | 'local_scans' | 'sync_secrets'
+
+function DashlaneLogo({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        'relative inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-[#0b6670] text-[9px] font-bold text-white',
+        className,
+      )}
+    >
+      D
+      <img
+        src="https://play-lh.googleusercontent.com/82k9b2kIf3AGhg7Owb4JwM07V4dxazgqubplyo2vDuLJOOBtzjD4XQ5rGLMUye93kw"
+        alt=""
+        className="absolute inset-0 size-full rounded-sm object-cover"
+      />
+    </span>
+  )
+}
+
+function SecuritySyncPill({ sync }: { sync?: SecurityEnvSyncRow | null }) {
+  if (!sync || sync.status === 'missing') {
+    return <span className="text-muted-foreground text-xs">—</span>
+  }
+  if (sync.status === 'synced') {
+    return (
+      <span className="inline-flex max-w-[180px] items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 ring-1 ring-emerald-200">
+        <DashlaneLogo />
+        <span>Dashlane</span>
+        {sync.reference_hint ? <span className="truncate font-mono opacity-70">{sync.reference_hint}</span> : null}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 ring-1 ring-amber-200">
+      <DashlaneLogo />
+      <span>À créer</span>
+    </span>
+  )
 }
 
 function SecuritySection({
@@ -1616,8 +1789,21 @@ function SecuritySection({
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [envFiles, setEnvFiles] = useState<SecurityEnvFileRow[]>([])
   const [envVars, setEnvVars] = useState<SecurityEnvVarRow[]>([])
+  const [secretProviders, setSecretProviders] = useState<SecuritySecretProvider[]>([])
+  const [secretSync, setSecretSync] = useState<SecuritySecretSyncPayload | null>(null)
+  const [providersLoading, setProvidersLoading] = useState(true)
+  const [syncChecking, setSyncChecking] = useState(false)
+  const [securitySubmenu, setSecuritySubmenu] = useState<SecuritySubmenuId>('env_files')
   const [openingKey, setOpeningKey] = useState<string | null>(null)
   const [reports, setReports] = useState<SecurityReportRow[]>([])
+  const [dashlaneModalOpen, setDashlaneModalOpen] = useState(false)
+  const [dashlaneSelectedNames, setDashlaneSelectedNames] = useState<Set<string>>(() => new Set())
+  const [dashlaneConfirmAll, setDashlaneConfirmAll] = useState(false)
+  const [dashlaneSyncRunning, setDashlaneSyncRunning] = useState(false)
+  const [dashlaneActiveName, setDashlaneActiveName] = useState<string | null>(null)
+  const [dashlaneCopyingName, setDashlaneCopyingName] = useState<string | null>(null)
+  const [dashlaneReferenceByName, setDashlaneReferenceByName] = useState<Record<string, string>>({})
+  const [dashlaneResults, setDashlaneResults] = useState<Record<string, SecurityDashlaneApplyResult>>({})
 
   const loadReports = useCallback(async () => {
     try {
@@ -1631,24 +1817,78 @@ function SecuritySection({
   const loadOverview = useCallback(async () => {
     setOverviewLoading(true)
     try {
-      const data = await apiJson<{ files: SecurityEnvFileRow[]; variables: SecurityEnvVarRow[] }>(
-        '/api/security/env-overview',
-      )
+      const data = await apiJson<SecurityEnvOverviewPayload>('/api/security/env-overview')
       setEnvFiles(data.files ?? [])
       setEnvVars(data.variables ?? [])
+      setSecretSync(data.secret_sync ?? null)
     } catch (e) {
       setEnvFiles([])
       setEnvVars([])
+      setSecretSync(null)
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setOverviewLoading(false)
     }
   }, [])
 
+  const loadProviders = useCallback(async () => {
+    setProvidersLoading(true)
+    try {
+      const data = await apiJson<{ providers: SecuritySecretProvider[] }>('/api/security/secret-providers')
+      setSecretProviders(data.providers ?? [])
+    } catch {
+      setSecretProviders([])
+    } finally {
+      setProvidersLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void loadOverview()
+    void loadProviders()
     void loadReports()
-  }, [loadOverview, loadReports])
+  }, [loadOverview, loadProviders, loadReports])
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(label)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const applySecretSyncPayload = (data: SecuritySecretSyncPayload & { providers?: SecuritySecretProvider[] }) => {
+    setSecretSync(data)
+    if (data.providers) setSecretProviders(data.providers)
+    const syncByName = new Map((data.variables ?? []).map((row) => [row.name, row]))
+    setEnvVars((current) =>
+      current.map((row) => ({
+        ...row,
+        sync: syncByName.get(row.name) ?? row.sync,
+      })),
+    )
+  }
+
+  const runDashlaneCheck = async () => {
+    setSyncChecking(true)
+    try {
+      const data = await apiJson<SecuritySecretSyncPayload & { providers?: SecuritySecretProvider[] }>(
+        '/api/security/secret-sync/check',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: 'dashlane', apply: false }),
+        },
+      )
+      applySecretSyncPayload(data)
+      toast.success(data.message ?? 'Check Dashlane terminé')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSyncChecking(false)
+    }
+  }
 
   const openEnvInEditor = async (path: string, opts?: { line?: number | null; key?: string }) => {
     const token = `${path}:${opts?.key ?? ''}:${opts?.line ?? ''}`
@@ -1673,6 +1913,167 @@ function SecuritySection({
   }
 
   const configuredFiles = envFiles.filter((f) => f.configured)
+  const providersForDisplay =
+    secretProviders.length > 0
+      ? secretProviders
+      : [
+          {
+            id: 'dashlane',
+            label: 'Dashlane',
+            available: false,
+            implemented: true,
+            enabled: true,
+            status: providersLoading ? 'loading' : 'missing_cli',
+            status_label: providersLoading ? 'Chargement' : 'dcli absent',
+            login_command: 'dcli sync',
+            check_command: 'dcli status',
+            write_supported: false,
+          },
+          {
+            id: 'dotenvx',
+            label: 'dotenvx',
+            available: false,
+            implemented: false,
+            enabled: false,
+            status: 'planned',
+            status_label: 'Prévu',
+            write_supported: false,
+          },
+          {
+            id: 'op',
+            label: '1Password',
+            available: false,
+            implemented: false,
+            enabled: false,
+            status: 'planned',
+            status_label: 'Prévu',
+            write_supported: false,
+          },
+          {
+            id: 'sops',
+            label: 'SOPS',
+            available: false,
+            implemented: false,
+            enabled: false,
+            status: 'planned',
+            status_label: 'Prévu',
+            write_supported: false,
+          },
+        ]
+  const dashlaneProvider = providersForDisplay.find((p) => p.id === 'dashlane') ?? null
+  const pendingDashlaneRows = (secretSync?.variables ?? []).filter((row) => row.status === 'pending')
+  const fileBackedNames = new Set(envVars.filter((row) => row.sources.some((source) => source.kind === 'file')).map((row) => row.name))
+  const selectableDashlaneRows = pendingDashlaneRows.filter((row) => fileBackedNames.has(row.name))
+  const selectedDashlaneRows = selectableDashlaneRows.filter((row) => dashlaneSelectedNames.has(row.name))
+  const dashlaneAllSelected =
+    selectableDashlaneRows.length > 0 && selectedDashlaneRows.length === selectableDashlaneRows.length
+
+  const defaultDashlaneReferenceForRow = (row: SecurityEnvSyncRow) =>
+    row.dashlane_match_status === 'matched' ? row.dashlane_reference_value : ''
+
+  const openDashlaneModal = (mode: 'first' | 'all' = 'first') => {
+    const next = new Set<string>()
+    const nextRefs: Record<string, string> = {}
+    if (mode === 'all') {
+      selectableDashlaneRows.forEach((row) => {
+        next.add(row.name)
+        nextRefs[row.name] = defaultDashlaneReferenceForRow(row)
+      })
+    } else if (selectableDashlaneRows[0]) {
+      next.add(selectableDashlaneRows[0].name)
+      nextRefs[selectableDashlaneRows[0].name] = defaultDashlaneReferenceForRow(selectableDashlaneRows[0])
+    }
+    setDashlaneSelectedNames(next)
+    setDashlaneReferenceByName(nextRefs)
+    setDashlaneConfirmAll(false)
+    setDashlaneResults({})
+    setDashlaneActiveName(null)
+    setDashlaneModalOpen(true)
+  }
+
+  const toggleDashlaneSelection = (name: string, checked: boolean) => {
+    const row = selectableDashlaneRows.find((item) => item.name === name)
+    setDashlaneSelectedNames((current) => {
+      const next = new Set(current)
+      if (checked) next.add(name)
+      else next.delete(name)
+      return next
+    })
+    if (checked && row) {
+      setDashlaneReferenceByName((current) => ({
+        ...current,
+        [name]: current[name] || defaultDashlaneReferenceForRow(row),
+      }))
+    }
+    setDashlaneConfirmAll(false)
+  }
+
+  const setDashlaneSelectionAll = (checked: boolean) => {
+    setDashlaneSelectedNames(checked ? new Set(selectableDashlaneRows.map((row) => row.name)) : new Set())
+    setDashlaneReferenceByName(
+      checked
+        ? Object.fromEntries(selectableDashlaneRows.map((row) => [row.name, dashlaneReferenceByName[row.name] || defaultDashlaneReferenceForRow(row)]))
+        : {},
+    )
+    setDashlaneConfirmAll(false)
+  }
+
+  const runDashlaneModalSync = async () => {
+    if (selectedDashlaneRows.length === 0) {
+      toast.warning('Sélection vide')
+      return
+    }
+    if (dashlaneAllSelected && !dashlaneConfirmAll) {
+      toast.warning('Confirme la sélection totale avant de lancer la sync.')
+      return
+    }
+    setDashlaneSyncRunning(true)
+    setDashlaneResults({})
+    try {
+      for (const row of selectedDashlaneRows) {
+        setDashlaneActiveName(row.name)
+        const data = await apiJson<SecurityDashlaneApplyResponse>('/api/security/secret-sync/dashlane/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: 'dashlane',
+            name: row.name,
+            reference: dashlaneReferenceByName[row.name],
+            selected_count: selectedDashlaneRows.length,
+            total_selectable: selectableDashlaneRows.length,
+            confirm_all: dashlaneConfirmAll,
+          }),
+        })
+        setDashlaneResults((current) => ({ ...current, [row.name]: data.result }))
+        if (data.secret_sync) applySecretSyncPayload(data.secret_sync)
+        if (data.result.status === 'error') break
+      }
+      await loadOverview()
+      await loadProviders()
+      toast.success('Sync Dashlane terminée')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDashlaneActiveName(null)
+      setDashlaneSyncRunning(false)
+    }
+  }
+
+  const copyDashlaneValue = async (row: SecurityEnvSyncRow) => {
+    setDashlaneCopyingName(row.name)
+    try {
+      const data = await apiJson<SecurityDashlaneCopyValueResponse>('/api/security/secret-sync/dashlane/copy-value', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: row.name, confirm_clipboard: true }),
+      })
+      toast.success(`Valeur copiée pour ${data.dashlane_title}`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDashlaneCopyingName(null)
+    }
+  }
 
   const securityScanPresets = [
     {
@@ -1712,6 +2113,26 @@ function SecuritySection({
     },
   ] as const
 
+  const securitySubmenus: { id: SecuritySubmenuId; label: string; hint: string }[] = [
+    {
+      id: 'env_files',
+      label: 'Fichiers .env',
+      hint: overviewLoading ? 'Chargement' : `${configuredFiles.length} chemin(s)`,
+    },
+    {
+      id: 'local_scans',
+      label: 'Scans locaux',
+      hint: `${securityScanPresets.length} job(s) CLI`,
+    },
+    {
+      id: 'sync_secrets',
+      label: 'Sync & secrets',
+      hint: secretSync
+        ? `${secretSync.counts.pending} à créer · ${secretSync.counts.synced} sync`
+        : `${envVars.length} variable(s)`,
+    },
+  ]
+
   return (
     <div className="space-y-6">
       <header>
@@ -1719,6 +2140,33 @@ function SecuritySection({
         <p className="text-muted-foreground text-sm">{t('security.subtitle')}</p>
       </header>
 
+      <div className="grid gap-2 sm:grid-cols-3" role="tablist" aria-label="Sous-menus sécurité">
+        {securitySubmenus.map((item) => {
+          const selected = securitySubmenu === item.id
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setSecuritySubmenu(item.id)}
+              className={cn(
+                'rounded-lg border px-3 py-2 text-left transition',
+                selected
+                  ? 'border-zinc-950 bg-zinc-950 text-white shadow-sm dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-950'
+                  : 'border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-700',
+              )}
+            >
+              <span className="block text-sm font-semibold">{item.label}</span>
+              <span className={cn('mt-0.5 block text-[11px]', selected ? 'text-zinc-300 dark:text-zinc-600' : 'text-muted-foreground')}>
+                {item.hint}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {securitySubmenu === 'env_files' ? (
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <div>
@@ -1734,7 +2182,7 @@ function SecuritySection({
         </CardHeader>
         <CardContent className="space-y-4">
           {overviewLoading ? (
-            <p className="text-muted-foreground text-sm">Chargement…</p>
+            <LoadingState compact label="Chargement…" />
           ) : configuredFiles.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               Aucun fichier — ajoutez{' '}
@@ -1804,7 +2252,9 @@ function SecuritySection({
           )}
         </CardContent>
       </Card>
+      ) : null}
 
+      {securitySubmenu === 'local_scans' ? (
       <Card>
         <CardHeader className="flex flex-row items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700">
@@ -1876,6 +2326,385 @@ function SecuritySection({
           </div>
         </CardContent>
       </Card>
+      ) : null}
+
+      {securitySubmenu === 'sync_secrets' ? (
+      <>
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div>
+            <CardTitle>Synchronisation secrets</CardTitle>
+            <CardDescription>
+              Providers de coffre local pour remplacer progressivement les valeurs .env par des références de secrets.
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={overviewLoading || providersLoading}
+            onClick={() => {
+              void loadOverview()
+              void loadProviders()
+            }}
+          >
+            <RefreshCw className="mr-1.5 size-3.5" />
+            Rafraîchir
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {providersForDisplay.map((provider) => {
+              const isDashlane = provider.id === 'dashlane'
+              const active = provider.enabled && provider.implemented
+              const providerTone =
+                !active
+                  ? 'border-zinc-200 bg-zinc-50 opacity-60 dark:border-zinc-800 dark:bg-zinc-900/40'
+                  : provider.status === 'ready'
+                    ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/60 dark:bg-emerald-950/20'
+                    : provider.status === 'login_required'
+                      ? 'border-amber-200 bg-amber-50/50 dark:border-amber-900/60 dark:bg-amber-950/20'
+                      : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/30'
+              return (
+                <div
+                  key={provider.id}
+                  className={cn('rounded-lg border p-3', providerTone)}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {isDashlane ? (
+                        <DashlaneLogo className="size-6 rounded-md" />
+                      ) : (
+                        <span className="flex size-6 items-center justify-center rounded-md bg-zinc-200 text-[10px] font-semibold text-zinc-600">
+                          {provider.label.slice(0, 2).toUpperCase()}
+                        </span>
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{provider.label}</p>
+                        <p className="text-muted-foreground truncate text-[11px]">{provider.cli ?? provider.id}</p>
+                      </div>
+                    </div>
+                    <span
+                      className={cn(
+                        'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
+                        provider.status === 'ready'
+                          ? 'bg-emerald-100 text-emerald-800 ring-emerald-200'
+                          : provider.status === 'login_required'
+                            ? 'bg-amber-100 text-amber-900 ring-amber-200'
+                            : 'bg-zinc-100 text-zinc-600 ring-zinc-200',
+                      )}
+                    >
+                      {provider.status_label}
+                    </span>
+                  </div>
+                  {provider.status_detail ? (
+                    <p className="text-muted-foreground mt-2 text-[11px]">{provider.status_detail}</p>
+                  ) : null}
+                  {!provider.implemented ? (
+                    <p className="text-muted-foreground mt-2 text-[11px]">Provider grisé pour une intégration future.</p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!dashlaneProvider?.login_command}
+              onClick={() => void copyText(dashlaneProvider?.login_command ?? 'dcli sync', 'Commande Dashlane copiée')}
+            >
+              <LogIn className="mr-1.5 size-3.5" />
+              Login Dashlane
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={syncChecking}
+              onClick={() => void runDashlaneCheck()}
+            >
+              {syncChecking ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 size-3.5" />}
+              Check sync Dashlane
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              disabled={dashlaneSyncRunning || selectableDashlaneRows.length === 0}
+              onClick={() => openDashlaneModal('first')}
+            >
+              <DashlaneLogo className="mr-1.5 size-3.5" />
+              Sync sélection
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={dashlaneSyncRunning || selectableDashlaneRows.length === 0}
+              title={
+                selectableDashlaneRows.length === 0
+                  ? 'Aucun secret fichier à synchroniser.'
+                  : 'Ouvre la modale avec tous les secrets éligibles sélectionnés.'
+              }
+              onClick={() => openDashlaneModal('all')}
+            >
+              {dashlaneSyncRunning ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+              Sync all
+            </Button>
+            {secretSync ? (
+              <p className="text-muted-foreground text-xs">
+                {secretSync.counts.synced} sync · {secretSync.counts.pending} à créer · {secretSync.counts.missing} absents
+                {secretSync.dashlane_inventory ? ` · ${secretSync.dashlane_inventory.count} secret(s) Dashlane lus` : ''}
+              </p>
+            ) : null}
+          </div>
+
+          {pendingDashlaneRows.length > 0 ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Références Dashlane à poser</p>
+                <span className="text-[11px] text-amber-900/80 dark:text-amber-200/80">
+                  {pendingDashlaneRows.length} variable(s)
+                </span>
+              </div>
+              <ul className="space-y-2">
+                {pendingDashlaneRows.slice(0, 6).map((row) => (
+                  <li key={row.name} className="rounded-md border border-amber-200 bg-white/70 p-2 dark:border-amber-900/50 dark:bg-zinc-950/30">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-mono text-xs font-semibold">{row.name}</p>
+                        <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">{row.dashlane_title}</p>
+                        <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">{row.dashlane_reference_template}</p>
+                        <p
+                          className={cn(
+                            'mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
+                            row.dashlane_match_status === 'matched'
+                              ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
+                              : 'bg-amber-50 text-amber-900 ring-amber-200',
+                          )}
+                        >
+                          {row.dashlane_match_status === 'matched'
+                            ? 'Z_KEY existe dans Dashlane'
+                            : dashlaneProvider?.write_supported
+                              ? 'Z_KEY sera créé dans Dashlane'
+                              : 'Writer Dashlane requis'}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px]"
+                        onClick={() => void copyText(row.note_template, `Note ${row.name} copiée`)}
+                      >
+                        <Copy className="mr-1.5 size-3" />
+                        Note
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {pendingDashlaneRows.length > 6 ? (
+                <p className="text-muted-foreground mt-2 text-[11px]">+{pendingDashlaneRows.length - 6} autre(s) variable(s).</p>
+              ) : null}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Dialog
+        open={dashlaneModalOpen}
+        onOpenChange={(open) => {
+          if (!dashlaneSyncRunning) setDashlaneModalOpen(open)
+        }}
+      >
+        <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Sync Zab → Dashlane</DialogTitle>
+            <DialogDescription>
+              Zab cherche <code className="bg-muted rounded px-1">Z_&lt;KEY&gt;</code> dans Dashlane, crée le Secret manquant si le writer est disponible, puis remplace la valeur locale par la référence <code className="bg-muted rounded px-1">dl://</code>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  className="size-4 rounded border-zinc-300"
+                  checked={dashlaneAllSelected}
+                  disabled={dashlaneSyncRunning || selectableDashlaneRows.length === 0}
+                  onChange={(event) => setDashlaneSelectionAll(event.currentTarget.checked)}
+                />
+                Tout sélectionner
+              </label>
+              <span className="text-muted-foreground text-xs">
+                {selectedDashlaneRows.length}/{selectableDashlaneRows.length} sélectionné(s)
+              </span>
+            </div>
+
+            {dashlaneAllSelected ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
+                <div className="flex gap-2">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Toutes les variables éligibles sont sélectionnées.</p>
+                    <label className="flex items-center gap-2 text-xs font-medium">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border-amber-400"
+                        checked={dashlaneConfirmAll}
+                        disabled={dashlaneSyncRunning}
+                        onChange={(event) => setDashlaneConfirmAll(event.currentTarget.checked)}
+                      />
+                      Confirmer la synchronisation complète
+                    </label>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="max-h-[48vh] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+              {selectableDashlaneRows.length === 0 ? (
+                <p className="text-muted-foreground p-4 text-sm">
+                  Aucune variable fichier en attente.
+                </p>
+              ) : (
+                <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {selectableDashlaneRows.map((row) => {
+                    const checked = dashlaneSelectedNames.has(row.name)
+                    const result = dashlaneResults[row.name]
+                    const active = dashlaneActiveName === row.name
+                    const synced = result?.status === 'synced'
+                    const created = synced && result?.dashlane_secret_status === 'created'
+                    const failed = result?.status === 'error'
+                    const createRequired = result?.status === 'create_required'
+                    const resultReason =
+                      result?.reason === 'dashlane_secret_write_unavailable'
+                        ? 'Writer Dashlane non configuré pour créer le Secret.'
+                        : result?.reason
+                    return (
+                      <li key={row.name} className="p-3">
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            className="mt-1 size-4 rounded border-zinc-300"
+                            checked={checked}
+                            disabled={dashlaneSyncRunning}
+                            onChange={(event) => toggleDashlaneSelection(row.name, event.currentTarget.checked)}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-mono text-xs font-semibold">{row.name}</p>
+                              {active ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800 ring-1 ring-sky-200">
+                                  <Loader2 className="size-3 animate-spin" />
+                                  en cours
+                                </span>
+                              ) : synced ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800 ring-1 ring-emerald-200">
+                                  <CheckCircle2 className="size-3" />
+                                  {created ? 'créé + sync' : 'sync'}
+                                </span>
+                              ) : failed ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-800 ring-1 ring-rose-200">
+                                  <XCircle className="size-3" />
+                                  erreur
+                                </span>
+                              ) : createRequired ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200">
+                                  <AlertTriangle className="size-3" />
+                                  à créer
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="text-muted-foreground mt-1 font-mono text-[11px]">{row.dashlane_title}</p>
+                            <p className="text-muted-foreground mt-0.5 break-all font-mono text-[11px]">
+                              {dashlaneReferenceByName[row.name]
+                                ? `${row.name}=${dashlaneReferenceByName[row.name]}`
+                                : `${row.name}=dl://…`}
+                            </p>
+                            {row.dashlane_match_status === 'matched' ? (
+                              <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-300">
+                                Secret existant : <span className="font-mono">{row.dashlane_title}</span>
+                              </p>
+                            ) : (
+                              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50/70 p-2 dark:border-amber-900/50 dark:bg-amber-950/20">
+                                <p className="min-w-0 flex-1 text-[11px] text-amber-900 dark:text-amber-100">
+                                  {dashlaneProvider?.write_supported ? 'Sera créé dans Dashlane' : 'Création automatique à configurer'} :{' '}
+                                  <span className="font-mono">{row.dashlane_title}</span>
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-[11px]"
+                                  disabled={dashlaneCopyingName === row.name}
+                                  onClick={() => void copyDashlaneValue(row)}
+                                >
+                                  {dashlaneCopyingName === row.name ? (
+                                    <Loader2 className="mr-1.5 size-3 animate-spin" />
+                                  ) : (
+                                    <Copy className="mr-1.5 size-3" />
+                                  )}
+                                  Copier valeur
+                                </Button>
+                              </div>
+                            )}
+                            {resultReason ? (
+                              <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                                {resultReason}
+                                {result?.hint ? <span className="ml-1">{result.hint}</span> : null}
+                              </p>
+                            ) : null}
+                            {result?.changed_files?.length ? (
+                              <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                                {result.changed_files.length} fichier(s) mis à jour
+                              </p>
+                            ) : null}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 shrink-0 text-[11px]"
+                            disabled={!row.note_template}
+                            onClick={() => void copyText(row.note_template, `Note ${row.name} copiée`)}
+                          >
+                            <Copy className="mr-1.5 size-3" />
+                            Note
+                          </Button>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={dashlaneSyncRunning} onClick={() => setDashlaneModalOpen(false)}>
+              Fermer
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                dashlaneSyncRunning ||
+                selectedDashlaneRows.length === 0 ||
+                (dashlaneAllSelected && !dashlaneConfirmAll)
+              }
+              onClick={() => void runDashlaneModalSync()}
+            >
+              {dashlaneSyncRunning ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+              Lancer un par un
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
@@ -1892,19 +2721,20 @@ function SecuritySection({
                 <TableHead>Variable</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead>Aperçu</TableHead>
+                <TableHead>Synced</TableHead>
                 <TableHead className="w-[100px]"> </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {overviewLoading ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground text-sm">
+                  <TableCell colSpan={5} className="text-muted-foreground text-sm">
                     Chargement…
                   </TableCell>
                 </TableRow>
               ) : envVars.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground text-sm">
+                  <TableCell colSpan={5} className="text-muted-foreground text-sm">
                     Aucune variable suivie.
                   </TableCell>
                 </TableRow>
@@ -1914,6 +2744,7 @@ function SecuritySection({
                   const proc = row.sources.find((s): s is SecurityEnvProcessSource => s.kind === 'process')
                   const primaryFile = fileSources[0]
                   const openToken = primaryFile ? `${primaryFile.path}:${primaryFile.key}:${primaryFile.line ?? ''}` : ''
+                  const dashlaneWebUrl = row.sync?.status === 'synced' ? row.sync.dashlane_web_url : ''
                   return (
                     <TableRow key={row.name}>
                       <TableCell className="font-mono text-xs">{row.name}</TableCell>
@@ -1944,6 +2775,24 @@ function SecuritySection({
                       </TableCell>
                       <TableCell className="font-mono text-xs">{row.masked || (row.present ? '••••' : '—')}</TableCell>
                       <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <SecuritySyncPill sync={row.sync} />
+                          {dashlaneWebUrl ? (
+                            <a
+                              href={dashlaneWebUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Voir dans Dashlane"
+                              aria-label={`Voir ${row.name} dans Dashlane`}
+                              className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'h-6 text-[11px]')}
+                            >
+                              <ExternalLink className="size-3" />
+                              Voir
+                            </a>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
                         {primaryFile ? (
                           <Button
                             type="button"
@@ -1970,108 +2819,8 @@ function SecuritySection({
           </Table>
         </CardContent>
       </Card>
-    </div>
-  )
-}
-
-function ExportsSection({
-  running,
-  runPreset,
-  hints,
-}: {
-  running: boolean
-  runPreset: (p: string, a?: Record<string, unknown>) => void
-  hints: Record<string, unknown> | null
-}) {
-  const { t } = useI18n()
-  const [org, setOrg] = useState('')
-  const [project, setProject] = useState('')
-  const [contextPack, setContextPack] = useState<Record<string, unknown> | null>(null)
-  const [generating, setGenerating] = useState(false)
-
-  const generateContextPack = async () => {
-    setGenerating(true)
-    try {
-      const payload = await apiJson<Record<string, unknown>>('/api/context-pack', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          org: org.trim() || null,
-          project: project.trim() || null,
-          limit: 80,
-        }),
-      })
-      setContextPack(payload)
-      toast.success(t('exports.toastGenerated'))
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setGenerating(false)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <header>
-        <h2 className="text-2xl font-semibold tracking-tight">{t('exports.title')}</h2>
-        <p className="text-muted-foreground text-sm">{t('exports.subtitle')}</p>
-      </header>
-      <div className="flex flex-wrap gap-2">
-        <Button disabled={running} onClick={() => runPreset('sync_mcps_litellm')}>
-          <HugeiconsIcon icon={CloudUploadIcon} size={16} className="mr-1.5" />
-          Sync Litellm
-        </Button>
-        <Button disabled={running} variant="secondary" onClick={() => runPreset('build_plugins')}>
-          <HugeiconsIcon icon={Hammer} size={16} className="mr-1.5" />
-          build-plugins
-        </Button>
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>Context Pack</CardTitle>
-          <CardDescription>Markdown généré depuis l’index local pour Claude.ai, ChatGPT ou un agent web.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-2">
-            <input
-              value={org}
-              onChange={(e) => setOrg(e.target.value)}
-              placeholder={t('exports.optionalOrg')}
-              className="border-input bg-background rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
-            />
-            <input
-              value={project}
-              onChange={(e) => setProject(e.target.value)}
-              placeholder={t('exports.optionalProject')}
-              className="border-input bg-background rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
-            />
-          </div>
-          <Button type="button" disabled={generating} onClick={() => void generateContextPack()}>
-            <HugeiconsIcon icon={SparklesIcon} size={16} className="mr-1.5" />
-            {generating ? t('common.generating') : t('common.generate')}
-          </Button>
-          {contextPack ? (
-            <div className="space-y-2">
-              <code className="bg-muted block rounded-md px-3 py-2 font-mono text-xs break-all">
-                {String(contextPack.path ?? '')}
-              </code>
-              <pre className="bg-muted max-h-80 overflow-auto rounded-lg p-3 text-xs whitespace-pre-wrap">
-                {String(contextPack.preview ?? '')}
-              </pre>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Indices</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="bg-muted overflow-auto rounded-lg p-3 text-xs">
-            {JSON.stringify(hints, null, 2)}
-          </pre>
-        </CardContent>
-      </Card>
+      </>
+      ) : null}
     </div>
   )
 }
@@ -2734,7 +3483,7 @@ function MemorySection({
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
           {!status ? (
-            <p className="text-muted-foreground">Chargement…</p>
+            <LoadingState compact label="Chargement…" />
           ) : (
             <ul className="text-muted-foreground space-y-1 text-xs">
               <li>
@@ -3490,115 +4239,6 @@ function ModelsCodySection() {
     </div>
   )
 }
-function HermesSection() {
-  const { t } = useI18n()
-  const { lines: composeLines, jobId: composeJobId, running: composeRunning, runPreset: runComposePreset } = useJobRunner()
-
-  const startOpenWebUI = useCallback(() => {
-    runComposePreset('flowmetrik_openwebui_compose_up', { project_path: FLOWMETRIK_OPENWEBUI_PROJECT })
-  }, [runComposePreset])
-
-  const stopOpenWebUI = useCallback(() => {
-    runComposePreset('flowmetrik_openwebui_compose_down', { project_path: FLOWMETRIK_OPENWEBUI_PROJECT })
-  }, [runComposePreset])
-
-  return (
-    <div className="space-y-6">
-      <header className="space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">{t('hermes.title')}</h2>
-        <p className="text-muted-foreground text-sm max-w-3xl">{t('hermes.subtitle')}</p>
-      </header>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="space-y-2">
-            <CardTitle className="flex items-center gap-2">
-              <HugeiconsIcon icon={PlayCircleIcon} size={18} />
-              {t('hermes.openWebui')}
-            </CardTitle>
-            <CardDescription>{t('hermes.openWebuiDesc')}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" disabled={composeRunning} onClick={startOpenWebUI}>
-                {t('hermes.composeUp')}
-              </Button>
-              <Button type="button" variant="secondary" disabled={composeRunning} onClick={stopOpenWebUI}>
-                {t('hermes.stopContainers')}
-              </Button>
-              <a
-                className={buttonVariants({ variant: 'default' })}
-                href={HERMES_OPENWEBUI_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {t('hermes.openWebuiBtn')}
-              </a>
-              <a
-                className={buttonVariants({ variant: 'secondary' })}
-                href={HERMES_BRIDGE_HEALTH_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {t('hermes.verifyBridge')}
-              </a>
-            </div>
-            <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
-              <p className="font-medium">{t('hermes.localShortcuts')}</p>
-              <p className="text-muted-foreground font-mono text-xs break-all">
-                {t('hermes.composeProject')} : {FLOWMETRIK_OPENWEBUI_PROJECT}
-              </p>
-              <p className="text-muted-foreground font-mono text-xs break-all">
-                Open WebUI : {HERMES_OPENWEBUI_URL}
-              </p>
-              <p className="text-muted-foreground font-mono text-xs break-all">
-                {t('hermes.bridge')} : {HERMES_BRIDGE_HEALTH_URL}
-              </p>
-              {composeJobId ? (
-                <p className="text-muted-foreground mt-2 text-xs">
-                  {t('hermes.lastJob')} <code className="rounded bg-muted px-1 font-mono">{composeJobId}</code>
-                  {composeRunning ? t('hermes.inProgress') : null}
-                </p>
-              ) : null}
-              <pre className="mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-snug whitespace-pre-wrap">
-                {composeLines.join('\n') || (composeRunning ? t('hermes.waitingDocker') : t('common.dash'))}
-              </pre>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="space-y-2">
-            <CardTitle>{t('hermes.features')}</CardTitle>
-            <CardDescription>{t('hermes.featuresDesc')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
-              <li>{t('hermes.featureSessionProfiles')}</li>
-              <li>{t('hermes.featureContextInjection')}</li>
-              <li>{t('hermes.featureOpenAiProxy')}</li>
-              <li>{t('hermes.featureUseCases')}</li>
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('hermes.runLocalTitle')}</CardTitle>
-          <CardDescription>
-            {t('hermes.runLocalDescFull', { path: FLOWMETRIK_OPENWEBUI_PROJECT })}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p className="font-mono text-xs rounded-md bg-muted/50 p-3">python -m uvicorn bridge.main:app --host 127.0.0.1 --port 8080</p>
-          <p className="font-mono text-xs rounded-md bg-muted/50 p-3">docker compose up --build</p>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
 function SkillEditorPanel({
   path,
   content,

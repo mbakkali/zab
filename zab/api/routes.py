@@ -33,8 +33,10 @@ from zab.services import (
     jobs,
     memory_db,
     model_runtimes,
+    request_logs,
     scan_persist,
     scanner,
+    security_secret_sync,
     skills_fs,
     skills_registry,
     state_index,
@@ -49,6 +51,8 @@ from zab.services import (
 )
 from zab.services.capabilities import get_capabilities
 from zab.services.feature_catalog import agent_guide, catalog
+from zab.services.workpacket_intake import get_global_rule as get_workpacket_intake_rule
+from zab.services.workpacket_intake import intake_from_params as workpacket_intake_from_params
 from zab.services.pm_env_sync import sync_pm_tokens_to_user_dotenv
 from zab.services import mcp_sync_status, skills_sync_status
 from zab.services.hermes_config import update_external_dirs
@@ -146,6 +150,57 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "zab"}
 
 
+@router.get("/logs/files")
+def logs_files_api(response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return request_logs.list_files()
+
+
+@router.get("/logs/events")
+def logs_events_api(
+    response: Response,
+    surface: str | None = Query(None),
+    component: str | None = Query(None),
+    level: str | None = Query(None),
+    actor: str | None = Query(None),
+    org: str | None = Query(None),
+    project: str | None = Query(None),
+    status: str | None = Query(None),
+    q: str | None = Query(None),
+    since: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return request_logs.query_events(
+        surface=surface,
+        component=component,
+        level=level,
+        actor=actor,
+        org=org,
+        project=project,
+        status=status,
+        q=q,
+        since=since,
+        limit=limit,
+    )
+
+
+@router.get("/logs/summary")
+def logs_summary_api(response: Response, since: str | None = Query("24h")) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return request_logs.summary(since=since)
+
+
+@router.get("/logs/tail")
+def logs_tail_api(
+    response: Response,
+    file: str = Query("requests"),
+    lines: int = Query(100, ge=1, le=1000),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return request_logs.tail_file(file=file, lines=lines)
+
+
 @router.get("/capabilities")
 def capabilities_api(response: Response) -> dict[str, Any]:
     """AI-native Core/CLI/MCP/API/UI capability manifest."""
@@ -213,6 +268,296 @@ def research_api(body: ResearchBody, response: Response) -> dict[str, Any]:
         max_tokens=body.max_tokens,
         refresh=body.refresh,
     )
+
+
+class WorkPacketIntakeBody(BaseModel):
+    signal: str = Field(..., min_length=1, description="Incoming signal, user instruction, run event, or receipt")
+    source: str = Field("manual", description="Signal source: manual, codex, claude, cron, channel...")
+    project: str | None = Field(None, description="Project name or path associated with the signal")
+    requested_by: str | None = Field(None, description="Human or agent requesting the work")
+
+
+@router.get("/workpackets/intake-rule")
+def workpacket_intake_rule_api(response: Response) -> dict[str, Any]:
+    """Global rule that turns incoming signals into Work Packet contracts."""
+    response.headers["Cache-Control"] = "no-store"
+    return get_workpacket_intake_rule()
+
+
+@router.head("/workpackets/intake-rule")
+def workpacket_intake_rule_head() -> Response:
+    """Cheap smoke check for the Work Packet intake rule contract."""
+    return Response(status_code=200, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/workpackets/intake")
+def workpacket_intake_api(body: WorkPacketIntakeBody, response: Response) -> dict[str, Any]:
+    """Classify a signal into Zab's Work Packet execution contract."""
+    response.headers["Cache-Control"] = "no-store"
+    payload = workpacket_intake_from_params(
+        body.signal,
+        source=body.source,
+        project=body.project,
+        requested_by=body.requested_by,
+    )
+    return {k: v for k, v in payload.items() if k != "markdown"}
+
+
+@router.get("/channels/check")
+def channels_check_api(response: Response) -> dict[str, Any]:
+    from zab.services.conversation_ledger.channel_bindings import list_channels
+
+    response.headers["Cache-Control"] = "no-store"
+    return list_channels(check=True)
+
+
+@router.get("/interactions/timeline")
+def interactions_timeline_api(
+    response: Response,
+    organization: str | None = None,
+    client_workstream: str | None = None,
+    since: str | None = None,
+    limit: int = 100,
+    enrich: bool = True,
+    enrich_max: int = 200,
+) -> dict[str, Any]:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.content_enrichment import enrich_events_content
+    from zab.services.conversation_ledger.entity_resolver import DEFAULT_ORGANIZATIONS, WORKSTREAM_SEEDS
+    from zab.services.conversation_ledger.store import list_events
+
+    response.headers["Cache-Control"] = "no-store"
+    org_id = None
+    if organization:
+        for oid, org in DEFAULT_ORGANIZATIONS.items():
+            if org["label"].lower() == organization.lower() or oid == organization:
+                org_id = oid
+                break
+    ws_id = None
+    if client_workstream:
+        for wid, ws in WORKSTREAM_SEEDS.items():
+            if ws["label"].lower() == client_workstream.lower() or wid == client_workstream:
+                ws_id = wid
+                break
+    with local_db.transaction() as conn:
+        events = list_events(conn, organization_id=org_id, client_workstream_id=ws_id, since=since, limit=limit)
+    enrichment_stats: dict[str, int] = {"fetched": 0, "skipped": 0, "failed": 0}
+    if enrich and events:
+        events, enrichment_stats = enrich_events_content(
+            events,
+            persist=True,
+            max_fetch=enrich_max,
+        )
+    return {
+        "contract": "interactions-timeline",
+        "count": len(events),
+        "enrichment": enrichment_stats,
+        "events": events,
+    }
+
+
+@router.get("/interactions/organizations")
+def interactions_organizations_api(response: Response, limit: int = 2000) -> dict[str, Any]:
+    """Aggregate indexed events per client organization for the cross-platform inbox."""
+    from zab.services import local_db
+    from zab.services.conversation_ledger.entity_resolver import DEFAULT_ORGANIZATIONS, WORKSTREAM_SEEDS
+    from zab.services.conversation_ledger.store import list_events
+
+    response.headers["Cache-Control"] = "no-store"
+
+    def _org_of(event: dict[str, Any]) -> str | None:
+        if event.get("organization_id"):
+            return str(event["organization_id"])
+        for link in event.get("entity_links") or []:
+            if link.get("entity_type") == "organization" and link.get("entity_id"):
+                return str(link["entity_id"])
+        return None
+
+    def _ws_of(event: dict[str, Any]) -> str | None:
+        if event.get("client_workstream_id"):
+            return str(event["client_workstream_id"])
+        for link in event.get("entity_links") or []:
+            if link.get("entity_type") == "client_workstream" and link.get("entity_id"):
+                return str(link["entity_id"])
+        return None
+
+    with local_db.transaction() as conn:
+        events = list_events(conn, limit=limit)
+
+    orgs: dict[str, dict[str, Any]] = {}
+    for event in events:
+        org_id = _org_of(event)
+        if not org_id:
+            continue
+        label = str(
+            event.get("organization_label")
+            or (DEFAULT_ORGANIZATIONS.get(org_id) or {}).get("label")
+            or org_id
+        )
+        bucket = orgs.setdefault(
+            org_id,
+            {
+                "organization_id": org_id,
+                "organization_label": label,
+                "event_count": 0,
+                "sources": {},
+                "workstreams": {},
+                "last_activity": None,
+            },
+        )
+        bucket["event_count"] += 1
+        source = str(event.get("source") or "unknown")
+        bucket["sources"][source] = bucket["sources"].get(source, 0) + 1
+        ws_id = _ws_of(event)
+        if ws_id and ws_id != "unclassified":
+            ws_label = str((WORKSTREAM_SEEDS.get(ws_id) or {}).get("label") or ws_id)
+            bucket["workstreams"][ws_id] = {
+                "id": ws_id,
+                "label": ws_label,
+                "count": (bucket["workstreams"].get(ws_id) or {}).get("count", 0) + 1,
+            }
+        ts = str(event.get("timestamp") or "")
+        if ts and (bucket["last_activity"] is None or ts > bucket["last_activity"]):
+            bucket["last_activity"] = ts
+
+    org_list = []
+    for bucket in orgs.values():
+        bucket["sources"] = [
+            {"source": src, "count": count}
+            for src, count in sorted(bucket["sources"].items(), key=lambda kv: -kv[1])
+        ]
+        bucket["workstreams"] = sorted(
+            bucket["workstreams"].values(), key=lambda w: -int(w.get("count", 0))
+        )
+        org_list.append(bucket)
+    org_list.sort(key=lambda b: (b.get("last_activity") or "", b.get("event_count", 0)), reverse=True)
+
+    return {
+        "contract": "interactions-organizations",
+        "count": len(org_list),
+        "organizations": org_list,
+    }
+
+
+@router.post("/interactions/sync")
+def interactions_sync_api(
+    response: Response,
+    since: str = "90d",
+    sources: str = "",
+    channels: str = "",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    from zab.services.conversation_ledger.sync import sync_channels
+
+    response.headers["Cache-Control"] = "no-store"
+    source_list = [s.strip() for s in sources.split(",") if s.strip()] or None
+    channel_list = [s.strip() for s in channels.split(",") if s.strip()] or None
+    return sync_channels(since=since, sources=source_list, channel_ids=channel_list, dry_run=dry_run)
+
+
+@router.get("/workpackets")
+def workpackets_list_api(
+    response: Response,
+    state: str = "",
+    organization: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import list_workpackets
+
+    response.headers["Cache-Control"] = "no-store"
+    states = [s.strip() for s in state.split(",") if s.strip()] or None
+    with local_db.transaction() as conn:
+        items = list_workpackets(conn, states=states, limit=limit)
+    if organization:
+        needle = organization.lower()
+        items = [
+            p
+            for p in items
+            if needle in str(p.get("organization_id", "")).lower()
+            or needle in str(p.get("organization_label", "")).lower()
+        ]
+    return {"contract": "workpacket-list", "count": len(items), "items": items}
+
+
+@router.get("/workpackets/{wp_id}")
+def workpacket_detail_api(wp_id: str, response: Response) -> dict[str, Any]:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import get_workpacket, list_workpackets
+
+    response.headers["Cache-Control"] = "no-store"
+    with local_db.transaction() as conn:
+        packet = get_workpacket(conn, wp_id)
+        if not packet:
+            for candidate in list_workpackets(conn, limit=500):
+                if candidate.get("display_id") == wp_id:
+                    packet = candidate
+                    break
+    if not packet:
+        raise HTTPException(status_code=404, detail=f"workpacket not found: {wp_id}")
+    return packet
+
+
+@router.get("/workpackets/{wp_id}/timeline")
+def workpacket_timeline_api(wp_id: str, response: Response) -> dict[str, Any]:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import get_event, get_workpacket, list_workpackets
+
+    response.headers["Cache-Control"] = "no-store"
+    with local_db.transaction() as conn:
+        packet = get_workpacket(conn, wp_id)
+        if not packet:
+            for candidate in list_workpackets(conn, limit=500):
+                if candidate.get("display_id") == wp_id:
+                    packet = candidate
+                    break
+        if not packet:
+            raise HTTPException(status_code=404, detail=f"workpacket not found: {wp_id}")
+        events = []
+        for eid in packet.get("event_ids") or []:
+            event = get_event(conn, eid)
+            if event:
+                events.append(event)
+    return {"contract": "workpacket-timeline", "workpacket_id": packet["workpacket_id"], "events": events}
+
+
+@router.get("/workpackets/{wp_id}/projections")
+def workpacket_projections_api(wp_id: str, response: Response) -> dict[str, Any]:
+    from zab.services import local_db
+    from zab.services.conversation_ledger.store import get_workpacket, list_projections, list_workpackets
+
+    response.headers["Cache-Control"] = "no-store"
+    with local_db.transaction() as conn:
+        packet = get_workpacket(conn, wp_id)
+        if not packet:
+            for candidate in list_workpackets(conn, limit=500):
+                if candidate.get("display_id") == wp_id:
+                    packet = candidate
+                    break
+        if not packet:
+            raise HTTPException(status_code=404, detail=f"workpacket not found: {wp_id}")
+        projections = list_projections(conn, packet["workpacket_id"])
+    return {"contract": "workpacket-projections", "items": projections}
+
+
+@router.post("/workpackets/{wp_id}/project-linear")
+def workpacket_project_linear_api(
+    wp_id: str,
+    response: Response,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    from zab.services.conversation_ledger.projections.linear import project_linear
+
+    response.headers["Cache-Control"] = "no-store"
+    return project_linear(wp_id, dry_run=dry_run)
+
+
+@router.get("/ledger/eval")
+def ledger_eval_api(response: Response, suite: str = "all") -> dict[str, Any]:
+    from zab.services.conversation_ledger.eval import run_eval
+
+    response.headers["Cache-Control"] = "no-store"
+    return run_eval(suite=suite)
 
 
 @router.get("/system/check")
@@ -582,7 +927,7 @@ def conversations_sync_start(body: ConversationSyncBody) -> dict[str, Any]:
 @router.get("/projects")
 def projects_list() -> dict[str, Any]:
     """Raccourci pratique : retourne la section projects de l'overview."""
-    ov = discovery.overview()
+    ov = discovery.overview(from_index=True)
     return {"projects": ov.get("projects", []), "projects_roots": ov.get("projects_roots", [])}
 
 
@@ -640,7 +985,7 @@ def hermes_status() -> dict[str, Any]:
 @router.get("/overview")
 def overview(response: Response) -> dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
-    return discovery.overview()
+    return discovery.overview(from_index=True)
 
 
 @router.get("/tasks/inbox")
@@ -892,7 +1237,7 @@ def dashboard_stats(response: Response) -> dict[str, Any]:
 
 @router.get("/orgs")
 def orgs() -> list[dict[str, Any]]:
-    return discovery.list_orgs_with_skills()
+    return discovery.list_orgs_with_skills(from_index=True)
 
 
 @router.get("/plugins")
@@ -1271,6 +1616,12 @@ def config_history_snapshot_list() -> list[dict[str, Any]]:
     return config_snapshots.list_config_history()
 
 
+@router.get("/config/sync-status")
+def config_sync_status_api(response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return config_snapshots.config_sync_status()
+
+
 @router.get("/config/file")
 def config_file_snapshot(key: str = Query(..., description="local_tools_actual|user_zab_config|example|*_json…")) -> dict[str, Any]:
     try:
@@ -1543,6 +1894,16 @@ def security_status_api() -> dict[str, Any]:
     return agent_context.security_status()
 
 
+@router.get("/security/locate")
+def security_locate_api(
+    q: str = Query(..., min_length=1, description="Nom ou intention à chercher, ex. payfit ou qonto api key"),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict[str, Any]:
+    """Localise des noms de variables sensibles sans exposer les valeurs brutes."""
+
+    return agent_context.security_locate(q, limit=limit)
+
+
 def _mask_value(val: str) -> str:
     v = val.strip()
     if not v:
@@ -1626,8 +1987,8 @@ def _security_env_overview_payload() -> dict[str, Any]:
     for path_str in configured_paths:
         _ensure_file(path_str)
 
-    file_vals = _dotenv_file_values()
     variables: list[dict[str, Any]] = []
+    raw_values_by_name: dict[str, str] = {}
     for row in scan.get("variables") or []:
         if not isinstance(row, dict):
             continue
@@ -1636,12 +1997,6 @@ def _security_env_overview_payload() -> dict[str, Any]:
         in_process_as = row.get("in_process_as") if isinstance(row.get("in_process_as"), list) else []
         if row.get("in_process"):
             sources.append({"kind": "process", "keys": [str(k) for k in in_process_as if k]})
-        raw_os = os.environ.get(name)
-        raw_file = file_vals.get(name)
-        from_os = raw_os is not None and str(raw_os).strip() != ""
-        from_file = raw_file is not None and str(raw_file).strip() != ""
-        raw_for_mask = str(raw_os) if from_os else (str(raw_file) if from_file else "")
-        masked = _mask_value(raw_for_mask) if raw_for_mask else ""
         for src in row.get("in_files") or []:
             if not isinstance(src, dict):
                 continue
@@ -1663,26 +2018,30 @@ def _security_env_overview_payload() -> dict[str, Any]:
                     "line": line,
                 }
             )
-        variables.append(
-            {
-                "name": name,
-                "present": bool(row.get("present")),
-                "in_process": bool(row.get("in_process")),
-                "in_file": any(s.get("kind") == "file" for s in sources),
-                "masked": masked,
-                "sources": sources,
-            }
-        )
+        variable = {
+            "name": name,
+            "present": bool(row.get("present")),
+            "in_process": bool(row.get("in_process")),
+            "in_file": any(s.get("kind") == "file" for s in sources),
+            "masked": "",
+            "sources": sources,
+        }
+        raw_for_mask = _raw_security_value_for_row(variable) or ""
+        raw_values_by_name[name] = raw_for_mask
+        variable["masked"] = _mask_value(raw_for_mask) if raw_for_mask else ""
+        variables.append(variable)
 
     files = sorted(
         file_index.values(),
         key=lambda f: (not f.get("configured"), not f.get("exists"), str(f.get("path_display") or "")),
     )
+    secret_sync = security_secret_sync.attach_secret_sync(variables, raw_values_by_name)
     return {
         "configured_paths": sorted(configured_paths),
         "files": files,
         "variables": variables,
         "env_files_scanned": scan.get("env_files_scanned") or [],
+        "secret_sync": secret_sync,
     }
 
 
@@ -1708,6 +2067,183 @@ def security_env() -> dict[str, Any]:
 def security_env_overview() -> dict[str, Any]:
     """Liste des .env, clés présentes et provenance par variable (sans valeurs brutes)."""
     return _security_env_overview_payload()
+
+
+@router.get("/security/secret-providers")
+def security_secret_providers() -> dict[str, Any]:
+    """Providers de gestion de secrets proposés dans l'écran Sécurité."""
+    return {"providers": security_secret_sync.secret_providers()}
+
+
+class SecretSyncCheckBody(BaseModel):
+    provider: str = "dashlane"
+    apply: bool = False
+
+
+@router.post("/security/secret-sync/check")
+def security_secret_sync_check(body: SecretSyncCheckBody) -> dict[str, Any]:
+    """Prépare le check de synchronisation Dashlane sans exposer les valeurs brutes."""
+    provider = body.provider.strip().lower()
+    if provider not in ("dashlane", ""):
+        raise HTTPException(status_code=400, detail="seul le provider dashlane est disponible pour l'instant")
+    overview = _security_env_overview_payload()
+    sync_payload = overview.get("secret_sync")
+    if not isinstance(sync_payload, dict):
+        raise HTTPException(status_code=500, detail="sync secrets indisponible")
+    return security_secret_sync.dashlane_sync_check(sync_payload, apply=body.apply)
+
+
+class DashlaneSecretSyncApplyBody(BaseModel):
+    provider: str = "dashlane"
+    name: str = Field(..., min_length=1)
+    reference: str | None = Field(None, description="Reference dl:// deja creee dans Dashlane")
+    selected_count: int = Field(1, ge=1)
+    total_selectable: int | None = Field(None, ge=1)
+    confirm_all: bool = False
+
+
+def _secret_sync_row_by_name(sync_payload: dict[str, Any], name: str) -> dict[str, Any] | None:
+    for row in sync_payload.get("variables") or []:
+        if isinstance(row, dict) and str(row.get("name") or "") == name:
+            return row
+    return None
+
+
+@router.post("/security/secret-sync/dashlane/apply")
+def security_secret_sync_dashlane_apply(body: DashlaneSecretSyncApplyBody) -> dict[str, Any]:
+    """Applique une reference Dashlane a une variable .env sans exposer la valeur brute."""
+    provider = body.provider.strip().lower()
+    if provider not in ("dashlane", ""):
+        raise HTTPException(status_code=400, detail="seul le provider dashlane est disponible pour l'instant")
+    overview = _security_env_overview_payload()
+    sync_payload = overview.get("secret_sync")
+    if not isinstance(sync_payload, dict):
+        raise HTTPException(status_code=500, detail="sync secrets indisponible")
+    pending = [row for row in sync_payload.get("variables") or [] if isinstance(row, dict) and row.get("status") == "pending"]
+    total_for_guard = body.total_selectable or len(pending)
+    if total_for_guard > 0 and body.selected_count >= total_for_guard and not body.confirm_all:
+        raise HTTPException(status_code=409, detail="selection_totale_a_confirmer")
+    sync_row = _secret_sync_row_by_name(sync_payload, body.name)
+    if not sync_row:
+        raise HTTPException(status_code=404, detail="variable_introuvable")
+    reference = str(sync_row.get("dashlane_reference_value") or body.reference or "")
+    created_secret: dict[str, Any] | None = None
+    if sync_row.get("status") == "pending" and sync_row.get("dashlane_match_status") != "matched":
+        variable_row = next(
+            (row for row in overview.get("variables") or [] if isinstance(row, dict) and row.get("name") == body.name),
+            None,
+        )
+        if not variable_row:
+            raise HTTPException(status_code=404, detail="variable_introuvable")
+        raw_value = _raw_security_value_for_row(variable_row)
+        if not raw_value:
+            return {
+                "provider": "dashlane",
+                "result": {
+                    "name": body.name,
+                    "status": "error",
+                    "reason": "valeur_locale_introuvable",
+                    "dashlane_title": sync_row.get("dashlane_title"),
+                    "dashlane_reference_value": sync_row.get("dashlane_reference_value"),
+                },
+                "secret_sync": sync_payload,
+            }
+        created_secret = security_secret_sync.create_dashlane_secret(variable_row, value=raw_value)
+        if not created_secret.get("ok"):
+            return {
+                "provider": "dashlane",
+                "result": {
+                    "name": body.name,
+                    "status": "error",
+                    "reason": created_secret.get("reason") or "dashlane_secret_create_failed",
+                    "dashlane_title": created_secret.get("dashlane_title") or sync_row.get("dashlane_title"),
+                    "dashlane_reference_value": created_secret.get("dashlane_reference_value")
+                    or sync_row.get("dashlane_reference_value"),
+                    "dashlane_web_url": created_secret.get("dashlane_web_url") or sync_row.get("dashlane_web_url"),
+                    "hint": created_secret.get("hint"),
+                },
+                "secret_sync": sync_payload,
+            }
+        reference = str(created_secret.get("dashlane_reference_value") or reference)
+    result = security_secret_sync.apply_dashlane_reference(
+        overview.get("variables") or [],
+        name=body.name,
+        reference=reference,
+        allowed_paths=_allowed_security_env_paths(),
+    )
+    if created_secret and result.get("status") == "synced":
+        result["dashlane_secret_status"] = created_secret.get("status")
+        result["dashlane_title"] = created_secret.get("dashlane_title")
+        result["dashlane_reference_value"] = created_secret.get("dashlane_reference_value")
+        result["dashlane_web_url"] = created_secret.get("dashlane_web_url")
+    refreshed = _security_env_overview_payload()
+    return {
+        "provider": "dashlane",
+        "result": result,
+        "secret_sync": refreshed.get("secret_sync"),
+    }
+
+
+def _raw_security_value_for_row(row: dict[str, Any]) -> str | None:
+    """Find a local secret value from row sources without exposing it."""
+    for source in row.get("sources") or []:
+        if not isinstance(source, dict) or source.get("kind") != "file":
+            continue
+        raw_path = str(source.get("path") or "").strip()
+        key = str(source.get("key") or row.get("name") or "").strip()
+        if not raw_path or not key:
+            continue
+        try:
+            path = Path(raw_path).expanduser().resolve()
+        except OSError:
+            continue
+        if str(path) not in _allowed_security_env_paths():
+            continue
+        try:
+            value = dotenv_values(path).get(key)
+        except OSError:
+            value = None
+        if value is not None and str(value).strip():
+            return str(value)
+    for source in row.get("sources") or []:
+        if not isinstance(source, dict) or source.get("kind") != "process":
+            continue
+        for key in source.get("keys") or []:
+            value = os.environ.get(str(key))
+            if value:
+                return value
+    return None
+
+
+class DashlaneSecretCopyValueBody(BaseModel):
+    name: str = Field(..., min_length=1)
+    confirm_clipboard: bool = False
+
+
+@router.post("/security/secret-sync/dashlane/copy-value")
+def security_secret_sync_dashlane_copy_value(body: DashlaneSecretCopyValueBody) -> dict[str, Any]:
+    """Copie explicitement une valeur locale dans le presse-papiers sans la renvoyer."""
+    if not body.confirm_clipboard:
+        raise HTTPException(status_code=400, detail="confirmation_clipboard_requise")
+    overview = _security_env_overview_payload()
+    sync_payload = overview.get("secret_sync")
+    if not isinstance(sync_payload, dict):
+        raise HTTPException(status_code=500, detail="sync secrets indisponible")
+    sync_row = _secret_sync_row_by_name(sync_payload, body.name)
+    row = next((v for v in overview.get("variables") or [] if isinstance(v, dict) and v.get("name") == body.name), None)
+    if not sync_row or not row:
+        raise HTTPException(status_code=404, detail="variable_introuvable")
+    value = _raw_security_value_for_row(row)
+    if not value:
+        raise HTTPException(status_code=404, detail="valeur_locale_introuvable")
+    ok, reason = security_secret_sync.copy_to_clipboard(value)
+    if not ok:
+        raise HTTPException(status_code=503, detail=reason or "clipboard_indisponible")
+    return {
+        "copied": True,
+        "name": body.name,
+        "dashlane_title": sync_row.get("dashlane_title"),
+    }
 
 
 @router.get("/security/env-files")
@@ -1882,15 +2418,51 @@ def tools_validate_api(strict: bool = Query(False)) -> dict[str, Any]:
 def tools_check_api(
     tool_id: str | None = Query(None),
     all: bool = Query(False),
+    refresh: bool = Query(False, description="Recheck unitaire en direct (relance les probes de connexion)"),
 ) -> dict[str, Any]:
     if all and tool_id:
         raise HTTPException(status_code=400, detail="all et tool_id sont incompatibles")
     if not all and not tool_id:
         raise HTTPException(status_code=400, detail="tool_id ou all requis")
-    payload = tool_checks.check_tools() if all else tool_checks.check_tool(str(tool_id or ""))
+    payload = tool_checks.check_tools() if all else tool_checks.check_tool(str(tool_id or ""), refresh=refresh)
     if not payload:
         raise HTTPException(status_code=404, detail="tool inconnu")
     return payload
+
+
+class ToolAnnotationPatch(BaseModel):
+    label: str | None = None
+    kind: str | None = None
+    coverage: str | None = None
+    safety: str | None = None
+    notes: str | None = None
+    keywords: list[str] | None = None
+    examples: list[str] | None = None
+    skill_refs: list[str] | None = None
+    commands: list[str] | None = None
+
+
+@router.get("/tools/{tool_id}/editable")
+def tools_editable_fields_api(tool_id: str) -> dict[str, Any]:
+    fields = tool_catalog.editable_tool_fields(tool_id)
+    if fields is None:
+        raise HTTPException(status_code=404, detail="tool inconnu")
+    return {"tool_id": tool_id, "annotations_path": str(tool_catalog.tools_catalog_config_path()), "fields": fields}
+
+
+@router.patch("/tools/{tool_id}")
+def tools_update_api(
+    tool_id: str,
+    patch: ToolAnnotationPatch = Body(...),
+) -> dict[str, Any]:
+    updated = tool_catalog.update_tool_annotations(tool_id, patch.model_dump(exclude_none=True))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="tool inconnu")
+    return {
+        "tool_id": tool_id,
+        "annotations_path": str(tool_catalog.tools_catalog_config_path()),
+        "tool": updated,
+    }
 
 
 @router.get("/tools/local")
@@ -1908,7 +2480,11 @@ def cli_help() -> dict[str, str]:
     """Texte de `zab --help` pour affichage dans le dashboard."""
     runner = CliRunner()
     result = runner.invoke(zab_cli_app, ["--help"])
-    text = (result.stdout or "") + (result.stderr or "")
+    try:
+        stderr = result.stderr or ""
+    except ValueError:
+        stderr = ""
+    text = (result.stdout or "") + stderr
     if result.exit_code != 0 and not text.strip():
         raise HTTPException(status_code=500, detail="Échec zab --help")
     return {"text": text.strip() or "(vide)"}

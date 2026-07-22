@@ -7,7 +7,6 @@ import {
   Plug02Icon,
   TestTube01Icon,
   LockKeyIcon,
-  Upload03Icon,
   AiBrain02Icon,
   Settings02Icon,
   PencilEdit02Icon,
@@ -15,8 +14,8 @@ import {
   CpuIcon,
   Folder02Icon,
   CheckListIcon,
+  Database02Icon,
   CloudUploadIcon,
-  PlayCircleIcon,
   MessageMultiple02Icon,
   Mail01Icon,
   Hammer,
@@ -38,24 +37,24 @@ export type NavId =
   | 'cli_check'
   | 'capabilities'
   | 'source_health'
-  | 'research'
+  | 'logs'
   | 'orgs'
   | 'projects'
   | 'tasks_inbox'
   | 'channels'
   | 'conversations'
+  | 'interactions'
+  | 'workpackets'
   | 'plugins'
   | 'connectors'
   | 'catalog'
   | 'config'
   | 'tests'
   | 'security'
-  | 'exports'
   | 'memory'
   | 'ide'
   | 'models'
   | 'workstation'
-  | 'hermes'
   | 'skills'
   | 'crons'
 
@@ -63,27 +62,27 @@ const NAV_ITEMS: { id: NavId; icon: unknown; group: 'main' | 'tools' }[] = [
   { id: 'overview', icon: CompassIcon, group: 'main' },
   { id: 'system_check', icon: TestTube01Icon, group: 'main' },
   { id: 'cli_check', icon: LockKeyIcon, group: 'main' },
-  { id: 'capabilities', icon: AiBrain02Icon, group: 'main' },
+  { id: 'capabilities', icon: AiBrain02Icon, group: 'tools' },
   { id: 'source_health', icon: TestTube01Icon, group: 'main' },
-  { id: 'research', icon: AiBrain02Icon, group: 'main' },
+  { id: 'logs', icon: Database02Icon, group: 'main' },
   { id: 'orgs', icon: Briefcase01Icon, group: 'main' },
   { id: 'projects', icon: Folder02Icon, group: 'main' },
   { id: 'tasks_inbox', icon: CheckListIcon, group: 'main' },
   { id: 'channels', icon: Mail01Icon, group: 'main' },
   { id: 'conversations', icon: MessageMultiple02Icon, group: 'main' },
+  { id: 'interactions', icon: Mail01Icon, group: 'main' },
+  { id: 'workpackets', icon: CheckListIcon, group: 'main' },
   { id: 'plugins', icon: PuzzleIcon, group: 'main' },
   { id: 'connectors', icon: Plug02Icon, group: 'main' },
   { id: 'catalog', icon: Hammer, group: 'main' },
-  { id: 'config', icon: Settings02Icon, group: 'main' },
+  { id: 'config', icon: Settings02Icon, group: 'tools' },
   { id: 'skills', icon: SparklesIcon, group: 'main' },
   { id: 'models', icon: CpuIcon, group: 'main' },
   { id: 'workstation', icon: CloudUploadIcon, group: 'main' },
-  { id: 'hermes', icon: PlayCircleIcon, group: 'main' },
   { id: 'crons', icon: CheckListIcon, group: 'main' },
   { id: 'tests', icon: TestTube01Icon, group: 'tools' },
   { id: 'memory', icon: AiBrain02Icon, group: 'tools' },
   { id: 'security', icon: LockKeyIcon, group: 'tools' },
-  { id: 'exports', icon: Upload03Icon, group: 'tools' },
   { id: 'ide', icon: Settings02Icon, group: 'tools' },
 ]
 
@@ -179,7 +178,7 @@ export function SidebarNavPanel({
 
 export function SidebarNav({ value, onChange }: { value: NavId; onChange: (id: NavId) => void }) {
   return (
-    <aside className="bg-sidebar border-sidebar-border sticky top-0 hidden h-screen w-60 shrink-0 border-r px-3 py-5 md:block">
+    <aside className="bg-sidebar border-sidebar-border sticky top-0 hidden h-[100dvh] max-h-[100dvh] w-60 shrink-0 overflow-x-hidden overflow-y-auto border-r px-3 py-5 md:block">
       <SidebarNavPanel value={value} onChange={onChange} showLanguageSwitcher />
     </aside>
   )
