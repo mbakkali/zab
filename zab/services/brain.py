@@ -26,7 +26,8 @@ def status() -> BrainStatusContract:
 
     ok = store_status.get("ok", False)
     warnings = []
-    if store_status.get("schema_version") != postgres_store.SCHEMA_VERSION:
+    target_schema_version = store_status.get("target_schema_version", postgres_store.SCHEMA_VERSION)
+    if store_status.get("schema_version") != target_schema_version:
         warnings.append("Schema version mismatch")
 
     return {

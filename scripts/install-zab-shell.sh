@@ -15,13 +15,19 @@ LOADER="$HOME/.zab-shell.sh"
 MARKER="# zab-loader (source ~/.zab-shell.sh)"
 
 if command -v zab >/dev/null 2>&1 && ! declare -F zab >/dev/null 2>&1; then
-  echo "Found pip/pipx zab on PATH: $(command -v zab)"
-  echo "No shell wrapper needed. Configure ~/.config/zab/config.yaml (see config.example.yaml)."
-  (
-    cd "$REPO"
-    uv run python -c "from zab.user_config import ensure_user_config_exists; p = ensure_user_config_exists(); print('  Config:', p) if p else print('  Config already present')"
-  )
-  exit 0
+  FOUND_ZAB="$(command -v zab)"
+  if zab --help >/dev/null 2>&1; then
+    echo "Found working pip/pipx/uv-tool zab on PATH: $FOUND_ZAB"
+    echo "No shell wrapper needed. Configure ~/.config/zab/config.yaml (see config.example.yaml)."
+    (
+      cd "$REPO"
+      uv run python -c "from zab.user_config import ensure_user_config_exists; p = ensure_user_config_exists(); print('  Config:', p) if p else print('  Config already present')"
+    )
+    exit 0
+  fi
+
+  echo "Found zab on PATH but it failed a smoke test: $FOUND_ZAB" >&2
+  echo "Installing the shell wrapper so this checkout remains usable." >&2
 fi
 
 cat >"$LOADER" <<EOF

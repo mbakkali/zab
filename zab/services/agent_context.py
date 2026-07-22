@@ -251,6 +251,7 @@ def _flatten_haystack_value(value: Any) -> str:
 
 def search(query: str, *, limit: int = 20, sections: list[str] | None = None, refresh: bool = False) -> dict[str, Any]:
     q = query.strip()
+    section_filters = sections or None
     if refresh:
         state_index.sync_state()
     state = state_index.load_state()
@@ -262,10 +263,10 @@ def search(query: str, *, limit: int = 20, sections: list[str] | None = None, re
         has_cached_state = False
     if has_cached_state:
         try:
-            candidate_rows.extend(local_db.search_state(q, sections=sections, limit=100))
+            candidate_rows.extend(local_db.search_state(q, sections=section_filters, limit=100))
         except Exception:
             candidate_rows = []
-    candidate_rows.extend(_iter_state_rows(state, sections))
+    candidate_rows.extend(_iter_state_rows(state, section_filters))
     seen: set[tuple[str, str]] = set()
     results: list[dict[str, Any]] = []
     for row in candidate_rows:
@@ -311,7 +312,7 @@ def search(query: str, *, limit: int = 20, sections: list[str] | None = None, re
         item["terms_missing"] = missing_terms
         item["match_type"] = "exact_or_complete" if terms and not missing_terms else ("partial" if terms else "unfiltered")
         results.append(item)
-    if q and (sections is None or any(str(section).lower() in {"security", "secrets", "env"} for section in sections)):
+    if q and (section_filters is None or any(str(section).lower() in {"security", "secrets", "env"} for section in section_filters)):
         located = locate_secret_names(q, limit=limit)
         for match in located.get("matches") or []:
             name = str(match.get("name") or "")

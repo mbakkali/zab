@@ -145,6 +145,7 @@ def get_capabilities() -> dict[str, Any]:
             api="GET /api/channels/check",
             ui="Interactions",
             status="partial",
+            parity_notes="Core/CLI/API/UI are implemented; dedicated MCP parity can follow if agents need channel checks outside the broader channels_list tool.",
         ),
         _capability(
             id="interactions.sync",
@@ -157,6 +158,7 @@ def get_capabilities() -> dict[str, Any]:
             api="POST /api/interactions/sync",
             ui="Interactions",
             status="partial",
+            parity_notes="Core/CLI/API/UI are implemented for dry-run and local sync flows; dedicated MCP parity can follow once agent sync policies are stable.",
         ),
         _capability(
             id="workpacket.canonical",
@@ -169,6 +171,7 @@ def get_capabilities() -> dict[str, Any]:
             api="GET /api/workpackets",
             ui="WorkPackets",
             status="partial",
+            parity_notes="Core/CLI/API/UI are implemented for canonical packet views; write/update MCP parity is deferred until persistence semantics settle.",
         ),
         _capability(
             id="ledger.eval",
@@ -181,6 +184,7 @@ def get_capabilities() -> dict[str, Any]:
             api="GET /api/ledger/eval",
             ui=None,
             status="partial",
+            parity_notes="Core/CLI/API expose eval results; dashboard and MCP parity can follow if ledger QA becomes an operator workflow.",
         ),
         _capability(
             id="search.global",

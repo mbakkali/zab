@@ -163,7 +163,14 @@ uv run zab dashboard --no-open
 git clone https://github.com/YOUR_ORG/zab.git
 cd zab
 uv sync
+uv tool install --editable . --python "$(command -v python3.11)"
 ./scripts/install-zab-shell.sh   # optional shell wrapper
+```
+
+If you move the checkout or switch Python architectures, refresh the global CLI:
+
+```bash
+uv tool install --reinstall --editable . --python "$(command -v python3.11)"
 ```
 
 ### Option B — pip / pipx (CLI + API)
