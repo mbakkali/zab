@@ -21,3 +21,12 @@ Do not add user data, private workspace data, secrets, raw logs, or customer con
 - Improvement: keep the UI stack and reusable primitives explicit in `zab-ui/package.json` and `src/components/ui/`; no product change was required during this interaction.
 - Evidence: read-only inspection of the UI package, navigation and primitive components; the consuming interface passed its independent TypeScript build and responsive browser checks.
 - Status: verified
+
+## 2026-07-23 - Make WorkPacket discovery idempotent
+
+- Trigger: integration
+- Context: a local dashboard can rerun event indexing and WorkPacket discovery on demand.
+- Observation: repeated discovery inserted a new WorkPacket even when the same organization and workstream already had a canonical packet.
+- Improvement: reuse the existing WorkPacket identity and display ID, preserve its creation timestamp, and report separate created and updated counts.
+- Evidence: the ledger contract suite includes a repeat-discovery regression test; all 16 focused tests pass.
+- Status: verified

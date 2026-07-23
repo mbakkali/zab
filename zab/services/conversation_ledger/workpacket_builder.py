@@ -62,11 +62,29 @@ def discover_workpackets(
             break
 
     stored: list[dict[str, Any]] = []
+    created_count = 0
+    updated_count = 0
     if not dry_run:
         with local_db.transaction() as conn:
             for packet in candidates:
-                packet["display_id"] = next_display_id(conn)
-                stored.append(upsert_workpacket(conn, packet))
+                existing = find_workpacket(
+                    conn,
+                    organization_id=str(packet.get("organization_id") or ""),
+                    client_workstream_id=str(packet.get("client_workstream_id") or ""),
+                )
+                if existing:
+                    packet["workpacket_id"] = existing["workpacket_id"]
+                    packet["display_id"] = existing.get("display_id") or next_display_id(conn)
+                    packet["created_at"] = existing.get("created_at") or packet.get("created_at")
+                    created = False
+                    updated_count += 1
+                else:
+                    packet["display_id"] = next_display_id(conn)
+                    created = True
+                    created_count += 1
+                saved = upsert_workpacket(conn, packet)
+                saved["_flowgo_created"] = created
+                stored.append(saved)
 
     return {
         "contract": "workpacket-discover",
@@ -74,6 +92,8 @@ def discover_workpackets(
         "dry_run": dry_run,
         "min_confidence": min_confidence,
         "candidate_count": len(candidates),
+        "created_count": created_count,
+        "updated_count": updated_count,
         "candidates": stored or candidates,
     }
 

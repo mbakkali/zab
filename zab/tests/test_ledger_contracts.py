@@ -12,7 +12,7 @@ from zab.services.conversation_ledger.eval import run_eval
 from zab.services.conversation_ledger.schemas import validate_interaction_event, validate_workpacket_canonical
 from zab.services.conversation_ledger.store import upsert_event, upsert_projection, upsert_workpacket
 from zab.services.conversation_ledger.workpacket import build_from_cluster
-from zab.services.conversation_ledger.workpacket_builder import reconstruct_seed_candidates
+from zab.services.conversation_ledger.workpacket_builder import discover_workpackets, reconstruct_seed_candidates
 from zab.services.conversation_ledger.projections.linear import project_linear
 
 
@@ -137,6 +137,32 @@ def test_reconstruct_reuses_existing_display_id() -> None:
     assert arp["display_id"] == "ZWP-0001"
 
 
+def test_discover_reuses_existing_organization_workstream(monkeypatch) -> None:
+    cluster = {
+        "organization_id": "org_arp_astrance",
+        "organization_label": "ARP Astrance",
+        "client_workstream_id": "cw_audit_crm",
+        "client_workstream_label": "Audit CRM",
+        "events": [_event("discover-idempotent", "Audit outils et process commerciaux")],
+    }
+    with local_db.transaction() as conn:
+        upsert_event(conn, cluster["events"][0])
+        first = upsert_workpacket(conn, build_from_cluster(cluster, display_id="ZWP-0042"))
+
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.workpacket_builder.cluster_events",
+        lambda *_args, **_kwargs: [cluster],
+    )
+    payload = discover_workpackets(dry_run=False, min_confidence=0)
+    match = next(row for row in payload["candidates"] if row["client_workstream_id"] == "cw_audit_crm")
+
+    assert match["workpacket_id"] == first["workpacket_id"]
+    assert match["display_id"] == "ZWP-0042"
+    assert match["_flowgo_created"] is False
+    assert payload["created_count"] == 0
+    assert payload["updated_count"] == 1
+
+
 def test_eval_hard_suite_passes() -> None:
     payload = run_eval(suite="hard")
     assert payload["hard"]["failed"] == 0
@@ -237,4 +263,3 @@ def test_enrich_skips_when_body_present(monkeypatch) -> None:
     }
     enrich_event_content(event)
     assert called["n"] == 0
-
