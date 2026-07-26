@@ -48,10 +48,31 @@ def append_event_jsonl(event: dict[str, Any]) -> None:
 
 
 def upsert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> dict[str, Any]:
-    errors = validate_interaction_event(event)
+    payload = dict(event)
+    existing_row = None
+    if payload.get("source") and payload.get("native_id"):
+        existing_row = conn.execute(
+            "SELECT payload_json FROM ledger_events WHERE source = ? AND native_id = ?",
+            (payload.get("source"), payload.get("native_id")),
+        ).fetchone()
+    if existing_row:
+        existing = json.loads(existing_row[0])
+        for key in (
+            "body",
+            "counterparties",
+            "entity_links",
+            "organization_id",
+            "organization_label",
+            "client_workstream_id",
+            "client_workstream_label",
+            "created_at",
+        ):
+            if not payload.get(key) and existing.get(key):
+                payload[key] = existing[key]
+
+    errors = validate_interaction_event(payload)
     if errors:
         raise ValueError("; ".join(errors))
-    payload = dict(event)
     payload.setdefault("contract", INTERACTION_EVENT_CONTRACT)
     payload.setdefault("contract_version", CONTRACT_VERSION)
     payload.setdefault("created_at", utc_now())

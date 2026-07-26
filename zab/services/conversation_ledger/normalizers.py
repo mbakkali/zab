@@ -53,6 +53,32 @@ def _parse_email(value: str) -> str | None:
     return None
 
 
+def _address_values(*values: Any) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        if isinstance(value, list):
+            out.extend(_address_values(*value))
+            continue
+        if isinstance(value, dict):
+            out.extend(
+                _address_values(
+                    value.get("email"),
+                    value.get("address"),
+                    value.get("name"),
+                    value.get("display_name"),
+                )
+            )
+            continue
+        text = str(value)
+        for part in re.split(r",(?=(?:[^<]*<[^>]*>)*[^>]*$)", text):
+            clean = " ".join(part.strip().split())
+            if clean and clean not in out:
+                out.append(clean)
+    return out
+
+
 def _gmail_body(msg: dict[str, Any]) -> str:
     body = _first_text(
         msg.get("body"),
@@ -146,13 +172,22 @@ def _fireflies_transcript_text(item: dict[str, Any]) -> str:
 
 def normalize_gmail_message(msg: dict[str, Any], *, channel: dict[str, Any]) -> dict[str, Any]:
     native_id = str(msg.get("id") or msg.get("messageId") or msg.get("threadId") or "")
-    subject = str(msg.get("subject") or "")
-    sender = str(msg.get("from") or "")
+    headers = msg.get("headers") if isinstance(msg.get("headers"), dict) else {}
+    subject = str(msg.get("subject") or headers.get("subject") or "")
+    sender = str(msg.get("from") or headers.get("from") or "")
     direction = "outbound" if "SENT" in (msg.get("labels") or []) else "inbound"
     account = str(channel.get("account") or "")
     thread_id = str(msg.get("threadId") or native_id)
     body = _gmail_body(msg)
     preview = _gmail_preview(msg, subject)
+    counterparties = _address_values(
+        msg.get("to"),
+        msg.get("cc"),
+        msg.get("bcc"),
+        headers.get("to"),
+        headers.get("cc"),
+        headers.get("bcc"),
+    )
     if account:
         source_url = f"https://mail.google.com/mail/?authuser={account}#all/{thread_id}"
     else:
@@ -170,7 +205,7 @@ def normalize_gmail_message(msg: dict[str, Any], *, channel: dict[str, Any]) -> 
         "direction": direction,
         "medium": "email",
         "actor": {"display_name": sender, "email": _parse_email(sender), "role": "unknown"},
-        "counterparties": [],
+        "counterparties": counterparties,
         "title": subject,
         "snippet": preview[:360],
         "body": body or None,

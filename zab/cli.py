@@ -305,6 +305,7 @@ def interactions_sync_cmd(
     since: str = typer.Option("90d", "--since"),
     sources: str = typer.Option("", "--sources", help="CSV gmail,calendar,fireflies,whatsapp,ios_messages"),
     channels: str = typer.Option("", "--channels", help="CSV channel_ids"),
+    max_per_channel: int = typer.Option(500, "--max-per-channel", min=1),
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -312,7 +313,13 @@ def interactions_sync_cmd(
 
     source_list = [s.strip() for s in sources.split(",") if s.strip()] or None
     channel_list = [s.strip() for s in channels.split(",") if s.strip()] or None
-    payload = sync_channels(since=since, sources=source_list, channel_ids=channel_list, dry_run=dry_run)
+    payload = sync_channels(
+        since=since,
+        sources=source_list,
+        channel_ids=channel_list,
+        dry_run=dry_run,
+        max_per_channel=max_per_channel,
+    )
     if json_out:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return

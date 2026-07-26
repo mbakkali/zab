@@ -6,6 +6,7 @@ import json
 import subprocess
 from typing import Any
 
+from zab.services.conversation_ledger.normalizers import normalize_gmail_message
 from zab.services.conversation_ledger.store import upsert_event
 
 
@@ -44,7 +45,7 @@ def _extract_gmail_body(payload: Any) -> str | None:
     return None
 
 
-def fetch_gmail_body(*, native_id: str, account: str) -> str | None:
+def fetch_gmail_message_details(*, native_id: str, account: str) -> dict[str, Any] | None:
     if not native_id or not account:
         return None
     cmd = ["gog", "gmail", "get", native_id, "-a", account, "-j", "--no-input", "--sanitize-content"]
@@ -55,24 +56,75 @@ def fetch_gmail_body(*, native_id: str, account: str) -> str | None:
         data = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
         return None
-    return _extract_gmail_body(data)
+    if not isinstance(data, dict):
+        return None
+    body = _extract_gmail_body(data)
+    headers = data.get("headers")
+    message = data.get("message")
+    message = message if isinstance(message, dict) else {}
+    message_headers = message.get("headers") if isinstance(message.get("headers"), dict) else {}
+    return {
+        "id": message.get("id") or native_id,
+        "threadId": message.get("threadId") or data.get("threadId") or native_id,
+        "date": (headers or {}).get("date") if isinstance(headers, dict) else None,
+        "subject": (headers or {}).get("subject") if isinstance(headers, dict) else None,
+        "from": (headers or {}).get("from") if isinstance(headers, dict) else None,
+        "body": body,
+        "snippet": message.get("snippet"),
+        "labels": message.get("labelIds") or data.get("labels") or [],
+        "headers": {
+            **(message_headers if isinstance(message_headers, dict) else {}),
+            **(headers if isinstance(headers, dict) else {}),
+        },
+    }
+
+
+def fetch_gmail_body(*, native_id: str, account: str) -> str | None:
+    details = fetch_gmail_message_details(native_id=native_id, account=account)
+    if not details:
+        return None
+    body = details.get("body")
+    return str(body).strip() if body else None
 
 
 def enrich_event_content(event: dict[str, Any]) -> dict[str, Any]:
     """Return event with body filled when the source supports it."""
-    if event.get("body"):
+    if event.get("body") and event.get("counterparties"):
         return event
     source = str(event.get("source") or "").lower()
     if source == "gmail":
-        body = fetch_gmail_body(
+        details = fetch_gmail_message_details(
             native_id=str(event.get("native_id") or ""),
             account=str(event.get("source_account") or ""),
         )
-        if body:
+        if details:
             event = dict(event)
-            event["body"] = body
-            if not event.get("snippet") or event.get("snippet") == event.get("title"):
-                event["snippet"] = body[:360]
+            normalized = normalize_gmail_message(
+                {
+                    **details,
+                    "id": event.get("native_id") or details.get("id"),
+                    "threadId": event.get("thread_id") or details.get("threadId"),
+                    "subject": details.get("subject") or event.get("title"),
+                    "from": details.get("from") or (event.get("actor") or {}).get("display_name"),
+                    "date": event.get("timestamp") or details.get("date"),
+                    "body": details.get("body") or event.get("body"),
+                    "labels": details.get("labels") or [],
+                    "snippet": details.get("snippet") or event.get("snippet"),
+                },
+                channel={
+                    "channel_id": event.get("channel_id"),
+                    "tool_id": event.get("tool_id"),
+                    "account": event.get("source_account"),
+                    "last_check_status": event.get("tool_check_status_at_ingest"),
+                },
+            )
+            for key in ("actor", "body", "counterparties", "snippet", "summary", "title"):
+                if normalized.get(key):
+                    event[key] = normalized[key]
+            if event.get("counterparties"):
+                from zab.services.conversation_ledger.entity_resolver import build_entity_links
+
+                event["entity_links"] = build_entity_links(event)
     return event
 
 
@@ -92,10 +144,10 @@ def enrich_events_content(
         nonlocal fetched, skipped, failed
         for event in batch:
             needs = (
-                not event.get("body")
-                and str(event.get("source") or "").lower() == "gmail"
+                str(event.get("source") or "").lower() == "gmail"
                 and event.get("native_id")
                 and event.get("source_account")
+                and (not event.get("body") or not event.get("counterparties"))
             )
             if needs and max_fetch is not None and fetched >= max_fetch:
                 enriched.append(event)
@@ -103,7 +155,8 @@ def enrich_events_content(
                 continue
             updated = enrich_event_content(event)
             if needs:
-                if updated.get("body"):
+                has_new_content = bool(updated.get("body")) or updated.get("counterparties") != event.get("counterparties")
+                if has_new_content:
                     fetched += 1
                     if conn is not None:
                         upsert_event(conn, updated)

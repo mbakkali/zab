@@ -3,6 +3,16 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-26 - Make local interaction sync automatic and contact-complete
+
+- Trigger: debug
+- Context: an agent audited local-first Conversation Ledger sync freshness and contact-level completeness.
+- Observation: the local launchd runner could point to a moved checkout, no dedicated interaction sync agent existed, Gmail metadata search was capped to a single page, recipient headers were not indexed, and metadata-only refreshes could overwrite previously enriched event content.
+- Improvement: add a dedicated hourly local interaction sync job, paginate Gmail searches with `--all` when a high per-channel limit is requested, expose `--max-per-channel` in CLI/API, extract recipient headers during Gmail enrichment, resolve entities from counterparties, and preserve enriched fields during sync refreshes.
+- Evidence: `uv run pytest zab/tests/test_ledger_contracts.py zab/tests/test_ledger_real_cases.py -q`, `uv run zab interactions sync --since 14d --sources gmail,calendar,whatsapp,fireflies --max-per-channel 1200 --json`, `uv run zab interactions enrich-content --limit 3000 --max-fetch 1800 --json`, `uv run zab interactions reindex --json`, launchd kickstart/status for `ai.zab.interactions-sync`.
+- Status: verified
+- Fix commit: this commit
+
 ## 2026-07-26 - Complete interaction channel sync
 
 - Trigger: debug

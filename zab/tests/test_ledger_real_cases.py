@@ -46,6 +46,27 @@ REAL_CASES = [
         "workstream_id": "cw_maintenance",
     },
     {
+        "name": "agile_contact_domain",
+        "subject": "Point plateforme",
+        "actor": "Yannis CAUBET <yannis.caubet@agile.immo>",
+        "org_id": "org_agile_immo",
+        "workstream_id": "unclassified",
+    },
+    {
+        "name": "agile_dev_domain",
+        "subject": "Notification Agile Immo",
+        "actor": "Agile Immo <noreply@agileimmo.dev>",
+        "org_id": "org_agile_immo",
+        "workstream_id": "unclassified",
+    },
+    {
+        "name": "ofi_invest_contact_domain",
+        "subject": "Point IA",
+        "actor": "Samir BOUZIDI <samir.bouzidi@ofi-invest.com>",
+        "org_id": "org_ofi_invest",
+        "workstream_id": "cw_ofi_invest",
+    },
+    {
         "name": "carrefour_weekly",
         "subject": "[Carrefour] [Weekly] Mehdi / Sélim",
         "actor": "mehdi@upfundpro.com",
@@ -117,8 +138,24 @@ def test_build_entity_links_agile_immo() -> None:
     assert event.get("organization_id") == "org_agile_immo"
 
 
+def test_build_entity_links_uses_counterparty_domains() -> None:
+    event = {
+        "title": "Point plateforme",
+        "snippet": "Bonjour, voici les éléments.",
+        "actor": {"display_name": "Mehdi <mehdi@flowmetrik.com>", "email": "mehdi@flowmetrik.com"},
+        "counterparties": ["Yannis CAUBET <yannis.caubet@agile.immo>"],
+    }
+
+    links = build_entity_links(event)
+    org_links = [l for l in links if l["entity_type"] == "organization"]
+
+    assert org_links and org_links[0]["entity_id"] == "org_agile_immo"
+    assert event.get("organization_id") == "org_agile_immo"
+
+
 def test_org_profiles_cover_real_clients() -> None:
     assert "org_arp_astrance" in ORG_PROFILES
     assert "org_agile_immo" in ORG_PROFILES
+    assert "org_ofi_invest" in ORG_PROFILES
     assert "org_carrefour" in ORG_PROFILES
     assert ORG_PROFILES["org_agile_immo"].get("gmail_query")

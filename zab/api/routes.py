@@ -445,6 +445,7 @@ def interactions_sync_api(
     since: str = "90d",
     sources: str = "",
     channels: str = "",
+    max_per_channel: int = 500,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     from zab.services.conversation_ledger.sync import sync_channels
@@ -452,7 +453,13 @@ def interactions_sync_api(
     response.headers["Cache-Control"] = "no-store"
     source_list = [s.strip() for s in sources.split(",") if s.strip()] or None
     channel_list = [s.strip() for s in channels.split(",") if s.strip()] or None
-    return sync_channels(since=since, sources=source_list, channel_ids=channel_list, dry_run=dry_run)
+    return sync_channels(
+        since=since,
+        sources=source_list,
+        channel_ids=channel_list,
+        dry_run=dry_run,
+        max_per_channel=max_per_channel,
+    )
 
 
 @router.get("/workpackets")

@@ -49,7 +49,7 @@ ORG_PROFILES: dict[str, dict[str, Any]] = {
     "org_agile_immo": {
         "organization_id": "org_agile_immo",
         "label": "Agile Immo",
-        "domains": ["agileimmo.com"],
+        "domains": ["agileimmo.com", "agile.immo", "agileimmo.dev"],
         "subject_hints": (
             "agile immo",
             "agileimmo",
@@ -81,6 +81,19 @@ ORG_PROFILES: dict[str, dict[str, Any]] = {
             "cw_agile_delivery": {
                 "label": "Delivery Agile Immo",
                 "keywords": ("déploiement agile", "deploiement agile", "agile immo x upfund"),
+            },
+        },
+    },
+    "org_ofi_invest": {
+        "organization_id": "org_ofi_invest",
+        "label": "OFI Invest",
+        "domains": ["ofi-invest.com"],
+        "subject_hints": ("ofi invest", "ofi-invest"),
+        "gmail_query": "from:ofi-invest.com OR to:ofi-invest.com OR \"OFI Invest\"",
+        "workstreams": {
+            "cw_ofi_invest": {
+                "label": "OFI Invest",
+                "keywords": ("ofi invest", "ofi-invest", "formation ia", "agent ia", "audit ia", "point ia"),
             },
         },
     },

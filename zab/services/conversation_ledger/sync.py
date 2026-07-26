@@ -50,11 +50,13 @@ def _run_gog_gmail(channel: dict[str, Any], *, since: str, max_results: int = 20
         "--max",
         str(max_results),
     ]
+    if max_results > 500:
+        cmd.append("--all")
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         return []
     data = json.loads(proc.stdout or "{}")
-    return data.get("messages") or []
+    return (data.get("messages") or [])[:max_results]
 
 
 def _run_gog_calendar(channel: dict[str, Any], *, max_results: int = 100) -> list[dict[str, Any]]:

@@ -108,8 +108,17 @@ def _extract_email(value: str) -> str | None:
     return match.group(1).lower()
 
 
+def _extract_domains(value: str) -> list[str]:
+    domains: list[str] = []
+    for match in re.finditer(r"[\w.+-]+@([\w.-]+)", value):
+        domain = match.group(1).lower()
+        if domain not in domains:
+            domains.append(domain)
+    return domains
+
+
 def resolve_organization(*, text: str = "", email: str | None = None) -> tuple[str | None, str | None, float, list[str]]:
-    domain = _extract_email(email or text)
+    domains = _extract_domains(" ".join(part for part in (email or "", text) if part))
     normalized = _normalize(text)
     evidence: list[str] = []
 
@@ -121,7 +130,9 @@ def resolve_organization(*, text: str = "", email: str | None = None) -> tuple[s
                 return org_id, profile["label"], 0.88, evidence
 
     # 2) Domaine client explicite (hors comptes internes Mehdi)
-    if domain and domain not in INTERNAL_DOMAINS:
+    for domain in domains:
+        if domain in INTERNAL_DOMAINS:
+            continue
         for org_id, org in DEFAULT_ORGANIZATIONS.items():
             for d in org.get("domains") or []:
                 if domain.endswith(d):
@@ -164,15 +175,26 @@ def resolve_zab_project(*, text: str) -> tuple[str | None, float, list[str]]:
 
 
 def build_entity_links(event: dict[str, Any]) -> list[dict[str, Any]]:
+    counterparties = event.get("counterparties") or []
+    counterparty_text = " ".join(str(item) for item in counterparties if item)
     text = " ".join(
         [
             str(event.get("title") or ""),
             str(event.get("snippet") or ""),
+            str(event.get("summary") or ""),
             str((event.get("actor") or {}).get("display_name") or ""),
             str((event.get("actor") or {}).get("email") or ""),
+            counterparty_text,
         ]
     )
-    email = (event.get("actor") or {}).get("email")
+    email = " ".join(
+        part
+        for part in (
+            str((event.get("actor") or {}).get("email") or ""),
+            counterparty_text,
+        )
+        if part
+    )
     org_id, org_label, org_conf, org_evidence = resolve_organization(text=text, email=email)
     links: list[dict[str, Any]] = []
     if org_id:

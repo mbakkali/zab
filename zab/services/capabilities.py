@@ -153,7 +153,7 @@ def get_capabilities() -> dict[str, Any]:
             summary="Sync multi-source InteractionEvents into the Conversation Ledger with preflight checks.",
             risk="read",
             core="zab.services.conversation_ledger.sync.sync_channels",
-            cli="zab interactions sync --since 90d --dry-run --json",
+            cli="zab interactions sync --since 90d --max-per-channel 1200 --dry-run --json",
             mcp=None,
             api="POST /api/interactions/sync",
             ui="Interactions",

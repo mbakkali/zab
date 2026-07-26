@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,7 +11,7 @@ from zab.services import local_db
 from zab.services.conversation_ledger.clustering import cluster_events
 from zab.services.conversation_ledger.eval import run_eval
 from zab.services.conversation_ledger.schemas import validate_interaction_event, validate_workpacket_canonical
-from zab.services.conversation_ledger.store import upsert_event, upsert_projection, upsert_workpacket
+from zab.services.conversation_ledger.store import get_event, upsert_event, upsert_projection, upsert_workpacket
 from zab.services.conversation_ledger.workpacket import build_from_cluster
 from zab.services.conversation_ledger.workpacket_builder import discover_workpackets, reconstruct_seed_candidates
 from zab.services.conversation_ledger.projections.linear import project_linear
@@ -46,6 +47,36 @@ def test_dedup_source_native_id() -> None:
         upsert_event(conn, event)
         count = conn.execute("SELECT COUNT(*) FROM ledger_events").fetchone()[0]
     assert count == 1
+
+
+def test_upsert_event_preserves_enriched_content_on_sync_refresh() -> None:
+    enriched = {
+        **_event("dedup-enriched", "Audit CRM follow-up"),
+        "body": "Corps complet déjà récupéré.",
+        "counterparties": ["Nicolas BONHOMME <nbonhomme@arp-astrance.com>"],
+        "entity_links": [
+            {
+                "entity_type": "organization",
+                "entity_id": "org_arp_astrance",
+                "label": "ARP Astrance",
+                "confidence": 0.9,
+                "evidence": ["email domain arp-astrance.com"],
+                "status": "confirmed",
+            }
+        ],
+    }
+    refresh = _event("dedup-enriched", "Audit CRM follow-up")
+    refresh["counterparties"] = []
+
+    with local_db.transaction() as conn:
+        saved = upsert_event(conn, enriched)
+        upsert_event(conn, refresh)
+        stored = get_event(conn, saved["event_id"])
+
+    assert stored is not None
+    assert stored["body"] == "Corps complet déjà récupéré."
+    assert stored["counterparties"] == ["Nicolas BONHOMME <nbonhomme@arp-astrance.com>"]
+    assert stored["entity_links"][0]["entity_id"] == "org_arp_astrance"
 
 
 def test_arp_workstreams_do_not_merge() -> None:
@@ -221,6 +252,27 @@ def test_channel_binding_gog_smoke(monkeypatch) -> None:
     assert checked["last_check_status"] == "ok"
 
 
+def test_gmail_sync_uses_all_pages_when_limit_exceeds_single_page(monkeypatch) -> None:
+    from zab.services.conversation_ledger.sync import _run_gog_gmail
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **_kwargs):
+        captured["cmd"] = list(cmd)
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"messages": [{"id": "1"}, {"id": "2"}]}))
+
+    monkeypatch.setattr("zab.services.conversation_ledger.sync.subprocess.run", fake_run)
+
+    rows = _run_gog_gmail(
+        {"account": "mehdi@flowmetrik.com"},
+        since="2026-07-12",
+        max_results=1200,
+    )
+
+    assert "--all" in captured["cmd"]
+    assert len(rows) == 2
+
+
 def test_enrich_gmail_event_adds_body(monkeypatch) -> None:
     from zab.services.conversation_ledger.content_enrichment import enrich_event_content
 
@@ -228,18 +280,30 @@ def test_enrich_gmail_event_adds_body(monkeypatch) -> None:
         "event_id": "gmail:abc123",
         "source": "gmail",
         "native_id": "abc123",
+        "channel_id": "gmail-flowmetrik-primary",
         "source_account": "mehdi@flowmetrik.com",
         "title": "Sujet test",
         "snippet": "Sujet test",
     }
 
     monkeypatch.setattr(
-        "zab.services.conversation_ledger.content_enrichment.fetch_gmail_body",
-        lambda **_: "Corps complet du mail avec détails contractuels.",
+        "zab.services.conversation_ledger.content_enrichment.fetch_gmail_message_details",
+        lambda **_: {
+            "id": "abc123",
+            "threadId": "thread-abc123",
+            "date": "2026-07-26 11:15",
+            "from": "Mehdi <mehdi@flowmetrik.com>",
+            "subject": "Sujet test",
+            "body": "Corps complet du mail avec détails contractuels.",
+            "snippet": "Corps complet du mail avec détails contractuels.",
+            "labels": ["SENT"],
+            "headers": {"to": "Alice Example <alice@example.com>"},
+        },
     )
     enriched = enrich_event_content(event)
     assert enriched["body"].startswith("Corps complet")
     assert enriched["snippet"].startswith("Corps complet")
+    assert enriched["counterparties"] == ["Alice Example <alice@example.com>"]
 
 
 def test_enrich_skips_when_body_present(monkeypatch) -> None:
@@ -249,10 +313,10 @@ def test_enrich_skips_when_body_present(monkeypatch) -> None:
 
     def _fetch(**_):
         called["n"] += 1
-        return "should not run"
+        return {"body": "should not run"}
 
     monkeypatch.setattr(
-        "zab.services.conversation_ledger.content_enrichment.fetch_gmail_body",
+        "zab.services.conversation_ledger.content_enrichment.fetch_gmail_message_details",
         _fetch,
     )
     event = {
@@ -260,9 +324,47 @@ def test_enrich_skips_when_body_present(monkeypatch) -> None:
         "native_id": "x",
         "source_account": "mehdi@flowmetrik.com",
         "body": "already there",
+        "counterparties": ["alice@example.com"],
     }
     enrich_event_content(event)
     assert called["n"] == 0
+
+
+def test_enrich_gmail_event_fetches_missing_counterparties(monkeypatch) -> None:
+    from zab.services.conversation_ledger.content_enrichment import enrich_event_content
+
+    event = {
+        "event_id": "gmail:abc124",
+        "source": "gmail",
+        "native_id": "abc124",
+        "channel_id": "gmail-flowmetrik-primary",
+        "source_account": "mehdi@flowmetrik.com",
+        "title": "Point plateforme",
+        "snippet": "Point plateforme",
+        "body": "Corps déjà enrichi.",
+        "actor": {"display_name": "Mehdi <mehdi@flowmetrik.com>", "email": "mehdi@flowmetrik.com"},
+    }
+
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.content_enrichment.fetch_gmail_message_details",
+        lambda **_: {
+            "id": "abc124",
+            "threadId": "thread-abc124",
+            "date": "2026-07-26 11:15",
+            "from": "Mehdi <mehdi@flowmetrik.com>",
+            "subject": "Point plateforme",
+            "body": None,
+            "snippet": "Point plateforme",
+            "labels": ["SENT"],
+            "headers": {"to": "Yannis CAUBET <yannis.caubet@agile.immo>"},
+        },
+    )
+
+    enriched = enrich_event_content(event)
+
+    assert enriched["body"] == "Corps déjà enrichi."
+    assert enriched["counterparties"] == ["Yannis CAUBET <yannis.caubet@agile.immo>"]
+    assert enriched["organization_id"] == "org_agile_immo"
 
 
 def test_gmail_normalizer_preserves_snippet_without_body() -> None:
@@ -285,6 +387,32 @@ def test_gmail_normalizer_preserves_snippet_without_body() -> None:
     assert event["snippet"].startswith("Bonjour")
     assert event["summary"].startswith("Bonjour")
     assert event["actor"]["email"] == "alice@example.com"
+
+
+def test_gmail_normalizer_uses_recipient_headers_for_counterparties() -> None:
+    from zab.services.conversation_ledger.normalizers import normalize_gmail_message
+
+    event = normalize_gmail_message(
+        {
+            "id": "msg-recipients",
+            "threadId": "thread-recipients",
+            "date": "2026-07-26 11:15",
+            "from": "Mehdi <mehdi@flowmetrik.com>",
+            "subject": "Point client",
+            "snippet": "Bonjour, voici le point.",
+            "labels": ["SENT"],
+            "headers": {
+                "to": "Yannis CAUBET <yannis.caubet@agile.immo>",
+                "cc": "Samir BOUZIDI <samir.bouzidi@ofi-invest.com>",
+            },
+        },
+        channel={"channel_id": "gmail-flowmetrik-primary", "account": "mehdi@flowmetrik.com"},
+    )
+
+    assert event["counterparties"] == [
+        "Yannis CAUBET <yannis.caubet@agile.immo>",
+        "Samir BOUZIDI <samir.bouzidi@ofi-invest.com>",
+    ]
 
 
 def test_whatsapp_normalizer_extracts_extended_text_and_timestamp() -> None:
