@@ -10,6 +10,7 @@ from typing import Any
 from zab.services import connectors_check, tool_catalog
 from zab.services import tool_checks
 from zab.services.conversation_ledger.schemas import CHANNEL_BINDING_CONTRACT, CONTRACT_VERSION, validate_channel_binding
+from zab.services.dotenv_locate import load_standard_dotenvs_once
 from zab.user_config import load_user_config
 
 DEFAULT_BINDINGS: list[dict[str, Any]] = [
@@ -145,6 +146,7 @@ def _gog_smoke(binding: dict[str, Any]) -> tuple[str, str]:
 def _fireflies_smoke() -> tuple[str, str]:
     import os
 
+    load_standard_dotenvs_once()
     if os.environ.get("FIREFLIES_API_KEY", "").strip():
         return "ok", "fireflies_api_key=present"
     return "degraded", "fireflies_api_key=missing"
@@ -153,8 +155,11 @@ def _fireflies_smoke() -> tuple[str, str]:
 def _evolution_smoke() -> tuple[str, str]:
     import os
 
-    required = ("EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE")
+    load_standard_dotenvs_once()
+    required = ("EVOLUTION_API_URL", "EVOLUTION_API_KEY")
     missing = [key for key in required if not os.environ.get(key, "").strip()]
+    if not (os.environ.get("EVOLUTION_INSTANCE", "").strip() or os.environ.get("EVOLUTION_INSTANCE_NAME", "").strip()):
+        missing.append("EVOLUTION_INSTANCE")
     if missing:
         return "degraded", f"evolution_env_missing={','.join(missing)}"
     return "ok", "evolution_env=present"
@@ -173,6 +178,7 @@ def _imessage_smoke() -> tuple[str, str]:
 def _attio_smoke() -> tuple[str, str]:
     import os
 
+    load_standard_dotenvs_once()
     if os.environ.get("ATTIO_API_KEY", "").strip():
         return "ok", "attio_api_key=present"
     return "degraded", "attio_api_key=missing"

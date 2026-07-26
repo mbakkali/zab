@@ -9,10 +9,45 @@ from typing import Any
 from zab.services.conversation_ledger.store import upsert_event
 
 
+def _first_text(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+        elif value is not None:
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def _extract_gmail_body(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    body = _first_text(
+        payload.get("body"),
+        payload.get("text"),
+        payload.get("plain"),
+        payload.get("content"),
+        payload.get("bodyText"),
+        payload.get("body_text"),
+    )
+    if body:
+        return body
+    for key in ("message", "data", "result"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            body = _extract_gmail_body(nested)
+            if body:
+                return body
+    return None
+
+
 def fetch_gmail_body(*, native_id: str, account: str) -> str | None:
     if not native_id or not account:
         return None
-    cmd = ["gog", "gmail", "get", native_id, "-a", account, "-j", "--no-input"]
+    cmd = ["gog", "gmail", "get", native_id, "-a", account, "-j", "--no-input", "--sanitize-content"]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         return None
@@ -20,10 +55,7 @@ def fetch_gmail_body(*, native_id: str, account: str) -> str | None:
         data = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
         return None
-    body = data.get("body")
-    if not body:
-        return None
-    return str(body).strip()
+    return _extract_gmail_body(data)
 
 
 def enrich_event_content(event: dict[str, Any]) -> dict[str, Any]:

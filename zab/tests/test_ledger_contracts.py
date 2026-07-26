@@ -263,3 +263,106 @@ def test_enrich_skips_when_body_present(monkeypatch) -> None:
     }
     enrich_event_content(event)
     assert called["n"] == 0
+
+
+def test_gmail_normalizer_preserves_snippet_without_body() -> None:
+    from zab.services.conversation_ledger.normalizers import normalize_gmail_message
+
+    event = normalize_gmail_message(
+        {
+            "id": "msg-snippet",
+            "threadId": "thread-snippet",
+            "date": "2026-07-26 11:15",
+            "from": "Alice Example <alice@example.com>",
+            "subject": "Point projet",
+            "snippet": "Bonjour, voici le détail demandé pour le point projet.",
+            "labels": ["INBOX"],
+        },
+        channel={"channel_id": "gmail-flowmetrik-primary", "account": "mehdi@flowmetrik.com"},
+    )
+
+    assert event["body"] is None
+    assert event["snippet"].startswith("Bonjour")
+    assert event["summary"].startswith("Bonjour")
+    assert event["actor"]["email"] == "alice@example.com"
+
+
+def test_whatsapp_normalizer_extracts_extended_text_and_timestamp() -> None:
+    from zab.services.conversation_ledger.normalizers import normalize_whatsapp_message
+
+    event = normalize_whatsapp_message(
+        {
+            "key": {"id": "wa-1", "remoteJid": "33601020304@s.whatsapp.net", "fromMe": False},
+            "pushName": "Alice",
+            "messageTimestamp": 1785064500,
+            "message": {"extendedTextMessage": {"text": "Message WhatsApp complet"}},
+        },
+        channel={"channel_id": "whatsapp-evolution-mehdi", "account": "mehdi-perso", "tool_id": "whatsapp-search"},
+    )
+
+    assert not validate_interaction_event(event)
+    assert event["body"] == "Message WhatsApp complet"
+    assert event["snippet"] == "Message WhatsApp complet"
+    assert event["timestamp"].startswith("2026-07-26T")
+
+
+def test_fireflies_normalizer_uses_structured_summary_and_sentences() -> None:
+    from zab.services.conversation_ledger.normalizers import normalize_fireflies_meeting
+
+    event = normalize_fireflies_meeting(
+        {
+            "id": "ff-1",
+            "title": "Point client",
+            "date": 1785064500000,
+            "host": "Mehdi",
+            "participants": ["alice@example.com"],
+            "summary": {"overview": "Synthèse du rendez-vous", "action_items": ["Envoyer le compte rendu"]},
+            "sentences": [{"speaker_name": "Alice", "text": "On valide la prochaine étape."}],
+        },
+        channel={"channel_id": "fireflies-flowmetrik", "account": "n/a", "tool_id": "fireflies-search"},
+    )
+
+    assert not validate_interaction_event(event)
+    assert event["body"].startswith("Alice:")
+    assert "Synthèse" in event["summary"]
+    assert event["timestamp"].startswith("2026-07-26T")
+
+
+def test_sync_channels_ingests_whatsapp(monkeypatch) -> None:
+    from zab.services.conversation_ledger.sync import sync_channels
+
+    channel = {
+        "channel_id": "whatsapp-evolution-mehdi",
+        "channel_type": "whatsapp",
+        "label": "WhatsApp",
+        "tool_id": "whatsapp-search",
+        "account": "mehdi-perso",
+        "enabled": True,
+        "last_check_status": "ok",
+    }
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.sync.list_channels",
+        lambda check=True: {"summary": {"total": 1, "ok": 1, "degraded": 0, "error": 0}, "channels": [channel]},
+    )
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.sync.check_channel_binding",
+        lambda c: {**c, "last_check_status": "ok"},
+    )
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.sync.fetch_whatsapp_recent",
+        lambda *, limit: [
+            {
+                "key": {"id": "wa-sync-1", "remoteJid": "33601020304@s.whatsapp.net", "fromMe": False},
+                "pushName": "Alice",
+                "messageTimestamp": 1785064500,
+                "message": {"conversation": "Signal WhatsApp à indexer"},
+            }
+        ],
+    )
+
+    payload = sync_channels(since="7d", sources=["whatsapp"], dry_run=True)
+
+    assert payload["summary"]["channels_selected"] == 1
+    assert payload["summary"]["events_created"] == 1
+    assert payload["channels"][0]["fetched"] == 1
+    assert payload["channels"][0]["stored"] == 1

@@ -303,7 +303,7 @@ def interactions_channels_cmd(
 def interactions_sync_cmd(
     *,
     since: str = typer.Option("90d", "--since"),
-    sources: str = typer.Option("", "--sources", help="CSV gmail,calendar,fireflies"),
+    sources: str = typer.Option("", "--sources", help="CSV gmail,calendar,fireflies,whatsapp,ios_messages"),
     channels: str = typer.Option("", "--channels", help="CSV channel_ids"),
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),

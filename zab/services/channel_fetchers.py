@@ -22,16 +22,13 @@ import re
 import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from typing import Any, Optional, Tuple
 
 import httpx
 
+from zab.services.dotenv_locate import load_standard_dotenvs_once
 
-_DOTENV_PATHS = (
-    Path.home() / ".config" / "zab" / ".env",
-    Path.home() / ".hermes" / ".env",
-)
+
 _DOTENV_LOADED = False
 
 
@@ -40,21 +37,7 @@ def _load_dotenv_once() -> None:
     global _DOTENV_LOADED
     if _DOTENV_LOADED:
         return
-    for p in _DOTENV_PATHS:
-        if not p.is_file():
-            continue
-        try:
-            for raw in p.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip()
-                v = v.strip().strip('"').strip("'")
-                if k and k not in os.environ:
-                    os.environ[k] = v
-        except Exception:
-            continue
+    load_standard_dotenvs_once()
     _DOTENV_LOADED = True
 
 _GOG_TIMEOUT_S = 12

@@ -3,6 +3,16 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-26 - Complete interaction channel sync
+
+- Trigger: debug
+- Context: an agent audited the Conversation Ledger interactions surface and communication channels.
+- Observation: CLI ledger checks did not load the same local env files as the dashboard, WhatsApp/iMessage bindings were listed but not synced, Gmail search snippets could be dropped before body enrichment, and preflight JSON could include raw provider output.
+- Improvement: load standard Zab dotenv files in CLI services, branch WhatsApp and local iMessage fetchers into `zab interactions sync`, preserve Gmail snippets, extract common WhatsApp message bodies, normalize structured Fireflies summaries/transcripts, and keep preflight details privacy-safe.
+- Evidence: `uv run pytest zab/tests -q`, `cd zab-ui && npm run build`, `uv run zab interactions channels --json`, `uv run zab interactions sync --since 7d --sources gmail,calendar,whatsapp --json`, `uv run zab ledger preflight --json`.
+- Status: verified
+- Fix commit: this commit
+
 ## 2026-07-23 - Repair moved editable CLI install
 
 - Trigger: debug

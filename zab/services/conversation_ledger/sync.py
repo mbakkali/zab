@@ -10,8 +10,16 @@ from typing import Any
 from zab.services import local_db
 from zab.services.conversation_ledger.channel_bindings import check_channel_binding, list_channels, load_channel_bindings
 from zab.services.conversation_ledger.entity_resolver import build_entity_links
-from zab.services.conversation_ledger.normalizers import normalize_calendar_event, normalize_fireflies_meeting, normalize_gmail_message
+from zab.services.conversation_ledger.messaging_targeted import fetch_imessage_recent, fetch_whatsapp_recent
+from zab.services.conversation_ledger.normalizers import (
+    normalize_calendar_event,
+    normalize_fireflies_meeting,
+    normalize_gmail_message,
+    normalize_imessage_message,
+    normalize_whatsapp_message,
+)
 from zab.services.conversation_ledger.store import set_source_cursor, upsert_event
+from zab.services.dotenv_locate import load_standard_dotenvs_once
 
 
 def _now() -> str:
@@ -73,6 +81,7 @@ def _run_fireflies_search(channel: dict[str, Any], *, query: str = "", limit: in
     import os
     import urllib.request
 
+    load_standard_dotenvs_once()
     api_key = os.environ.get("FIREFLIES_API_KEY", "").strip()
     if not api_key:
         return []
@@ -238,6 +247,10 @@ def sync_channels(
                 raw_items = _run_gog_calendar(checked, max_results=max_per_channel)
             elif ctype == "fireflies":
                 raw_items = _run_fireflies_search(checked)
+            elif ctype == "whatsapp":
+                raw_items = fetch_whatsapp_recent(limit=max_per_channel)
+            elif ctype == "ios_messages":
+                raw_items = fetch_imessage_recent(limit=max_per_channel, since=since_date)
 
             stored = 0
             for raw in raw_items:
@@ -247,6 +260,10 @@ def sync_channels(
                     event = normalize_calendar_event(raw, channel=checked)
                 elif ctype == "fireflies":
                     event = normalize_fireflies_meeting(raw, channel=checked)
+                elif ctype == "whatsapp":
+                    event = normalize_whatsapp_message(raw, channel=checked)
+                elif ctype == "ios_messages":
+                    event = normalize_imessage_message(raw, channel=checked)
                 else:
                     continue
                 links = build_entity_links(event)
