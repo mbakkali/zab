@@ -8,7 +8,7 @@ from typing import Iterable
 
 from dotenv import load_dotenv
 
-from zab.paths import config_dir
+from zab.paths import config_dir, zab_repo_root
 
 _LOADED_DOTENV_PATHS: set[str] = set()
 
@@ -31,8 +31,11 @@ def dotenv_key_line(path: Path, key: str) -> int | None:
 
 def standard_dotenv_paths(extra_paths: Iterable[Path] | None = None) -> list[Path]:
     """Return local env files that Zab CLI/services should read without overriding process env."""
+    repo_root = zab_repo_root()
     raw = [
         config_dir() / ".env",
+        repo_root / ".env.local",
+        repo_root / ".env",
         Path.home() / ".hermes" / ".env",
         Path.home() / ".env",
     ]

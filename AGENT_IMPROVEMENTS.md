@@ -3,6 +3,16 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-27 - Restore Fireflies interaction sync
+
+- Trigger: debug
+- Context: an agent continued validating the local-first Conversation Ledger sync after contact-level Gmail fixes.
+- Observation: Fireflies channel checks could see only the absence of a local API key, and after the key was made available the Fireflies GraphQL query still returned no data because it used stale transcript fields.
+- Improvement: load checkout-local `.env.local` / `.env` files in the standard dotenv chain, keep user secrets in local config outside the repository, and update the Fireflies transcript query to use current schema fields and aliases.
+- Evidence: `uv run pytest zab/tests/test_dotenv_locate.py zab/tests/test_ledger_contracts.py -q`, `uv run zab interactions sync --since 30d --sources fireflies --max-per-channel 20 --json`, `uv run zab interactions sync --since 14d --sources gmail,calendar,whatsapp,fireflies --max-per-channel 1200 --json`, launchd kickstart/status for `ai.zab.interactions-sync`.
+- Status: verified
+- Fix commit: this commit
+
 ## 2026-07-26 - Make local interaction sync automatic and contact-complete
 
 - Trigger: debug

@@ -90,7 +90,9 @@ def _run_fireflies_search(channel: dict[str, Any], *, query: str = "", limit: in
     gql = {
         "query": (
             "query Transcripts($limit: Int) { transcripts(limit: $limit) "
-            "{ id title date host participants summary url } }"
+            "{ id title date host: host_email organizer_email participants "
+            "summary { overview short_summary gist bullet_gist action_items keywords } "
+            "url: transcript_url } }"
         ),
         "variables": {"limit": limit},
     }

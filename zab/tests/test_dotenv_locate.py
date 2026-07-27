@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from zab.paths import config_dir
-from zab.services.dotenv_locate import dotenv_key_line, load_standard_dotenvs_once
+from zab.services.dotenv_locate import dotenv_key_line, load_standard_dotenvs_once, standard_dotenv_paths
 
 
 def test_dotenv_key_line_finds_export_and_comment(tmp_path: Path) -> None:
@@ -25,3 +25,14 @@ def test_load_standard_dotenvs_once_reads_zab_env(monkeypatch) -> None:
 
     assert env.resolve() in loaded
     assert os.environ["ZAB_TEST_DOTENV_LOAD"] == "present"
+
+
+def test_standard_dotenv_paths_include_checkout_env(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path / "zab"
+    repo.mkdir()
+    monkeypatch.setattr("zab.services.dotenv_locate.zab_repo_root", lambda: repo)
+
+    paths = standard_dotenv_paths()
+
+    assert repo / ".env.local" in paths
+    assert repo / ".env" in paths

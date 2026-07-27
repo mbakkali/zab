@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import urllib.request
 from types import SimpleNamespace
 
 import pytest
@@ -271,6 +272,53 @@ def test_gmail_sync_uses_all_pages_when_limit_exceeds_single_page(monkeypatch) -
 
     assert "--all" in captured["cmd"]
     assert len(rows) == 2
+
+
+def test_fireflies_sync_uses_valid_transcript_query(monkeypatch) -> None:
+    from zab.services.conversation_ledger.sync import _run_fireflies_search
+
+    captured: dict[str, str] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "data": {
+                        "transcripts": [
+                            {
+                                "id": "ff-1",
+                                "title": "Meeting",
+                                "date": 1785064500000,
+                                "host": "host@example.com",
+                                "participants": ["guest@example.com"],
+                                "summary": {"overview": "Overview"},
+                                "url": "https://example.test/transcript",
+                            }
+                        ]
+                    }
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(req, **_kwargs):
+        body = json.loads(req.data.decode("utf-8"))
+        captured["query"] = body["query"]
+        return FakeResponse()
+
+    monkeypatch.setenv("FIREFLIES_API_KEY", "test-key")
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    rows = _run_fireflies_search({"account": "n/a"}, limit=1)
+
+    assert "host: host_email" in captured["query"]
+    assert "url: transcript_url" in captured["query"]
+    assert "summary {" in captured["query"]
+    assert rows[0]["summary"]["overview"] == "Overview"
 
 
 def test_enrich_gmail_event_adds_body(monkeypatch) -> None:
