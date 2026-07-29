@@ -453,6 +453,7 @@ def interactions_organizations_api(response: Response, limit: int = 2000) -> dic
 def interactions_sync_api(
     response: Response,
     since: str = "90d",
+    until: str | None = None,
     sources: str = "",
     channels: str = "",
     max_per_channel: int = 500,
@@ -465,6 +466,7 @@ def interactions_sync_api(
     channel_list = [s.strip() for s in channels.split(",") if s.strip()] or None
     return sync_channels(
         since=since,
+        until=until,
         sources=source_list,
         channel_ids=channel_list,
         dry_run=dry_run,

@@ -412,10 +412,12 @@ def test_gmail_sync_uses_all_pages_when_limit_exceeds_single_page(monkeypatch) -
     rows = _run_gog_gmail(
         {"account": "mehdi@flowmetrik.com"},
         since="2026-07-12",
+        until="2026-08-01",
         max_results=1200,
     )
 
     assert "--all" in captured["cmd"]
+    assert "before:2026/08/01" in captured["cmd"][4]
     assert len(rows) == 2
 
 
@@ -458,11 +460,17 @@ def test_fireflies_sync_uses_valid_transcript_query(monkeypatch) -> None:
     monkeypatch.setenv("FIREFLIES_API_KEY", "test-key")
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    rows = _run_fireflies_search({"account": "n/a"}, limit=1)
+    rows = _run_fireflies_search(
+        {"account": "n/a"},
+        since="2026-07-01",
+        until="2026-08-01",
+        limit=1,
+    )
 
     assert "host: host_email" in captured["query"]
     assert "url: transcript_url" in captured["query"]
     assert "summary {" in captured["query"]
+    assert "$toDate: DateTime" in captured["query"]
     assert rows[0]["summary"]["overview"] == "Overview"
 
 
@@ -481,12 +489,14 @@ def test_calendar_sync_uses_since_and_all_pages(monkeypatch) -> None:
     _run_gog_calendar(
         {"account": "mehdi@example.com"},
         since="2026-01-01",
+        until="2026-02-01",
         max_results=500,
     )
 
     assert captured["cmd"][-1] == "--all-pages"
     assert "--from" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--from") + 1] == "2026-01-01"
+    assert captured["cmd"][captured["cmd"].index("--to") + 1] == "2026-02-01"
     assert captured["cmd"][captured["cmd"].index("--max") + 1] == "500"
 
 

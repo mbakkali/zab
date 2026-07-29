@@ -49,10 +49,13 @@ def _run_gog_gmail(
     channel: dict[str, Any],
     *,
     since: str,
+    until: str | None = None,
     max_results: int = 200,
     query: str | None = None,
 ) -> list[dict[str, Any]]:
     base_query = query or f"after:{since.replace('-', '/')}"
+    if until:
+        base_query = f"{base_query} before:{until.replace('-', '/')}"
     cmd = [
         "gog",
         "gmail",
@@ -79,6 +82,7 @@ def _run_gog_calendar(
     channel: dict[str, Any],
     *,
     since: str | None = None,
+    until: str | None = None,
     max_results: int = 100,
 ) -> list[dict[str, Any]]:
     cmd = [
@@ -95,6 +99,8 @@ def _run_gog_calendar(
     ]
     if since:
         cmd.extend(["--from", since])
+    if until:
+        cmd.extend(["--to", until])
     if max_results > 10:
         cmd.append("--all-pages")
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -110,6 +116,7 @@ def _run_fireflies_search(
     *,
     query: str = "",
     since: str | None = None,
+    until: str | None = None,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     import json
@@ -123,12 +130,13 @@ def _run_fireflies_search(
     requested = max(1, int(limit))
     page_size = min(requested, 50)
     from_date = f"{since}T00:00:00.000Z" if since and "T" not in since else since
+    to_date = f"{until}T00:00:00.000Z" if until and "T" not in until else until
     data: list[dict[str, Any]] = []
     for skip in range(0, requested, page_size):
         gql = {
             "query": (
-                "query Transcripts($limit: Int, $skip: Int, $fromDate: DateTime) { "
-                "transcripts(limit: $limit, skip: $skip, fromDate: $fromDate) "
+                "query Transcripts($limit: Int, $skip: Int, $fromDate: DateTime, $toDate: DateTime) { "
+                "transcripts(limit: $limit, skip: $skip, fromDate: $fromDate, toDate: $toDate) "
                 "{ id title date host: host_email organizer_email participants "
                 "summary { overview short_summary gist bullet_gist action_items keywords } "
                 "url: transcript_url } }"
@@ -137,6 +145,7 @@ def _run_fireflies_search(
                 "limit": min(page_size, requested - len(data)),
                 "skip": skip,
                 "fromDate": from_date,
+                "toDate": to_date,
             },
         }
         req = urllib.request.Request(
@@ -441,6 +450,7 @@ def sync_organization(
 def sync_channels(
     *,
     since: str = "90d",
+    until: str | None = None,
     sources: list[str] | None = None,
     channel_ids: list[str] | None = None,
     dry_run: bool = False,
@@ -490,16 +500,23 @@ def sync_channels(
                 continue
             if ctype == "gmail":
                 raw_items = _run_gog_gmail(
-                    checked, since=since_date, max_results=max_per_channel
+                    checked,
+                    since=since_date,
+                    until=until,
+                    max_results=max_per_channel,
                 )
             elif ctype == "calendar":
                 raw_items = _run_gog_calendar(
-                    checked, since=since_date, max_results=max_per_channel
+                    checked,
+                    since=since_date,
+                    until=until,
+                    max_results=max_per_channel,
                 )
             elif ctype == "fireflies":
                 raw_items = _run_fireflies_search(
                     checked,
                     since=since_date,
+                    until=until,
                     limit=max_per_channel,
                 )
             elif ctype == "whatsapp":
@@ -545,6 +562,7 @@ def sync_channels(
                         "last_seen": _now(),
                         "last_success": _now(),
                         "since": since_date,
+                        "until": until,
                         "stored": stored,
                     },
                 )
@@ -564,6 +582,7 @@ def sync_channels(
         "contract_version": "1.0",
         "generated_at_utc": _now(),
         "since": since_date,
+        "until": until,
         "dry_run": dry_run,
         "summary": {
             "channels_selected": len(selected),
