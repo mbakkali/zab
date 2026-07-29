@@ -87,6 +87,179 @@ def _evolution_records(payload: Any) -> list[dict[str, Any]]:
     return [item for item in records if isinstance(item, dict)]
 
 
+def _evolution_chats(payload: Any) -> list[dict[str, Any]]:
+    rows: list[Any] = []
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        for key in ("chats", "records", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                rows = value
+                break
+            if isinstance(value, dict):
+                nested = _evolution_chats(value)
+                if nested:
+                    return nested
+    return [item for item in rows if isinstance(item, dict)]
+
+
+def _whatsapp_message_datetime(message: dict[str, Any]) -> datetime | None:
+    value = message.get("timestamp") or message.get("messageTimestamp")
+    if value is None:
+        return None
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if isinstance(value, (int, float)):
+        raw = float(value)
+        if raw > 10_000_000_000:
+            raw /= 1000.0
+        try:
+            return datetime.fromtimestamp(raw, tz=timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.fromisoformat(f"{value}T00:00:00+00:00")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _whatsapp_remote_jid(chat: dict[str, Any]) -> str:
+    last_message = (
+        chat.get("lastMessage") if isinstance(chat.get("lastMessage"), dict) else {}
+    )
+    last_key = (
+        last_message.get("key")
+        if isinstance(last_message.get("key"), dict)
+        else {}
+    )
+    chat_key = chat.get("key") if isinstance(chat.get("key"), dict) else {}
+    return _first_non_empty_str(
+        chat.get("remoteJid"),
+        chat.get("id"),
+        chat_key.get("remoteJid"),
+        last_key.get("remoteJid"),
+    )
+
+
+def _whatsapp_message_identity(message: dict[str, Any]) -> str:
+    key = message.get("key") if isinstance(message.get("key"), dict) else {}
+    return _first_non_empty_str(
+        message.get("id"),
+        key.get("id"),
+        message.get("messageId"),
+        f"{key.get('remoteJid') or message.get('remoteJid')}:{message.get('messageTimestamp') or message.get('timestamp')}",
+    )
+
+
+def fetch_whatsapp_history(
+    *,
+    limit: int = 5_000,
+    per_chat_limit: int = 1_000,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch bounded WhatsApp history by enumerating chats first.
+
+    Evolution's global ``findMessages`` result is only a recent sample. A
+    historical backfill must enumerate ``findChats`` and query every chat by
+    ``remoteJid``. Date bounds are applied locally because Evolution versions
+    differ in their support for timestamp filters.
+    """
+    env = _evolution_env()
+    if env is None or limit <= 0:
+        return []
+    base, key, instance = env
+    headers = {"apikey": key, "Content-Type": "application/json"}
+    try:
+        response = httpx.post(
+            f"{base}/chat/findChats/{instance}",
+            headers=headers,
+            json={},
+            timeout=60,
+        )
+        if response.status_code >= 400:
+            return []
+        chats = _evolution_chats(response.json())
+    except Exception:  # noqa: BLE001
+        return []
+
+    since_dt = _iso_datetime(since)
+    until_dt = _iso_datetime(until)
+    messages_by_id: dict[str, dict[str, Any]] = {}
+    for chat in chats:
+        remote_jid = _whatsapp_remote_jid(chat)
+        if not remote_jid or remote_jid.endswith(
+            ("@broadcast", "@newsletter", "status@broadcast")
+        ):
+            continue
+        try:
+            response = httpx.post(
+                f"{base}/chat/findMessages/{instance}",
+                headers=headers,
+                json={
+                    "where": {"key": {"remoteJid": remote_jid}},
+                    "limit": max(1, per_chat_limit),
+                },
+                timeout=60,
+            )
+            if response.status_code >= 400:
+                continue
+            records = _evolution_records(response.json())
+        except Exception:  # noqa: BLE001
+            continue
+
+        chat_name = _first_non_empty_str(
+            chat.get("pushName"),
+            chat.get("name"),
+            (
+                chat.get("lastMessage", {}).get("pushName")
+                if isinstance(chat.get("lastMessage"), dict)
+                else ""
+            ),
+        )
+        for raw in records:
+            timestamp = _whatsapp_message_datetime(raw)
+            if since_dt and (timestamp is None or timestamp < since_dt):
+                continue
+            if until_dt and (timestamp is None or timestamp >= until_dt):
+                continue
+            message = dict(raw)
+            if chat_name and not _first_non_empty_str(
+                message.get("pushName"), message.get("notifyName")
+            ):
+                message["pushName"] = chat_name
+            identity = _whatsapp_message_identity(message)
+            if identity:
+                messages_by_id[identity] = message
+
+    rows = list(messages_by_id.values())
+    rows.sort(
+        key=lambda item: _whatsapp_message_datetime(item)
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
 def fetch_imessage_recent(*, limit: int = 50, since: str | None = None) -> list[dict[str, Any]]:
     """Read recent local iMessage history.
 

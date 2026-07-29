@@ -19,6 +19,7 @@ from zab.services.conversation_ledger.entity_resolver import (
 )
 from zab.services.conversation_ledger.messaging_targeted import (
     fetch_imessage_recent,
+    fetch_whatsapp_history,
     fetch_whatsapp_recent,
 )
 from zab.services.conversation_ledger.normalizers import (
@@ -521,7 +522,17 @@ def sync_channels(
                     limit=max_per_channel,
                 )
             elif ctype == "whatsapp":
-                raw_items = fetch_whatsapp_recent(limit=max_per_channel)
+                history_cutoff = (
+                    datetime.now(timezone.utc) - timedelta(days=30)
+                ).date().isoformat()
+                if until or since_date < history_cutoff:
+                    raw_items = fetch_whatsapp_history(
+                        limit=max_per_channel,
+                        since=since_date,
+                        until=until,
+                    )
+                else:
+                    raw_items = fetch_whatsapp_recent(limit=max_per_channel)
             elif ctype == "ios_messages":
                 raw_items = fetch_imessage_recent(
                     limit=max_per_channel, since=since_date

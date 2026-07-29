@@ -732,6 +732,81 @@ def test_whatsapp_normalizer_extracts_extended_text_and_timestamp() -> None:
     assert event["timestamp"].startswith("2026-07-26T")
 
 
+def test_whatsapp_history_enumerates_chats_and_applies_date_bounds(
+    monkeypatch,
+) -> None:
+    from zab.services.conversation_ledger.messaging_targeted import (
+        fetch_whatsapp_history,
+    )
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.messaging_targeted._evolution_env",
+        lambda: ("https://evolution.example", "secret", "example-instance"),
+    )
+
+    def fake_post(url, *, headers, json, timeout):
+        assert headers["apikey"] == "secret"
+        if "/findChats/" in url:
+            return Response(
+                [
+                    {
+                        "remoteJid": "33601020304@s.whatsapp.net",
+                        "pushName": "Alice",
+                    },
+                    {"remoteJid": "status@broadcast"},
+                ]
+            )
+        assert json["where"]["key"]["remoteJid"] == "33601020304@s.whatsapp.net"
+        return Response(
+            {
+                "messages": {
+                    "records": [
+                        {
+                            "key": {
+                                "id": "inside-window",
+                                "remoteJid": "33601020304@s.whatsapp.net",
+                            },
+                            "messageTimestamp": 1785064500,
+                            "message": {"conversation": "Signal utile"},
+                        },
+                        {
+                            "key": {
+                                "id": "outside-window",
+                                "remoteJid": "33601020304@s.whatsapp.net",
+                            },
+                            "messageTimestamp": 1704067200,
+                            "message": {"conversation": "Ancien signal"},
+                        },
+                    ]
+                }
+            }
+        )
+
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.messaging_targeted.httpx.post",
+        fake_post,
+    )
+
+    rows = fetch_whatsapp_history(
+        since="2026-01-01",
+        until="2026-08-01",
+        limit=100,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["key"]["id"] == "inside-window"
+    assert rows[0]["pushName"] == "Alice"
+
+
 def test_evolution_preflight_rejects_unresolved_dashlane_references(
     monkeypatch,
 ) -> None:
