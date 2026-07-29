@@ -77,7 +77,7 @@ export function WorkpacketsView() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="workpackets-view">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>

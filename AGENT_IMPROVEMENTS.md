@@ -3,6 +3,16 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-29 - Keep local dashboard data fresh without storage blowups
+
+- Trigger: debug
+- Context: an agent repaired a local dashboard whose interactions and WorkPackets had stopped refreshing after a storage interruption and a checkout relocation.
+- Observation: the health endpoint did not probe the primary store, background jobs retained stale working directories, channel checks blocked initial rendering, WorkPacket discovery was not part of the recurring interaction sync, overlapping conversation imports could hold long transactions, and full structured messages were repeated in every search chunk.
+- Improvement: add a real store readiness probe, load channel bindings before optional live checks, isolate development API ports, make WorkPacket discovery bounded and since-aware, schedule it after interaction sync, serialize conversation imports, make append mode hash-idempotent, and keep structured messages only in the canonical conversation archive.
+- Evidence: backend contract tests, production UI build, focused browser E2E for Interactions and WorkPackets, incremental re-run with zero inserts for unchanged documents, current launchd receipts, and a compacted search index more than forty times smaller than the duplicated form.
+- Status: verified
+- Fix commit: this commit
+
 ## 2026-07-28 - Verify complete cloud workstation decommissioning
 
 - Trigger: CLI

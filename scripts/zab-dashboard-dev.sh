@@ -10,6 +10,41 @@ API_HOST="${ZAB_DASHBOARD_HOST:-127.0.0.1}"
 API_PORT="${ZAB_DASHBOARD_PORT:-8750}"
 UI_HOST="${ZAB_UI_DEV_HOST:-127.0.0.1}"
 UI_PORT="${ZAB_UI_DEV_PORT:-5280}"
+
+port_available() {
+  /usr/bin/python3 - "$1" "$2" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+family = socket.AF_INET6 if ":" in host else socket.AF_INET
+with socket.socket(family, socket.SOCK_STREAM) as sock:
+    try:
+        sock.bind((host, port))
+    except OSError:
+        raise SystemExit(1)
+PY
+}
+
+if ! port_available "$API_HOST" "$API_PORT"; then
+  if [[ -n "${ZAB_DASHBOARD_PORT:-}" ]]; then
+    echo "Port API explicite déjà occupé : ${API_HOST}:${API_PORT}" >&2
+    exit 1
+  fi
+  for candidate in $(seq 8751 8799); do
+    if port_available "$API_HOST" "$candidate"; then
+      API_PORT="$candidate"
+      echo "→ Port 8750 occupé ; API dev isolée sur ${API_PORT}"
+      break
+    fi
+  done
+  if ! port_available "$API_HOST" "$API_PORT"; then
+    echo "Aucun port API disponible entre 8751 et 8799" >&2
+    exit 1
+  fi
+fi
+
 export ZAB_API_ORIGIN="http://${API_HOST}:${API_PORT}"
 export ZAB_UI_DEV_HOST="${UI_HOST}"
 export ZAB_UI_DEV_PORT="${UI_PORT}"

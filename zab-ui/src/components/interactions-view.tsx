@@ -206,27 +206,38 @@ export function InteractionsView({ onOpenTool }: InteractionsViewProps) {
   const [threadLoading, setThreadLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (liveChannelCheck = false) => {
     setLoading(true)
     setError(null)
     try {
-      const [channelPayload, orgPayload] = await Promise.all([
-        apiJson<{ channels: Channel[] }>('/api/channels/check'),
+      const [channelResult, orgResult] = await Promise.allSettled([
+        apiJson<{ channels: Channel[] }>(`/api/channels/check?live=${liveChannelCheck ? 'true' : 'false'}`),
         apiJson<{ organizations: Organization[] }>('/api/interactions/organizations'),
       ])
-      setChannels(channelPayload.channels || [])
-      const orgs = orgPayload.organizations || []
-      setOrganizations(orgs)
-      setSelectedOrg((prev) => prev ?? orgs[0]?.organization_id ?? null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const errors: string[] = []
+      if (channelResult.status === 'fulfilled') {
+        setChannels(channelResult.value.channels || [])
+      } else {
+        setChannels([])
+        errors.push(channelResult.reason instanceof Error ? channelResult.reason.message : String(channelResult.reason))
+      }
+      if (orgResult.status === 'fulfilled') {
+        const orgs = orgResult.value.organizations || []
+        setOrganizations(orgs)
+        setSelectedOrg((prev) => prev ?? orgs[0]?.organization_id ?? null)
+      } else {
+        setOrganizations([])
+        setSelectedOrg(null)
+        errors.push(orgResult.reason instanceof Error ? orgResult.reason.message : String(orgResult.reason))
+      }
+      setError(errors.length ? errors.join(' · ') : null)
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void load()
+    void load(false)
   }, [load])
 
   useEffect(() => {
@@ -337,7 +348,7 @@ export function InteractionsView({ onOpenTool }: InteractionsViewProps) {
             <CardTitle>Channels connectés</CardTitle>
             <CardDescription>Bindings Tool Catalog et dernier statut de vérification.</CardDescription>
           </div>
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => void load(true)} disabled={loading}>
             <RefreshCw className={cn('mr-2 h-4 w-4', loading ? 'animate-spin' : '')} />
             Rafraîchir
           </Button>

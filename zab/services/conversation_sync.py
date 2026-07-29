@@ -6,13 +6,16 @@ Exécution : ``uv run python -m zab.services.conversation_sync --help``
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
 import subprocess
 import sys
-from pathlib import Path
-from typing import Any
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Any, Iterator
 
-from zab.paths import zab_repo_root
+from zab.paths import data_dir, zab_repo_root
 from zab.services.agent_memory_import import sync_agent_memory_to_postgres
 from zab.services.conversations import parse_providers_arg, record_sync_index
 
@@ -36,7 +39,71 @@ def _run_mempalace_conversations() -> int:
     return int(proc.returncode or 0)
 
 
+@contextmanager
+def _conversation_sync_lock() -> Iterator[tuple[bool, dict[str, Any]]]:
+    """Prevent overlapping imports without leaving stale PID locks behind."""
+    lock_path = data_dir() / "locks" / "conversations-sync.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+", encoding="utf-8")
+    acquired = False
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except BlockingIOError:
+            handle.seek(0)
+            try:
+                owner = json.loads(handle.read() or "{}")
+            except json.JSONDecodeError:
+                owner = {}
+            yield False, owner
+            return
+
+        owner = {
+            "pid": os.getpid(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        handle.seek(0)
+        handle.truncate()
+        json.dump(owner, handle, ensure_ascii=False)
+        handle.flush()
+        yield True, owner
+    finally:
+        if acquired:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
 def run_sync(
+    *,
+    dry_run: bool,
+    append: bool,
+    with_mempalace: bool,
+    workspace_storage_cursor: bool,
+    providers: list[str] | None,
+    batch_id: str,
+) -> dict[str, Any]:
+    with _conversation_sync_lock() as (acquired, owner):
+        if not acquired:
+            _print("[zab] Synchronisation conversations déjà en cours ; déclenchement ignoré.")
+            return {
+                "phase": "locked",
+                "status": "skipped",
+                "skipped": True,
+                "reason": "conversation_sync_already_running",
+                "lock_owner": owner,
+            }
+        return _run_sync_unlocked(
+            dry_run=dry_run,
+            append=append,
+            with_mempalace=with_mempalace,
+            workspace_storage_cursor=workspace_storage_cursor,
+            providers=providers,
+            batch_id=batch_id,
+        )
+
+
+def _run_sync_unlocked(
     *,
     dry_run: bool,
     append: bool,
@@ -52,12 +119,6 @@ def run_sync(
         )
 
     prov_set = parse_providers_arg(providers)
-    _print("[zab] Discovery locale…")
-    from zab.services.agent_memory_import import discover_provider_dry_run_summary
-
-    disc = discover_provider_dry_run_summary(providers=prov_set)
-    _print(json.dumps({"phase": "discovery", "data": disc}, ensure_ascii=False))
-
     _print("[zab] Synchronisation Postgres (agents)…")
     summary = sync_agent_memory_to_postgres(
         replace=not append,

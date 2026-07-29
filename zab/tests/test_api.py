@@ -11,6 +11,25 @@ def test_health():
     r = client.get("/api/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+    assert r.json()["dependencies"]["primary_store"]["ok"] is True
+
+
+def test_health_reports_primary_store_failure(monkeypatch):
+    monkeypatch.setattr(
+        "zab.api.routes.postgres_store.probe",
+        lambda: {
+            "backend": "postgres",
+            "configured": True,
+            "connected": False,
+            "ok": False,
+            "error": "unavailable",
+        },
+    )
+    client = TestClient(create_app())
+    r = client.get("/api/health")
+    assert r.status_code == 503
+    assert r.json()["status"] == "degraded"
+    assert r.json()["dependencies"]["primary_store"]["connected"] is False
 
 
 def test_system_check_api():

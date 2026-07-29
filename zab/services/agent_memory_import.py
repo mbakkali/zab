@@ -846,6 +846,15 @@ def _archive_metadata_stub(doc: AgentMemoryDocument, *, content_len: int) -> dic
     return out
 
 
+def _storage_metadata_stub(doc: AgentMemoryDocument, *, content_len: int) -> dict[str, Any]:
+    """Compact metadata copied to documents and chunks.
+
+    Structured messages live in ``zab_conversations.messages``. Repeating them
+    in every search chunk can multiply a transcript by dozens of copies.
+    """
+    return _sanitize_nul(_archive_metadata_stub(doc, content_len=content_len))
+
+
 def _messages_for_archive(doc: AgentMemoryDocument) -> list[dict[str, Any]]:
     if doc.messages:
         return [dict(m) for m in doc.messages]
@@ -887,9 +896,13 @@ def sync_agent_memory_to_postgres(
         "failed_providers": failed_providers,
         "deleted_previous_documents": 0,
         "deleted_previous_archive_rows": 0,
+        "deleted_changed_documents": 0,
+        "deleted_changed_archive_rows": 0,
         "inserted_documents": 0,
         "inserted_chunks": 0,
         "inserted_archive_documents": 0,
+        "unchanged_documents": 0,
+        "unchanged_archive_documents": 0,
     }
     if dry_run:
         return summary
@@ -918,29 +931,77 @@ def sync_agent_memory_to_postgres(
                 doc_id = uuid.uuid4()
                 content = content.replace("\x00", "")
                 h = hashlib.sha256((doc.source + "|" + str(doc.path) + "|" + content).encode("utf-8")).hexdigest()[:32]
-                meta = _sanitize_nul({**doc.metadata, "path": str(doc.path), "chars": len(content)})
+                meta = _storage_metadata_stub(doc, content_len=len(content))
                 if _conversation_doc_should_archive(doc):
                     prov = str(meta.get("conversation_provider") or "unknown")
-                    archive_meta = _archive_metadata_stub(doc, content_len=len(content))
-                    archive_meta["export_batch_id"] = batch_id
-                    conv_uuid = upsert_conversation_archive(
-                        cur,
-                        provider=prov,
-                        source=doc.source,
-                        source_path=str(doc.path),
-                        source_hash=h,
-                        wing=doc.wing,
-                        room=doc.room,
-                        title=_archive_title_from_doc(doc),
-                        started_at=None,
-                        updated_at=_path_updated_at_utc(doc.path),
-                        raw_events=[dict(x) for x in doc.raw_events] if doc.raw_events else [],
-                        messages=_messages_for_archive(doc),
-                        metadata=archive_meta,
-                        synced_at=synced_now,
-                    )
+                    conv_uuid = None
+                    if not replace:
+                        cur.execute(
+                            "SELECT id FROM zab_conversations WHERE source_hash = %s LIMIT 1",
+                            (h,),
+                        )
+                        existing_archive = cur.fetchone()
+                        if existing_archive:
+                            conv_uuid = existing_archive[0]
+                            summary["unchanged_archive_documents"] += 1
+                        else:
+                            cur.execute(
+                                """
+                                DELETE FROM zab_conversations
+                                WHERE provider = %s
+                                  AND source_path = %s
+                                  AND source_hash <> %s
+                                """,
+                                (prov, str(doc.path), h),
+                            )
+                            summary["deleted_changed_archive_rows"] += cur.rowcount
+                    if conv_uuid is None:
+                        archive_meta = _archive_metadata_stub(doc, content_len=len(content))
+                        archive_meta["export_batch_id"] = batch_id
+                        conv_uuid = upsert_conversation_archive(
+                            cur,
+                            provider=prov,
+                            source=doc.source,
+                            source_path=str(doc.path),
+                            source_hash=h,
+                            wing=doc.wing,
+                            room=doc.room,
+                            title=_archive_title_from_doc(doc),
+                            started_at=None,
+                            updated_at=_path_updated_at_utc(doc.path),
+                            raw_events=[dict(x) for x in doc.raw_events] if doc.raw_events else [],
+                            messages=_messages_for_archive(doc),
+                            metadata=archive_meta,
+                            synced_at=synced_now,
+                        )
+                        summary["inserted_archive_documents"] += 1
                     meta["conversation_id"] = str(conv_uuid)
-                    summary["inserted_archive_documents"] += 1
+
+                if not replace:
+                    cur.execute(
+                        """
+                        DELETE FROM mehdi_memory_documents
+                        WHERE source = %s
+                          AND metadata->>'path' = %s
+                          AND content_hash IS DISTINCT FROM %s
+                        """,
+                        (doc.source, str(doc.path), h),
+                    )
+                    summary["deleted_changed_documents"] += cur.rowcount
+                    cur.execute(
+                        """
+                        SELECT id
+                        FROM mehdi_memory_documents
+                        WHERE source = %s AND content_hash = %s
+                        LIMIT 1
+                        """,
+                        (doc.source, h),
+                    )
+                    if cur.fetchone():
+                        summary["unchanged_documents"] += 1
+                        continue
+
+                meta_json = json.dumps(meta, ensure_ascii=False, default=str)
                 cur.execute(
                     """
                     INSERT INTO mehdi_memory_documents (id, source, export_batch_id, wing, room, content_hash, metadata)
@@ -953,7 +1014,7 @@ def sync_agent_memory_to_postgres(
                         doc.wing,
                         doc.room,
                         h,
-                        json.dumps(meta, ensure_ascii=False, default=str),
+                        meta_json,
                     ),
                 )
                 summary["inserted_documents"] += 1
@@ -967,7 +1028,7 @@ def sync_agent_memory_to_postgres(
                             uuid.uuid4(),
                             doc_id,
                             chunk,
-                            json.dumps(meta, ensure_ascii=False, default=str),
+                            meta_json,
                             idx,
                         ),
                     )

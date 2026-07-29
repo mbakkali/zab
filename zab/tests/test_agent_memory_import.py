@@ -12,6 +12,8 @@ from zab.services.agent_memory_import import (
     PROVIDER_GEMINI,
     PROVIDER_HERMES,
     _parse_jsonl_transcript_arrays,
+    _storage_metadata_stub,
+    AgentMemoryDocument,
     collect_agent_memory_documents,
     collect_hermes_documents,
     discover_gemini_cli_status,
@@ -65,6 +67,30 @@ def test_parse_jsonl_transcript_structured_splits_human_and_tool_messages(tmp_pa
     assert '"pattern": "factory"' in messages[2]["content"]
     assert messages[3]["label"] == "Tool result"
     assert messages[0]["timestamp"] == "2026-05-20T16:00:00Z"
+
+
+def test_storage_metadata_does_not_duplicate_structured_messages(tmp_path: Path) -> None:
+    messages = [{"role": "user", "content": "large transcript payload"}]
+    doc = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "conversation.jsonl",
+        content="hello",
+        metadata={
+            "conversation_provider": "codex",
+            "kind": "codex_session",
+            "messages": messages,
+        },
+        messages=tuple(messages),
+    )
+
+    compact = _storage_metadata_stub(doc, content_len=len(doc.content))
+
+    assert "messages" not in compact
+    assert compact["conversation_provider"] == "codex"
+    assert compact["path"] == str(doc.path)
+    assert doc.metadata["messages"] == messages
 
 
 def test_collect_hermes_documents_from_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

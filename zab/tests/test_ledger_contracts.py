@@ -195,6 +195,44 @@ def test_discover_reuses_existing_organization_workstream(monkeypatch) -> None:
     assert payload["updated_count"] == 1
 
 
+def test_discover_resolves_since_and_enforces_candidate_limit(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    clusters = [
+        {
+            "organization_id": f"org_{idx}",
+            "organization_label": f"Organization {idx}",
+            "client_workstream_id": f"cw_{idx}",
+            "client_workstream_label": f"Workstream {idx}",
+            "events": [_event(f"event-{idx}", f"Qualified action {idx}", f"cw_{idx}")],
+        }
+        for idx in range(4)
+    ]
+
+    def fake_list_events(_conn, **kwargs):
+        captured.update(kwargs)
+        return [event for cluster in clusters for event in cluster["events"]]
+
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.workpacket_builder.parse_since",
+        lambda value: "2026-07-15" if value == "14d" else value,
+    )
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.workpacket_builder.list_events",
+        fake_list_events,
+    )
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.workpacket_builder.cluster_events",
+        lambda *_args, **_kwargs: clusters,
+    )
+
+    payload = discover_workpackets(since="14d", min_confidence=0, limit=2, dry_run=True)
+
+    assert captured["since"] == "2026-07-15"
+    assert payload["resolved_since"] == "2026-07-15"
+    assert payload["limit"] == 2
+    assert payload["candidate_count"] == 2
+
+
 def test_eval_hard_suite_passes() -> None:
     payload = run_eval(suite="hard")
     assert payload["hard"]["failed"] == 0

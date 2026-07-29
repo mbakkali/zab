@@ -9,11 +9,10 @@ from zab.services.conversation_ledger.clustering import cluster_events
 from zab.services.conversation_ledger.store import (
     find_workpacket,
     list_events,
-    list_workpackets,
     next_display_id,
-    upsert_projection,
     upsert_workpacket,
 )
+from zab.services.conversation_ledger.sync import parse_since
 from zab.services.conversation_ledger.workpacket import build_from_cluster
 
 SEED_CANDIDATES: list[dict[str, str]] = [
@@ -34,11 +33,13 @@ def discover_workpackets(
     *,
     since: str | None = None,
     min_confidence: float = 0.65,
-    limit: int = 20,
+    limit: int = 7,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    candidate_limit = max(1, min(int(limit), 100))
+    resolved_since = parse_since(since) if since else None
     with local_db.transaction() as conn:
-        events = list_events(conn, limit=1000)
+        events = list_events(conn, since=resolved_since, limit=5000)
     org_ids = sorted({str(e.get("organization_id")) for e in events if e.get("organization_id")})
     clusters: list[dict[str, Any]] = []
     for org_id in org_ids or ["org_unknown"]:
@@ -58,7 +59,7 @@ def discover_workpackets(
         packet = build_from_cluster(cluster)
         packet["confidence"] = round(avg_conf, 2)
         candidates.append(packet)
-        if len(candidates) >= limit:
+        if len(candidates) >= candidate_limit:
             break
 
     stored: list[dict[str, Any]] = []
@@ -90,7 +91,10 @@ def discover_workpackets(
         "contract": "workpacket-discover",
         "contract_version": "1.0",
         "dry_run": dry_run,
+        "since": since,
+        "resolved_since": resolved_since,
         "min_confidence": min_confidence,
+        "limit": candidate_limit,
         "candidate_count": len(candidates),
         "created_count": created_count,
         "updated_count": updated_count,

@@ -33,6 +33,7 @@ from zab.services import (
     jobs,
     memory_db,
     model_runtimes,
+    postgres_store,
     request_logs,
     scan_persist,
     scanner,
@@ -146,8 +147,17 @@ def _require_skills_anchor_or_project_path(path: str) -> None:
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "zab"}
+def health(response: Response) -> dict[str, Any]:
+    storage = postgres_store.probe()
+    ready = bool(storage.get("ok"))
+    response.headers["Cache-Control"] = "no-store"
+    if not ready:
+        response.status_code = 503
+    return {
+        "status": "ok" if ready else "degraded",
+        "service": "zab",
+        "dependencies": {"primary_store": storage},
+    }
 
 
 @router.get("/logs/files")
@@ -304,11 +314,11 @@ def workpacket_intake_api(body: WorkPacketIntakeBody, response: Response) -> dic
 
 
 @router.get("/channels/check")
-def channels_check_api(response: Response) -> dict[str, Any]:
+def channels_check_api(response: Response, live: bool = False) -> dict[str, Any]:
     from zab.services.conversation_ledger.channel_bindings import list_channels
 
     response.headers["Cache-Control"] = "no-store"
-    return list_channels(check=True)
+    return list_channels(check=live)
 
 
 @router.get("/interactions/timeline")

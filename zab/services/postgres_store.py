@@ -537,6 +537,46 @@ def status() -> dict[str, Any]:
     return payload
 
 
+def probe() -> dict[str, Any]:
+    """Cheap readiness probe for the configured primary store."""
+    if not resolve_postgres_dsn():
+        from zab.services import local_db as sqlite_store
+
+        sqlite_status = sqlite_store.status()
+        ready = bool(sqlite_status.get("ok", True))
+        return {
+            "backend": "sqlite",
+            "configured": True,
+            "connected": ready,
+            "ok": ready,
+            "error": sqlite_status.get("error"),
+        }
+
+    try:
+        with _connect(migrate=False) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 AS ok")
+                cur.fetchone()
+        return {
+            "backend": "postgres",
+            "configured": True,
+            "connected": True,
+            "ok": True,
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001 - health must return a structured failure
+        return {
+            "backend": "postgres",
+            "configured": True,
+            "connected": False,
+            "ok": False,
+            "error": {
+                "code": getattr(exc, "code", "primary_store_unavailable"),
+                "message": "Primary store is unavailable.",
+            },
+        }
+
+
 def vacuum() -> dict[str, Any]:
     if not resolve_postgres_dsn():
         from zab.services import local_db as sqlite_store

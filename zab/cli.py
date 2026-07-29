@@ -225,12 +225,18 @@ def workpacket_discover_cmd(
     *,
     since: str = typer.Option("90d", "--since"),
     min_confidence: float = typer.Option(0.65, "--min-confidence"),
+    limit: int = typer.Option(7, "--limit", min=1, max=100),
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     from zab.services.conversation_ledger.workpacket_builder import discover_workpackets
 
-    payload = discover_workpackets(since=since, min_confidence=min_confidence, dry_run=dry_run)
+    payload = discover_workpackets(
+        since=since,
+        min_confidence=min_confidence,
+        limit=limit,
+        dry_run=dry_run,
+    )
     if json_out:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
