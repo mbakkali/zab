@@ -494,6 +494,7 @@ def test_calendar_sync_uses_since_and_all_pages(monkeypatch) -> None:
     )
 
     assert captured["cmd"][-1] == "--all-pages"
+    assert "--all" in captured["cmd"]
     assert "--from" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--from") + 1] == "2026-01-01"
     assert captured["cmd"][captured["cmd"].index("--to") + 1] == "2026-02-01"

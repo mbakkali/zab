@@ -90,6 +90,7 @@ def _run_gog_calendar(
         "calendar",
         "events",
         "list",
+        "--all",
         "-a",
         str(channel.get("account")),
         "-j",
