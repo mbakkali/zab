@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -205,12 +206,20 @@ def fetch_whatsapp_history(
     since_dt = _iso_datetime(since)
     until_dt = _iso_datetime(until)
     messages_by_id: dict[str, dict[str, Any]] = {}
+
+    eligible_chats: list[tuple[dict[str, Any], str]] = []
     for chat in chats:
         remote_jid = _whatsapp_remote_jid(chat)
         if not remote_jid or remote_jid.endswith(
             ("@broadcast", "@newsletter", "status@broadcast")
         ):
             continue
+        eligible_chats.append((chat, remote_jid))
+
+    def fetch_chat(
+        chat_and_jid: tuple[dict[str, Any], str],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        chat, remote_jid = chat_and_jid
         try:
             response = httpx.post(
                 f"{base}/chat/findMessages/{instance}",
@@ -222,34 +231,38 @@ def fetch_whatsapp_history(
                 timeout=60,
             )
             if response.status_code >= 400:
-                continue
-            records = _evolution_records(response.json())
+                return chat, []
+            return chat, _evolution_records(response.json())
         except Exception:  # noqa: BLE001
-            continue
+            return chat, []
 
-        chat_name = _first_non_empty_str(
-            chat.get("pushName"),
-            chat.get("name"),
-            (
-                chat.get("lastMessage", {}).get("pushName")
-                if isinstance(chat.get("lastMessage"), dict)
-                else ""
-            ),
-        )
-        for raw in records:
-            timestamp = _whatsapp_message_datetime(raw)
-            if since_dt and (timestamp is None or timestamp < since_dt):
-                continue
-            if until_dt and (timestamp is None or timestamp >= until_dt):
-                continue
-            message = dict(raw)
-            if chat_name and not _first_non_empty_str(
-                message.get("pushName"), message.get("notifyName")
-            ):
-                message["pushName"] = chat_name
-            identity = _whatsapp_message_identity(message)
-            if identity:
-                messages_by_id[identity] = message
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(eligible_chats)))) as pool:
+        futures = [pool.submit(fetch_chat, item) for item in eligible_chats]
+        results = (future.result() for future in as_completed(futures))
+        for chat, records in results:
+            chat_name = _first_non_empty_str(
+                chat.get("pushName"),
+                chat.get("name"),
+                (
+                    chat.get("lastMessage", {}).get("pushName")
+                    if isinstance(chat.get("lastMessage"), dict)
+                    else ""
+                ),
+            )
+            for raw in records:
+                timestamp = _whatsapp_message_datetime(raw)
+                if since_dt and (timestamp is None or timestamp < since_dt):
+                    continue
+                if until_dt and (timestamp is None or timestamp >= until_dt):
+                    continue
+                message = dict(raw)
+                if chat_name and not _first_non_empty_str(
+                    message.get("pushName"), message.get("notifyName")
+                ):
+                    message["pushName"] = chat_name
+                identity = _whatsapp_message_identity(message)
+                if identity:
+                    messages_by_id[identity] = message
 
     rows = list(messages_by_id.values())
     rows.sort(
