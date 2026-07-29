@@ -3,6 +3,24 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-28 - Verify complete cloud workstation decommissioning
+
+- Trigger: CLI
+- Context: an agent used the generic decommissioning runbook to retire a single-user managed cloud workstation stack and stop all associated recurring costs.
+- Observation: the runbook deleted the workstation, its configuration, and its cluster, but a persistent regional disk configured with `RETAIN` and dedicated synchronization buckets required explicit cleanup outside the script; the private service endpoint disappeared with the cluster.
+- Improvement: extend dry-run and apply modes to discover retained regional disks and optionally remove dedicated buckets only behind explicit flags, including soft-delete policy clearing and propagation checks.
+- Evidence: public `gcloud` list, describe, and delete commands for managed workstations, regional disks, private service endpoints, and dedicated storage buckets.
+- Status: verified
+
+## 2026-07-28 - Restore a side-effect-free workstation status command
+
+- Trigger: CLI
+- Context: an agent audited whether a previously provisioned cloud development workstation was still present before recommending a replacement architecture.
+- Observation: the public workstation service still exposes read-only status logic, but the documented `zab ws status --json` command is absent from the current CLI and exits with `No such command 'status'`.
+- Improvement: restore a `zab ws status --json` alias backed by `get_workstation_status()`, or update every reference and dashboard call to the canonical replacement command.
+- Evidence: `uv run zab ws status --json` exits with code 2; `uv run zab ws --help` should be used to identify the currently exposed surface before implementing the fix.
+- Status: captured
+
 ## 2026-07-27 - Restore Fireflies interaction sync
 
 - Trigger: debug
