@@ -373,6 +373,26 @@ def interactions_reindex_cmd(
     typer.echo(f"Reindexed: {payload.get('updated')}")
 
 
+@interactions_app.command("compact-events")
+def interactions_compact_events_cmd(
+    *,
+    apply: bool = typer.Option(False, "--apply"),
+    archive: bool = typer.Option(True, "--archive/--no-archive"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    from zab.services.conversation_ledger.store import compact_events_jsonl
+
+    payload = compact_events_jsonl(apply=apply, archive=archive)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    mode = "compacted" if apply else "dry-run"
+    typer.echo(
+        f"Events {mode}: count={payload.get('event_count')} "
+        f"reclaimable={payload.get('bytes_reclaimable')}"
+    )
+
+
 @interactions_app.command("enrich-content")
 def interactions_enrich_content_cmd(
     organization: str = typer.Option("", "--organization", help="Organization id or label (empty = all indexed)"),

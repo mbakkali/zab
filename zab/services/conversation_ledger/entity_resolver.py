@@ -13,44 +13,71 @@ DEFAULT_ORGANIZATIONS: dict[str, dict[str, Any]] = {
         "organization_id": org_id,
         "label": profile["label"],
         "domains": list(profile.get("domains") or []),
-        "aliases": list(profile.get("subject_hints") or [])[:4],
+        "aliases": list(
+            dict.fromkeys(
+                [
+                    *(profile.get("subject_hints") or []),
+                    *(profile.get("aliases") or []),
+                ]
+            )
+        ),
     }
     for org_id, profile in ORG_PROFILES.items()
 }
-DEFAULT_ORGANIZATIONS.update(
-    {
-        "org_sogeprom": {
-            "organization_id": "org_sogeprom",
-            "label": "Sogeprom",
-            "domains": ["sogeprom.com"],
-            "aliases": ["sogeprom"],
-        },
-        "org_tikehau": {
-            "organization_id": "org_tikehau",
-            "label": "Tikehau / Sofidy",
-            "domains": ["tikehau.com", "sofidy.com"],
-            "aliases": ["tikehau", "sofidy"],
-        },
-        "org_bnp_expertise": {
-            "organization_id": "org_bnp_expertise",
-            "label": "BNP Expertise",
-            "domains": ["bnpparibas.com", "bnpexpertise.fr"],
-            "aliases": ["bnp expertise", "bnp"],
-        },
-        "org_mastora": {
-            "organization_id": "org_mastora",
-            "label": "Mastora",
-            "domains": [],
-            "aliases": ["mastora"],
-        },
-        "org_arthur_loyd": {
-            "organization_id": "org_arthur_loyd",
-            "label": "Arthur Loyd",
-            "domains": ["arthur-loyd.com"],
-            "aliases": ["arthur loyd", "propuls'immo", "propuls immo"],
-        },
+_LEGACY_ORGANIZATIONS = {
+    "org_sogeprom": {
+        "organization_id": "org_sogeprom",
+        "label": "Sogeprom",
+        "domains": ["sogeprom.com"],
+        "aliases": ["sogeprom"],
+    },
+    "org_tikehau": {
+        "organization_id": "org_tikehau",
+        "label": "Tikehau / Sofidy",
+        "domains": ["tikehau.com", "sofidy.com"],
+        "aliases": ["tikehau", "sofidy"],
+    },
+    "org_bnp_expertise": {
+        "organization_id": "org_bnp_expertise",
+        "label": "BNP Expertise",
+        "domains": ["bnpparibas.com", "bnpexpertise.fr"],
+        "aliases": ["bnp expertise", "bnp"],
+    },
+    "org_mastora": {
+        "organization_id": "org_mastora",
+        "label": "Mastora",
+        "domains": [],
+        "aliases": ["mastora"],
+    },
+    "org_arthur_loyd": {
+        "organization_id": "org_arthur_loyd",
+        "label": "Arthur Loyd",
+        "domains": ["arthur-loyd.com"],
+        "aliases": ["arthur loyd", "propuls'immo", "propuls immo"],
+    },
+}
+for _legacy_org_id, _legacy_org in _LEGACY_ORGANIZATIONS.items():
+    _current_org = DEFAULT_ORGANIZATIONS.get(_legacy_org_id) or {}
+    DEFAULT_ORGANIZATIONS[_legacy_org_id] = {
+        **_legacy_org,
+        **_current_org,
+        "domains": list(
+            dict.fromkeys(
+                [
+                    *(_legacy_org.get("domains") or []),
+                    *(_current_org.get("domains") or []),
+                ]
+            )
+        ),
+        "aliases": list(
+            dict.fromkeys(
+                [
+                    *(_legacy_org.get("aliases") or []),
+                    *(_current_org.get("aliases") or []),
+                ]
+            )
+        ),
     }
-)
 
 WORKSTREAM_SEEDS: dict[str, dict[str, Any]] = {}
 for _org_id, _profile in ORG_PROFILES.items():
@@ -117,7 +144,39 @@ def _extract_domains(value: str) -> list[str]:
     return domains
 
 
-def resolve_organization(*, text: str = "", email: str | None = None) -> tuple[str | None, str | None, float, list[str]]:
+def extract_contact_addresses(event: dict[str, Any]) -> set[str]:
+    actor = event.get("actor") or {}
+    values = [
+        str(actor.get("email") or ""),
+        str(actor.get("display_name") or ""),
+        *(str(item) for item in (event.get("counterparties") or []) if item),
+    ]
+    source_account = str(event.get("source_account") or "").strip().lower()
+    public_mail_domains = {
+        "gmail.com",
+        "googlemail.com",
+        "hotmail.com",
+        "outlook.com",
+        "yahoo.com",
+        "yahoo.fr",
+    }
+    addresses: set[str] = set()
+    for value in values:
+        for match in re.finditer(r"[\w.+-]+@[\w.-]+", value):
+            address = match.group(0).lower().rstrip(".,;:>")
+            domain = address.rsplit("@", 1)[-1]
+            if (
+                domain
+                and address != source_account
+                and (domain not in INTERNAL_DOMAINS or domain in public_mail_domains)
+            ):
+                addresses.add(address)
+    return addresses
+
+
+def resolve_organization(
+    *, text: str = "", email: str | None = None
+) -> tuple[str | None, str | None, float, list[str]]:
     domains = _extract_domains(" ".join(part for part in (email or "", text) if part))
     normalized = _normalize(text)
     evidence: list[str] = []
@@ -148,10 +207,14 @@ def resolve_organization(*, text: str = "", email: str | None = None) -> tuple[s
     return None, None, 0.0, evidence
 
 
-def resolve_workstream(*, text: str, organization_id: str | None) -> tuple[str | None, str | None, float, list[str]]:
+def resolve_workstream(
+    *, text: str, organization_id: str | None
+) -> tuple[str | None, str | None, float, list[str]]:
     from zab.services.conversation_ledger.clustering import classify_workstream
 
-    ws_id, ws_label, confidence = classify_workstream(text, organization_id=organization_id)
+    ws_id, ws_label, confidence = classify_workstream(
+        text, organization_id=organization_id
+    )
     if ws_id == "unclassified":
         return None, None, 0.0, []
     seed = WORKSTREAM_SEEDS.get(ws_id)
@@ -195,7 +258,9 @@ def build_entity_links(event: dict[str, Any]) -> list[dict[str, Any]]:
         )
         if part
     )
-    org_id, org_label, org_conf, org_evidence = resolve_organization(text=text, email=email)
+    org_id, org_label, org_conf, org_evidence = resolve_organization(
+        text=text, email=email
+    )
     links: list[dict[str, Any]] = []
     if org_id:
         links.append(
@@ -210,7 +275,9 @@ def build_entity_links(event: dict[str, Any]) -> list[dict[str, Any]]:
         )
         event["organization_id"] = org_id
         event["organization_label"] = org_label
-    ws_id, ws_label, ws_conf, ws_evidence = resolve_workstream(text=text, organization_id=org_id)
+    ws_id, ws_label, ws_conf, ws_evidence = resolve_workstream(
+        text=text, organization_id=org_id
+    )
     if ws_id:
         links.append(
             {

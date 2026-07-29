@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import gzip
 import json
+import os
+import shutil
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from zab.paths import data_dir
 from zab.services import local_db
@@ -47,9 +50,60 @@ def append_event_jsonl(event: dict[str, Any]) -> None:
     _append_jsonl(events_jsonl_path(), event)
 
 
+def compact_events_jsonl(
+    *, apply: bool = False, archive: bool = True
+) -> dict[str, Any]:
+    """Rewrite the append journal from canonical rows, with an optional gzip backup."""
+    path = events_jsonl_path()
+    current_bytes = path.stat().st_size if path.exists() else 0
+    with local_db.transaction() as conn:
+        rows = conn.execute(
+            "SELECT payload_json FROM ledger_events ORDER BY timestamp, event_id"
+        ).fetchall()
+    canonical_lines = [
+        json.dumps(json.loads(row[0]), ensure_ascii=False, sort_keys=True) + "\n"
+        for row in rows
+    ]
+    canonical_bytes = sum(len(line.encode("utf-8")) for line in canonical_lines)
+    payload: dict[str, Any] = {
+        "contract": "conversation-ledger-events-compact",
+        "dry_run": not apply,
+        "event_count": len(rows),
+        "bytes_before": current_bytes,
+        "bytes_after": canonical_bytes,
+        "bytes_reclaimable": max(current_bytes - canonical_bytes, 0),
+        "path": str(path),
+        "archive_path": None,
+    }
+    if not apply:
+        return payload
+
+    tmp_path = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            handle.writelines(canonical_lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if archive and path.exists() and current_bytes:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            archive_path = path.with_name(f"{path.name}.{timestamp}.gz")
+            with (
+                path.open("rb") as source,
+                gzip.open(archive_path, "wb", compresslevel=6) as target,
+            ):
+                shutil.copyfileobj(source, target, length=1024 * 1024)
+            payload["archive_path"] = str(archive_path)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    return payload
+
+
 def upsert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> dict[str, Any]:
     payload = dict(event)
     existing_row = None
+    existing: dict[str, Any] | None = None
     if payload.get("source") and payload.get("native_id"):
         existing_row = conn.execute(
             "SELECT payload_json FROM ledger_events WHERE source = ? AND native_id = ?",
@@ -57,17 +111,17 @@ def upsert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> dict[str, A
         ).fetchone()
     if existing_row:
         existing = json.loads(existing_row[0])
+        for key in ("body", "counterparties", "created_at"):
+            if not payload.get(key) and existing.get(key):
+                payload[key] = existing[key]
         for key in (
-            "body",
-            "counterparties",
             "entity_links",
             "organization_id",
             "organization_label",
             "client_workstream_id",
             "client_workstream_label",
-            "created_at",
         ):
-            if not payload.get(key) and existing.get(key):
+            if key not in payload and existing.get(key):
                 payload[key] = existing[key]
 
     errors = validate_interaction_event(payload)
@@ -77,6 +131,7 @@ def upsert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> dict[str, A
     payload.setdefault("contract_version", CONTRACT_VERSION)
     payload.setdefault("created_at", utc_now())
     entity_links = payload.pop("entity_links", [])
+    stored_payload = {**payload, "entity_links": entity_links}
     conn.execute(
         """
         INSERT INTO ledger_events (event_id, source, native_id, channel_id, timestamp, payload_json, created_at)
@@ -92,16 +147,19 @@ def upsert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> dict[str, A
             payload["native_id"],
             payload.get("channel_id"),
             payload.get("timestamp"),
-            json.dumps({**payload, "entity_links": entity_links}, ensure_ascii=False),
+            json.dumps(stored_payload, ensure_ascii=False),
             payload["created_at"],
         ),
     )
-    append_event_jsonl({**payload, "entity_links": entity_links})
-    return {**payload, "entity_links": entity_links}
+    if existing != stored_payload:
+        append_event_jsonl(stored_payload)
+    return stored_payload
 
 
 def get_event(conn: sqlite3.Connection, event_id: str) -> dict[str, Any] | None:
-    row = conn.execute("SELECT payload_json FROM ledger_events WHERE event_id = ?", (event_id,)).fetchone()
+    row = conn.execute(
+        "SELECT payload_json FROM ledger_events WHERE event_id = ?", (event_id,)
+    ).fetchone()
     if not row:
         return None
     return json.loads(row[0])
@@ -125,14 +183,16 @@ def list_events(
         links = event.get("entity_links") or []
         if organization_id:
             org_match = any(
-                link.get("entity_type") == "organization" and link.get("entity_id") == organization_id
+                link.get("entity_type") == "organization"
+                and link.get("entity_id") == organization_id
                 for link in links
             )
             if not org_match and event.get("organization_id") != organization_id:
                 continue
         if client_workstream_id:
             ws_match = any(
-                link.get("entity_type") == "client_workstream" and link.get("entity_id") == client_workstream_id
+                link.get("entity_type") == "client_workstream"
+                and link.get("entity_id") == client_workstream_id
                 for link in links
             )
             event_ws = event.get("client_workstream_id")
@@ -140,7 +200,9 @@ def list_events(
                 continue
             if not ws_match and event_ws == client_workstream_id:
                 # Accept direct field only when subject keywords support the workstream.
-                from zab.services.conversation_ledger.clustering import classify_workstream
+                from zab.services.conversation_ledger.clustering import (
+                    classify_workstream,
+                )
 
                 inferred, _, conf = classify_workstream(
                     f"{event.get('title')} {event.get('snippet')}"
@@ -155,7 +217,9 @@ def list_events(
     return filtered
 
 
-def upsert_workpacket(conn: sqlite3.Connection, packet: dict[str, Any]) -> dict[str, Any]:
+def upsert_workpacket(
+    conn: sqlite3.Connection, packet: dict[str, Any]
+) -> dict[str, Any]:
     errors = validate_workpacket_canonical(packet)
     if errors:
         raise ValueError("; ".join(errors))
@@ -197,8 +261,13 @@ def next_display_id(conn: sqlite3.Connection) -> str:
     return f"ZWP-{count + 1:04d}"
 
 
-def get_workpacket(conn: sqlite3.Connection, workpacket_id: str) -> dict[str, Any] | None:
-    row = conn.execute("SELECT payload_json FROM ledger_workpackets WHERE workpacket_id = ?", (workpacket_id,)).fetchone()
+def get_workpacket(
+    conn: sqlite3.Connection, workpacket_id: str
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT payload_json FROM ledger_workpackets WHERE workpacket_id = ?",
+        (workpacket_id,),
+    ).fetchone()
     if not row:
         return None
     return json.loads(row[0])
@@ -254,7 +323,9 @@ def list_workpackets(
     return [json.loads(r[0]) for r in rows]
 
 
-def upsert_projection(conn: sqlite3.Connection, projection: dict[str, Any]) -> dict[str, Any]:
+def upsert_projection(
+    conn: sqlite3.Connection, projection: dict[str, Any]
+) -> dict[str, Any]:
     errors = validate_projection_state(projection)
     if errors:
         raise ValueError("; ".join(errors))
@@ -282,7 +353,9 @@ def upsert_projection(conn: sqlite3.Connection, projection: dict[str, Any]) -> d
     return payload
 
 
-def get_projection(conn: sqlite3.Connection, workpacket_id: str, target: str) -> dict[str, Any] | None:
+def get_projection(
+    conn: sqlite3.Connection, workpacket_id: str, target: str
+) -> dict[str, Any] | None:
     row = conn.execute(
         "SELECT payload_json FROM ledger_projection_states WHERE workpacket_id = ? AND target = ?",
         (workpacket_id, target),
@@ -292,7 +365,9 @@ def get_projection(conn: sqlite3.Connection, workpacket_id: str, target: str) ->
     return json.loads(row[0])
 
 
-def list_projections(conn: sqlite3.Connection, workpacket_id: str) -> list[dict[str, Any]]:
+def list_projections(
+    conn: sqlite3.Connection, workpacket_id: str
+) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT payload_json FROM ledger_projection_states WHERE workpacket_id = ? ORDER BY target",
         (workpacket_id,),
@@ -301,13 +376,17 @@ def list_projections(conn: sqlite3.Connection, workpacket_id: str) -> list[dict[
 
 
 def get_source_cursors(conn: sqlite3.Connection) -> dict[str, Any]:
-    row = conn.execute("SELECT value_json FROM sync_meta WHERE key = ?", (CURSORS_KEY,)).fetchone()
+    row = conn.execute(
+        "SELECT value_json FROM sync_meta WHERE key = ?", (CURSORS_KEY,)
+    ).fetchone()
     if not row:
         return {}
     return json.loads(row[0])
 
 
-def set_source_cursor(conn: sqlite3.Connection, channel_id: str, cursor: dict[str, Any]) -> None:
+def set_source_cursor(
+    conn: sqlite3.Connection, channel_id: str, cursor: dict[str, Any]
+) -> None:
     cursors = get_source_cursors(conn)
     cursors[channel_id] = {**cursor, "updated_at": utc_now()}
     conn.execute(

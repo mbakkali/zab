@@ -26,43 +26,98 @@ def _safe_detail(success_label: str, code: int, out: str) -> str:
 
 def check_gog_gmail(account: str) -> dict[str, Any]:
     code, out = _run(
-        ["gog", "gmail", "messages", "search", "is:unread", "-a", account, "-j", "--no-input", "--max", "1"]
+        [
+            "gog",
+            "gmail",
+            "messages",
+            "search",
+            "is:unread",
+            "-a",
+            account,
+            "-j",
+            "--no-input",
+            "--max",
+            "1",
+        ]
     )
-    return {"account": account, "status": "ok" if code == 0 else "error", "detail": _safe_detail("gog_gmail_ok", code, out)}
+    return {
+        "account": account,
+        "status": "ok" if code == 0 else "error",
+        "detail": _safe_detail("gog_gmail_ok", code, out),
+    }
 
 
 def check_gog_calendar(account: str) -> dict[str, Any]:
-    code, out = _run(["gog", "calendar", "events", "list", "-a", account, "-j", "--no-input"])
-    return {"account": account, "status": "ok" if code == 0 else "error", "detail": _safe_detail("gog_calendar_ok", code, out)}
+    code, out = _run(
+        ["gog", "calendar", "events", "list", "-a", account, "-j", "--no-input"]
+    )
+    return {
+        "account": account,
+        "status": "ok" if code == 0 else "error",
+        "detail": _safe_detail("gog_calendar_ok", code, out),
+    }
 
 
 def check_fireflies() -> dict[str, Any]:
     load_standard_dotenvs_once()
     key = os.environ.get("FIREFLIES_API_KEY", "").strip()
-    return {"status": "ok" if key else "degraded", "detail": "FIREFLIES_API_KEY set" if key else "missing API key"}
+    return {
+        "status": "ok" if key else "degraded",
+        "detail": "FIREFLIES_API_KEY set" if key else "missing API key",
+    }
 
 
 def check_evolution() -> dict[str, Any]:
     load_standard_dotenvs_once()
-    missing = [key for key in ("EVOLUTION_API_URL", "EVOLUTION_API_KEY") if not os.environ.get(key, "").strip()]
-    if not (os.environ.get("EVOLUTION_INSTANCE", "").strip() or os.environ.get("EVOLUTION_INSTANCE_NAME", "").strip()):
+    missing = [
+        key
+        for key in ("EVOLUTION_API_URL", "EVOLUTION_API_KEY")
+        if not os.environ.get(key, "").strip()
+    ]
+    if not (
+        os.environ.get("EVOLUTION_INSTANCE", "").strip()
+        or os.environ.get("EVOLUTION_INSTANCE_NAME", "").strip()
+    ):
         missing.append("EVOLUTION_INSTANCE")
+    unresolved = [
+        key
+        for key in (
+            "EVOLUTION_API_URL",
+            "EVOLUTION_API_KEY",
+            "EVOLUTION_INSTANCE",
+            "EVOLUTION_INSTANCE_NAME",
+        )
+        if os.environ.get(key, "").strip().startswith("dl://")
+    ]
+    if unresolved:
+        return {
+            "status": "error",
+            "detail": f"unresolved Dashlane references: {','.join(unresolved)}",
+        }
     return {
         "status": "ok" if not missing else "degraded",
-        "detail": "Evolution API env set" if not missing else f"missing {','.join(missing)}",
+        "detail": "Evolution API env set"
+        if not missing
+        else f"missing {','.join(missing)}",
     }
 
 
 def check_linear() -> dict[str, Any]:
     load_standard_dotenvs_once()
     key = os.environ.get("LINEAR_API_KEY", "").strip()
-    return {"status": "ok" if key else "degraded", "detail": "LINEAR_API_KEY set" if key else "missing API key"}
+    return {
+        "status": "ok" if key else "degraded",
+        "detail": "LINEAR_API_KEY set" if key else "missing API key",
+    }
 
 
 def check_attio() -> dict[str, Any]:
     load_standard_dotenvs_once()
     key = os.environ.get("ATTIO_API_KEY", "").strip()
-    return {"status": "ok" if key else "degraded", "detail": "ATTIO_API_KEY set" if key else "missing API key"}
+    return {
+        "status": "ok" if key else "degraded",
+        "detail": "ATTIO_API_KEY set" if key else "missing API key",
+    }
 
 
 def check_imessage() -> dict[str, Any]:

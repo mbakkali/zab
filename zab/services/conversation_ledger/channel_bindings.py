@@ -9,7 +9,11 @@ from typing import Any
 
 from zab.services import connectors_check, tool_catalog
 from zab.services import tool_checks
-from zab.services.conversation_ledger.schemas import CHANNEL_BINDING_CONTRACT, CONTRACT_VERSION, validate_channel_binding
+from zab.services.conversation_ledger.schemas import (
+    CHANNEL_BINDING_CONTRACT,
+    CONTRACT_VERSION,
+    validate_channel_binding,
+)
 from zab.services.dotenv_locate import load_standard_dotenvs_once
 from zab.user_config import load_user_config
 
@@ -131,7 +135,19 @@ def _gog_smoke(binding: dict[str, Any]) -> tuple[str, str]:
     account = str(binding.get("account") or "")
     ctype = str(binding.get("channel_type") or "")
     if ctype == "gmail":
-        cmd = ["gog", "gmail", "messages", "search", "is:unread", "-a", account, "-j", "--no-input", "--max", "1"]
+        cmd = [
+            "gog",
+            "gmail",
+            "messages",
+            "search",
+            "is:unread",
+            "-a",
+            account,
+            "-j",
+            "--no-input",
+            "--max",
+            "1",
+        ]
     elif ctype == "calendar":
         cmd = ["gog", "calendar", "events", "list", "-a", account, "-j", "--no-input"]
     else:
@@ -158,10 +174,28 @@ def _evolution_smoke() -> tuple[str, str]:
     load_standard_dotenvs_once()
     required = ("EVOLUTION_API_URL", "EVOLUTION_API_KEY")
     missing = [key for key in required if not os.environ.get(key, "").strip()]
-    if not (os.environ.get("EVOLUTION_INSTANCE", "").strip() or os.environ.get("EVOLUTION_INSTANCE_NAME", "").strip()):
+    if not (
+        os.environ.get("EVOLUTION_INSTANCE", "").strip()
+        or os.environ.get("EVOLUTION_INSTANCE_NAME", "").strip()
+    ):
         missing.append("EVOLUTION_INSTANCE")
     if missing:
         return "degraded", f"evolution_env_missing={','.join(missing)}"
+    unresolved = [
+        key
+        for key in (
+            "EVOLUTION_API_URL",
+            "EVOLUTION_API_KEY",
+            "EVOLUTION_INSTANCE",
+            "EVOLUTION_INSTANCE_NAME",
+        )
+        if os.environ.get(key, "").strip().startswith("dl://")
+    ]
+    if unresolved:
+        return (
+            "error",
+            f"evolution_dashlane_reference_unresolved={','.join(unresolved)}",
+        )
     return "ok", "evolution_env=present"
 
 
@@ -170,7 +204,9 @@ def _imessage_smoke() -> tuple[str, str]:
         from zab.services.conversation_ledger.preflight import check_imessage
 
         result = check_imessage()
-        return str(result.get("status") or "unknown"), f"imessage={result.get('detail')}"
+        return str(
+            result.get("status") or "unknown"
+        ), f"imessage={result.get('detail')}"
     except Exception as exc:  # noqa: BLE001
         return "degraded", f"imessage_check_error={exc}"
 
@@ -202,8 +238,14 @@ def _transport_smoke(binding: dict[str, Any]) -> tuple[str, str]:
 
 def load_channel_bindings() -> list[dict[str, Any]]:
     cfg = load_user_config()
-    section = cfg.get("conversation_ledger") if isinstance(cfg.get("conversation_ledger"), dict) else {}
-    channels = section.get("channels") if isinstance(section.get("channels"), list) else None
+    section = (
+        cfg.get("conversation_ledger")
+        if isinstance(cfg.get("conversation_ledger"), dict)
+        else {}
+    )
+    channels = (
+        section.get("channels") if isinstance(section.get("channels"), list) else None
+    )
     raw = channels if channels else DEFAULT_BINDINGS
     bindings: list[dict[str, Any]] = []
     for item in raw:
@@ -212,7 +254,9 @@ def load_channel_bindings() -> list[dict[str, Any]]:
         binding = dict(item)
         binding.setdefault("contract", CHANNEL_BINDING_CONTRACT)
         binding.setdefault("contract_version", CONTRACT_VERSION)
-        binding.setdefault("tool_catalog_ref", f"tools.catalog:{binding.get('tool_id')}")
+        binding.setdefault(
+            "tool_catalog_ref", f"tools.catalog:{binding.get('tool_id')}"
+        )
         bindings.append(binding)
     return bindings
 
@@ -285,7 +329,12 @@ def list_channels(*, check: bool = True) -> dict[str, Any]:
         "contract": "conversation-ledger-channels",
         "contract_version": CONTRACT_VERSION,
         "generated_at_utc": _now(),
-        "summary": {"total": len(checked), "ok": ok, "degraded": degraded, "error": error},
+        "summary": {
+            "total": len(checked),
+            "ok": ok,
+            "degraded": degraded,
+            "error": error,
+        },
         "channels": checked,
     }
 

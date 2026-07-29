@@ -16,16 +16,56 @@ from zab.services.conversation_ledger.sync import parse_since
 from zab.services.conversation_ledger.workpacket import build_from_cluster
 
 SEED_CANDIDATES: list[dict[str, str]] = [
-    {"organization_id": "org_arp_astrance", "client_workstream_id": "cw_audit_crm", "label": "ARP Astrance - Audit CRM"},
-    {"organization_id": "org_arp_astrance", "client_workstream_id": "cw_explorateurs_ia", "label": "ARP Astrance - Explorateurs IA"},
-    {"organization_id": "org_arp_astrance", "client_workstream_id": "cw_securite_deessi", "label": "ARP Astrance - Sécurité Deessi"},
-    {"organization_id": "org_carrefour", "client_workstream_id": "cw_delivery", "label": "Carrefour - Delivery"},
-    {"organization_id": "org_sogeprom", "client_workstream_id": "cw_agent_ia", "label": "Sogeprom - Agent IA foncier"},
-    {"organization_id": "org_tikehau", "client_workstream_id": "cw_relance", "label": "Tikehau/Sofidy - Relance proposition"},
-    {"organization_id": "org_bnp_expertise", "client_workstream_id": "cw_demo", "label": "BNP Expertise - Demo agent IA"},
-    {"organization_id": "org_agile_immo", "client_workstream_id": "cw_maintenance", "label": "Agile Immo - Step 2 maintenance"},
-    {"organization_id": "org_mastora", "client_workstream_id": "cw_formation", "label": "Mastora - Formations"},
-    {"organization_id": "org_arthur_loyd", "client_workstream_id": "cw_formation_facturation", "label": "Arthur Loyd - Formation et facturation"},
+    {
+        "organization_id": "org_arp_astrance",
+        "client_workstream_id": "cw_audit_crm",
+        "label": "ARP Astrance - Audit CRM",
+    },
+    {
+        "organization_id": "org_arp_astrance",
+        "client_workstream_id": "cw_explorateurs_ia",
+        "label": "ARP Astrance - Explorateurs IA",
+    },
+    {
+        "organization_id": "org_arp_astrance",
+        "client_workstream_id": "cw_securite_deessi",
+        "label": "ARP Astrance - Sécurité Deessi",
+    },
+    {
+        "organization_id": "org_carrefour",
+        "client_workstream_id": "cw_delivery",
+        "label": "Carrefour - Delivery",
+    },
+    {
+        "organization_id": "org_sogeprom",
+        "client_workstream_id": "cw_agent_ia",
+        "label": "Sogeprom - Agent IA foncier",
+    },
+    {
+        "organization_id": "org_tikehau",
+        "client_workstream_id": "cw_relance",
+        "label": "Tikehau/Sofidy - Relance proposition",
+    },
+    {
+        "organization_id": "org_bnp_expertise",
+        "client_workstream_id": "cw_demo",
+        "label": "BNP Expertise - Demo agent IA",
+    },
+    {
+        "organization_id": "org_agile_immo",
+        "client_workstream_id": "cw_maintenance",
+        "label": "Agile Immo - Step 2 maintenance",
+    },
+    {
+        "organization_id": "org_mastora",
+        "client_workstream_id": "cw_formation",
+        "label": "Mastora - Formations",
+    },
+    {
+        "organization_id": "org_arthur_loyd",
+        "client_workstream_id": "cw_formation_facturation",
+        "label": "Arthur Loyd - Formation et facturation",
+    },
 ]
 
 
@@ -40,27 +80,63 @@ def discover_workpackets(
     resolved_since = parse_since(since) if since else None
     with local_db.transaction() as conn:
         events = list_events(conn, since=resolved_since, limit=5000)
-    org_ids = sorted({str(e.get("organization_id")) for e in events if e.get("organization_id")})
+    org_ids = sorted(
+        {str(e.get("organization_id")) for e in events if e.get("organization_id")}
+    )
     clusters: list[dict[str, Any]] = []
     for org_id in org_ids or ["org_unknown"]:
-        org_events = [e for e in events if str(e.get("organization_id") or "org_unknown") == org_id]
+        org_events = [
+            e
+            for e in events
+            if str(e.get("organization_id") or "org_unknown") == org_id
+        ]
         clusters.extend(cluster_events(org_events, organization_id=org_id))
-    candidates: list[dict[str, Any]] = []
+    discovered: list[dict[str, Any]] = []
     for cluster in clusters:
         if cluster.get("client_workstream_id") == "unclassified":
             continue
-        avg_conf = sum(float(e.get("workstream_confidence") or 0) for e in cluster.get("events") or []) / max(
-            len(cluster.get("events") or []), 1
-        )
+        avg_conf = sum(
+            float(e.get("workstream_confidence") or 0)
+            for e in cluster.get("events") or []
+        ) / max(len(cluster.get("events") or []), 1)
         if avg_conf < min_confidence:
             continue
         cluster["organization_label"] = _org_label(cluster)
         cluster["organization_id"] = _org_id(cluster)
         packet = build_from_cluster(cluster)
         packet["confidence"] = round(avg_conf, 2)
-        candidates.append(packet)
-        if len(candidates) >= candidate_limit:
-            break
+        discovered.append(packet)
+
+    existing_keys: set[tuple[str, str]] = set()
+    with local_db.transaction() as conn:
+        for packet in discovered:
+            org_id = str(packet.get("organization_id") or "")
+            workstream_id = str(packet.get("client_workstream_id") or "")
+            if find_workpacket(
+                conn,
+                organization_id=org_id,
+                client_workstream_id=workstream_id,
+            ):
+                existing_keys.add((org_id, workstream_id))
+    new_candidates = [
+        packet
+        for packet in discovered
+        if (
+            str(packet.get("organization_id") or ""),
+            str(packet.get("client_workstream_id") or ""),
+        )
+        not in existing_keys
+    ]
+    existing_candidates = [
+        packet
+        for packet in discovered
+        if (
+            str(packet.get("organization_id") or ""),
+            str(packet.get("client_workstream_id") or ""),
+        )
+        in existing_keys
+    ]
+    candidates = [*new_candidates, *existing_candidates][:candidate_limit]
 
     stored: list[dict[str, Any]] = []
     created_count = 0
@@ -75,8 +151,12 @@ def discover_workpackets(
                 )
                 if existing:
                     packet["workpacket_id"] = existing["workpacket_id"]
-                    packet["display_id"] = existing.get("display_id") or next_display_id(conn)
-                    packet["created_at"] = existing.get("created_at") or packet.get("created_at")
+                    packet["display_id"] = existing.get(
+                        "display_id"
+                    ) or next_display_id(conn)
+                    packet["created_at"] = existing.get("created_at") or packet.get(
+                        "created_at"
+                    )
                     created = False
                     updated_count += 1
                 else:
@@ -96,6 +176,8 @@ def discover_workpackets(
         "min_confidence": min_confidence,
         "limit": candidate_limit,
         "candidate_count": len(candidates),
+        "eligible_count": len(discovered),
+        "new_candidate_count": len(new_candidates),
         "created_count": created_count,
         "updated_count": updated_count,
         "candidates": stored or candidates,
@@ -158,7 +240,9 @@ def reconstruct_seed_candidates(*, dry_run: bool = True) -> dict[str, Any]:
             if existing:
                 packet["workpacket_id"] = existing["workpacket_id"]
                 packet["display_id"] = existing.get("display_id") or display_id
-                packet["created_at"] = existing.get("created_at") or packet.get("created_at")
+                packet["created_at"] = existing.get("created_at") or packet.get(
+                    "created_at"
+                )
             if not dry_run:
                 results.append(upsert_workpacket(conn, packet))
             else:
@@ -210,5 +294,7 @@ def format_workpacket_markdown(packet: dict[str, Any]) -> str:
     for gate in packet.get("gates") or []:
         lines.append(f"- {gate}")
     proj = (packet.get("projections") or {}).get("linear") or {}
-    lines.extend(["", "## Projections", f"- Linear: {proj.get('status', 'not_projected')}"])
+    lines.extend(
+        ["", "## Projections", f"- Linear: {proj.get('status', 'not_projected')}"]
+    )
     return "\n".join(lines) + "\n"

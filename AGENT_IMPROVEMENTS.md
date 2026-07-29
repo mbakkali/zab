@@ -3,6 +3,16 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-29 - Make historical interaction backfills classifiable and storage-safe
+
+- Trigger: debug
+- Context: an agent prepared a historical Conversation Ledger backfill after restoring the recurring local sync.
+- Observation: organization matching could not load private local profiles, related messages were not propagated through unique threads or known contacts, calendar and meeting connectors did not page through the requested history, unresolved secret references produced a false-green messaging channel, and every unchanged reindex appended the full event set to the JSONL journal.
+- Improvement: load organization/workstream profiles from a private user-level YAML file, preserve public-repository separation, add bounded history-assisted resolution, index calendar attendees, honor historical windows and pagination, reject unresolved secret references, make event journaling change-idempotent, add recoverable journal compaction, and prioritize new WorkPacket candidates within the anti-flood limit.
+- Evidence: focused ledger and real-case tests, lint/format checks, isolated database reclassification, repeated reindex with zero journal growth on the second pass, and a historical WorkPacket dry-run.
+- Status: verified
+- Fix commit: this commit
+
 ## 2026-07-29 - Keep local dashboard data fresh without storage blowups
 
 - Trigger: debug

@@ -54,6 +54,23 @@ tracked_env_extra: []
 #       enabled: true
 #       read_capability: search
 #       write_capability: none
+#
+# Private organization matching belongs outside the public repository:
+# ~/.config/zab/conversation-ledger-entities.yaml
+#
+# internal_domains:
+#   - your-company.example
+# organizations:
+#   org_example_client:
+#     label: Example Client
+#     domains: [client.example]
+#     subject_hints: [example client]
+#     aliases: [example]
+#     gmail_query: 'from:client.example OR to:client.example'
+#     workstreams:
+#       cw_example_delivery:
+#         label: Delivery
+#         keywords: [delivery, rollout, steering committee]
 # communication_channels:
 #   - id: work-email
 #     label: Work Email

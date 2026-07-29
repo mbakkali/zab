@@ -92,7 +92,12 @@ def _gmail_body(msg: dict[str, Any]) -> str:
         return body
     payload = msg.get("message")
     if isinstance(payload, dict):
-        return _first_text(payload.get("body"), payload.get("text"), payload.get("plain"), payload.get("content"))
+        return _first_text(
+            payload.get("body"),
+            payload.get("text"),
+            payload.get("plain"),
+            payload.get("content"),
+        )
     return ""
 
 
@@ -114,12 +119,24 @@ def _whatsapp_text(msg: dict[str, Any]) -> str:
         msg.get("text"),
         msg.get("body"),
         message.get("conversation"),
-        (message.get("extendedTextMessage") or {}).get("text") if isinstance(message.get("extendedTextMessage"), dict) else None,
-        (message.get("imageMessage") or {}).get("caption") if isinstance(message.get("imageMessage"), dict) else None,
-        (message.get("videoMessage") or {}).get("caption") if isinstance(message.get("videoMessage"), dict) else None,
-        (message.get("documentMessage") or {}).get("caption") if isinstance(message.get("documentMessage"), dict) else None,
-        (message.get("buttonsResponseMessage") or {}).get("selectedDisplayText") if isinstance(message.get("buttonsResponseMessage"), dict) else None,
-        (message.get("listResponseMessage") or {}).get("title") if isinstance(message.get("listResponseMessage"), dict) else None,
+        (message.get("extendedTextMessage") or {}).get("text")
+        if isinstance(message.get("extendedTextMessage"), dict)
+        else None,
+        (message.get("imageMessage") or {}).get("caption")
+        if isinstance(message.get("imageMessage"), dict)
+        else None,
+        (message.get("videoMessage") or {}).get("caption")
+        if isinstance(message.get("videoMessage"), dict)
+        else None,
+        (message.get("documentMessage") or {}).get("caption")
+        if isinstance(message.get("documentMessage"), dict)
+        else None,
+        (message.get("buttonsResponseMessage") or {}).get("selectedDisplayText")
+        if isinstance(message.get("buttonsResponseMessage"), dict)
+        else None,
+        (message.get("listResponseMessage") or {}).get("title")
+        if isinstance(message.get("listResponseMessage"), dict)
+        else None,
     )
     if text:
         return text
@@ -141,7 +158,14 @@ def _fireflies_summary_text(value: Any) -> str:
         return value.strip()
     if isinstance(value, dict):
         parts: list[str] = []
-        for key in ("overview", "short_summary", "gist", "bullet_gist", "action_items", "keywords"):
+        for key in (
+            "overview",
+            "short_summary",
+            "gist",
+            "bullet_gist",
+            "action_items",
+            "keywords",
+        ):
             raw = value.get(key)
             if isinstance(raw, list):
                 parts.extend(str(item).strip() for item in raw if str(item).strip())
@@ -152,7 +176,9 @@ def _fireflies_summary_text(value: Any) -> str:
 
 
 def _fireflies_transcript_text(item: dict[str, Any]) -> str:
-    transcript = _first_text(item.get("transcript"), item.get("body"), item.get("notes"))
+    transcript = _first_text(
+        item.get("transcript"), item.get("body"), item.get("notes")
+    )
     if transcript:
         return transcript
     sentences = item.get("sentences")
@@ -170,7 +196,9 @@ def _fireflies_transcript_text(item: dict[str, Any]) -> str:
     return ""
 
 
-def normalize_gmail_message(msg: dict[str, Any], *, channel: dict[str, Any]) -> dict[str, Any]:
+def normalize_gmail_message(
+    msg: dict[str, Any], *, channel: dict[str, Any]
+) -> dict[str, Any]:
     native_id = str(msg.get("id") or msg.get("messageId") or msg.get("threadId") or "")
     headers = msg.get("headers") if isinstance(msg.get("headers"), dict) else {}
     subject = str(msg.get("subject") or headers.get("subject") or "")
@@ -204,7 +232,11 @@ def normalize_gmail_message(msg: dict[str, Any], *, channel: dict[str, Any]) -> 
         "timestamp": _parse_timestamp(msg.get("date") or msg.get("internalDate")),
         "direction": direction,
         "medium": "email",
-        "actor": {"display_name": sender, "email": _parse_email(sender), "role": "unknown"},
+        "actor": {
+            "display_name": sender,
+            "email": _parse_email(sender),
+            "role": "unknown",
+        },
         "counterparties": counterparties,
         "title": subject,
         "snippet": preview[:360],
@@ -217,10 +249,23 @@ def normalize_gmail_message(msg: dict[str, Any], *, channel: dict[str, Any]) -> 
     }
 
 
-def normalize_calendar_event(ev: dict[str, Any], *, channel: dict[str, Any]) -> dict[str, Any]:
+def normalize_calendar_event(
+    ev: dict[str, Any], *, channel: dict[str, Any]
+) -> dict[str, Any]:
     native_id = str(ev.get("id") or ev.get("etag") or ev.get("htmlLink") or "")
     title = str(ev.get("summary") or ev.get("title") or "Calendar event")
-    start = (ev.get("start") or {}).get("dateTime") or (ev.get("start") or {}).get("date") or ev.get("startLocal")
+    start = (
+        (ev.get("start") or {}).get("dateTime")
+        or (ev.get("start") or {}).get("date")
+        or ev.get("startLocal")
+    )
+    organizer = ev.get("organizer") if isinstance(ev.get("organizer"), dict) else {}
+    attendees = ev.get("attendees") if isinstance(ev.get("attendees"), list) else []
+    counterparties = _address_values(
+        organizer,
+        *attendees,
+    )
+    organizer_email = _parse_email(str(organizer.get("email") or ""))
     return {
         "event_id": f"calendar:{native_id}",
         "source": "calendar",
@@ -232,8 +277,14 @@ def normalize_calendar_event(ev: dict[str, Any], *, channel: dict[str, Any]) -> 
         "timestamp": _parse_timestamp(start),
         "direction": "meeting",
         "medium": "calendar_event",
-        "actor": {"display_name": str((ev.get("organizer") or {}).get("email") or ""), "email": None, "role": "unknown"},
-        "counterparties": [],
+        "actor": {
+            "display_name": str(
+                organizer.get("displayName") or organizer.get("email") or ""
+            ),
+            "email": organizer_email,
+            "role": "organizer",
+        },
+        "counterparties": counterparties,
         "title": title,
         "snippet": title[:360],
         "summary": title[:160],
@@ -244,7 +295,9 @@ def normalize_calendar_event(ev: dict[str, Any], *, channel: dict[str, Any]) -> 
     }
 
 
-def normalize_imessage_message(msg: dict[str, Any], *, channel: dict[str, Any]) -> dict[str, Any]:
+def normalize_imessage_message(
+    msg: dict[str, Any], *, channel: dict[str, Any]
+) -> dict[str, Any]:
     native_id = str(msg.get("guid") or msg.get("rowid") or "")
     handle = str(msg.get("handle") or "")
     is_from_me = bool(msg.get("is_from_me"))
@@ -258,10 +311,16 @@ def normalize_imessage_message(msg: dict[str, Any], *, channel: dict[str, Any]) 
         "native_id": native_id,
         "thread_id": handle,
         "source_url": "",
-        "timestamp": str(msg.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+        "timestamp": str(
+            msg.get("timestamp") or datetime.now(timezone.utc).isoformat()
+        ),
         "direction": "outbound" if is_from_me else "inbound",
         "medium": "chat_message",
-        "actor": {"display_name": "Mehdi" if is_from_me else handle, "email": None, "role": "unknown"},
+        "actor": {
+            "display_name": "Mehdi" if is_from_me else handle,
+            "email": None,
+            "role": "unknown",
+        },
         "counterparties": [handle] if handle else [],
         "title": text[:120] or "Message iMessage",
         "snippet": text[:360],
@@ -274,13 +333,29 @@ def normalize_imessage_message(msg: dict[str, Any], *, channel: dict[str, Any]) 
     }
 
 
-def normalize_whatsapp_message(msg: dict[str, Any], *, channel: dict[str, Any]) -> dict[str, Any]:
+def normalize_whatsapp_message(
+    msg: dict[str, Any], *, channel: dict[str, Any]
+) -> dict[str, Any]:
     key = msg.get("key") if isinstance(msg.get("key"), dict) else {}
-    sender = str(msg.get("pushName") or msg.get("notifyName") or msg.get("from") or key.get("remoteJid") or "")
+    sender = str(
+        msg.get("pushName")
+        or msg.get("notifyName")
+        or msg.get("from")
+        or key.get("remoteJid")
+        or ""
+    )
     is_from_me = bool(msg.get("fromMe") or key.get("fromMe"))
     text = _whatsapp_text(msg)
-    preliminary_native_id = str(msg.get("id") or key.get("id") or msg.get("messageId") or "")
-    remote_jid = str(msg.get("chatId") or msg.get("from") or msg.get("remoteJid") or key.get("remoteJid") or preliminary_native_id)
+    preliminary_native_id = str(
+        msg.get("id") or key.get("id") or msg.get("messageId") or ""
+    )
+    remote_jid = str(
+        msg.get("chatId")
+        or msg.get("from")
+        or msg.get("remoteJid")
+        or key.get("remoteJid")
+        or preliminary_native_id
+    )
     timestamp = _parse_timestamp(msg.get("timestamp") or msg.get("messageTimestamp"))
     native_id = preliminary_native_id or f"{remote_jid}:{timestamp}"
     return {
@@ -295,7 +370,11 @@ def normalize_whatsapp_message(msg: dict[str, Any], *, channel: dict[str, Any]) 
         "timestamp": timestamp,
         "direction": "outbound" if is_from_me else "inbound",
         "medium": "chat_message",
-        "actor": {"display_name": "Mehdi" if is_from_me else sender, "email": None, "role": "unknown"},
+        "actor": {
+            "display_name": "Mehdi" if is_from_me else sender,
+            "email": None,
+            "role": "unknown",
+        },
         "counterparties": [sender] if sender else [],
         "title": text[:120] or "Message WhatsApp",
         "snippet": text[:360],
@@ -308,7 +387,9 @@ def normalize_whatsapp_message(msg: dict[str, Any], *, channel: dict[str, Any]) 
     }
 
 
-def normalize_fireflies_meeting(item: dict[str, Any], *, channel: dict[str, Any]) -> dict[str, Any]:
+def normalize_fireflies_meeting(
+    item: dict[str, Any], *, channel: dict[str, Any]
+) -> dict[str, Any]:
     native_id = str(item.get("id") or item.get("meeting_id") or "")
     title = str(item.get("title") or item.get("topic") or "Fireflies meeting")
     transcript = _fireflies_transcript_text(item)
@@ -325,7 +406,11 @@ def normalize_fireflies_meeting(item: dict[str, Any], *, channel: dict[str, Any]
         "timestamp": _parse_timestamp(item.get("date") or item.get("start_time")),
         "direction": "meeting",
         "medium": "meeting_transcript",
-        "actor": {"display_name": str(item.get("host") or ""), "email": None, "role": "unknown"},
+        "actor": {
+            "display_name": str(item.get("host") or ""),
+            "email": None,
+            "role": "unknown",
+        },
         "counterparties": item.get("participants") or [],
         "title": title,
         "snippet": preview[:360],

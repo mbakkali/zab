@@ -6,15 +6,25 @@ import json
 import urllib.request
 from types import SimpleNamespace
 
-import pytest
-
 from zab.services import local_db
 from zab.services.conversation_ledger.clustering import cluster_events
 from zab.services.conversation_ledger.eval import run_eval
-from zab.services.conversation_ledger.schemas import validate_interaction_event, validate_workpacket_canonical
-from zab.services.conversation_ledger.store import get_event, upsert_event, upsert_projection, upsert_workpacket
+from zab.services.conversation_ledger.schemas import (
+    validate_interaction_event,
+    validate_workpacket_canonical,
+)
+from zab.services.conversation_ledger.store import (
+    compact_events_jsonl,
+    get_event,
+    upsert_event,
+    upsert_projection,
+    upsert_workpacket,
+)
 from zab.services.conversation_ledger.workpacket import build_from_cluster
-from zab.services.conversation_ledger.workpacket_builder import discover_workpackets, reconstruct_seed_candidates
+from zab.services.conversation_ledger.workpacket_builder import (
+    discover_workpackets,
+    reconstruct_seed_candidates,
+)
 from zab.services.conversation_ledger.projections.linear import project_linear
 
 
@@ -48,6 +58,31 @@ def test_dedup_source_native_id() -> None:
         upsert_event(conn, event)
         count = conn.execute("SELECT COUNT(*) FROM ledger_events").fetchone()[0]
     assert count == 1
+
+
+def test_unchanged_event_does_not_append_duplicate_journal_row(monkeypatch) -> None:
+    appended: list[dict] = []
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.store.append_event_jsonl",
+        lambda event: appended.append(event),
+    )
+    event = _event("dedup-journal", "Audit CRM follow-up")
+    with local_db.transaction() as conn:
+        upsert_event(conn, event)
+        upsert_event(conn, event)
+    assert len(appended) == 1
+
+
+def test_compact_events_jsonl_rewrites_canonical_rows() -> None:
+    with local_db.transaction() as conn:
+        upsert_event(conn, _event("compact-1", "Audit CRM"))
+        upsert_event(conn, _event("compact-2", "Explorateurs IA"))
+        upsert_event(conn, _event("compact-1", "Audit CRM mis à jour"))
+    preview = compact_events_jsonl(apply=False)
+    applied = compact_events_jsonl(apply=True, archive=False)
+    assert preview["event_count"] == 2
+    assert applied["dry_run"] is False
+    assert applied["bytes_after"] <= applied["bytes_before"]
 
 
 def test_upsert_event_preserves_enriched_content_on_sync_refresh() -> None:
@@ -161,10 +196,16 @@ def test_reconstruct_reuses_existing_display_id() -> None:
         "events": [_event("reconstruct-1", "Audit suivi commercial")],
     }
     with local_db.transaction() as conn:
-        first = upsert_workpacket(conn, build_from_cluster(cluster, display_id="ZWP-0001"))
+        first = upsert_workpacket(
+            conn, build_from_cluster(cluster, display_id="ZWP-0001")
+        )
         first_id = first["workpacket_id"]
     payload = reconstruct_seed_candidates(dry_run=False)
-    arp = next(w for w in payload["workpackets"] if w.get("client_workstream_id") == "cw_audit_crm")
+    arp = next(
+        w
+        for w in payload["workpackets"]
+        if w.get("client_workstream_id") == "cw_audit_crm"
+    )
     assert arp["workpacket_id"] == first_id
     assert arp["display_id"] == "ZWP-0001"
 
@@ -175,18 +216,26 @@ def test_discover_reuses_existing_organization_workstream(monkeypatch) -> None:
         "organization_label": "ARP Astrance",
         "client_workstream_id": "cw_audit_crm",
         "client_workstream_label": "Audit CRM",
-        "events": [_event("discover-idempotent", "Audit outils et process commerciaux")],
+        "events": [
+            _event("discover-idempotent", "Audit outils et process commerciaux")
+        ],
     }
     with local_db.transaction() as conn:
         upsert_event(conn, cluster["events"][0])
-        first = upsert_workpacket(conn, build_from_cluster(cluster, display_id="ZWP-0042"))
+        first = upsert_workpacket(
+            conn, build_from_cluster(cluster, display_id="ZWP-0042")
+        )
 
     monkeypatch.setattr(
         "zab.services.conversation_ledger.workpacket_builder.cluster_events",
         lambda *_args, **_kwargs: [cluster],
     )
     payload = discover_workpackets(dry_run=False, min_confidence=0)
-    match = next(row for row in payload["candidates"] if row["client_workstream_id"] == "cw_audit_crm")
+    match = next(
+        row
+        for row in payload["candidates"]
+        if row["client_workstream_id"] == "cw_audit_crm"
+    )
 
     assert match["workpacket_id"] == first["workpacket_id"]
     assert match["display_id"] == "ZWP-0042"
@@ -233,6 +282,55 @@ def test_discover_resolves_since_and_enforces_candidate_limit(monkeypatch) -> No
     assert payload["candidate_count"] == 2
 
 
+def test_reindex_infers_unique_contact_history() -> None:
+    from zab.services.conversation_ledger.sync import reindex_entity_links
+
+    classified = {
+        **_event("known-contact", "Example client — point"),
+        "thread_id": "thread-a",
+        "source_account": "owner@internal.example",
+        "actor": {
+            "display_name": "Owner <owner@internal.example>",
+            "email": "owner@internal.example",
+        },
+        "counterparties": ["Shared Contact <shared-contact@gmail.com>"],
+        "organization_id": "org_example",
+        "organization_label": "Example Client",
+        "entity_links": [
+            {
+                "entity_type": "organization",
+                "entity_id": "org_example",
+                "label": "Example Client",
+                "confidence": 1.0,
+                "evidence": ["manual link"],
+                "status": "confirmed",
+            }
+        ],
+    }
+    unclassified = {
+        **_event("known-contact-followup", "Point de suivi"),
+        "thread_id": "thread-b",
+        "source_account": "owner@internal.example",
+        "actor": {
+            "display_name": "Owner <owner@internal.example>",
+            "email": "owner@internal.example",
+        },
+        "counterparties": ["Shared Contact <shared-contact@gmail.com>"],
+    }
+    unclassified.pop("organization_id", None)
+    with local_db.transaction() as conn:
+        upsert_event(conn, classified)
+        upsert_event(conn, unclassified)
+
+    payload = reindex_entity_links()
+    with local_db.transaction() as conn:
+        saved = get_event(conn, unclassified["event_id"])
+
+    assert payload["inferred_from_contact"] >= 1
+    assert saved is not None
+    assert saved["organization_id"] == "org_example"
+
+
 def test_eval_hard_suite_passes() -> None:
     payload = run_eval(suite="hard")
     assert payload["hard"]["failed"] == 0
@@ -247,14 +345,19 @@ def test_eval_quality_thresholds() -> None:
 def test_resolve_preview() -> None:
     from zab.services.conversation_ledger.resolve import resolve_preview
 
-    payload = resolve_preview(organization="ARP Astrance", client_workstream="Audit CRM", dry_run=True)
+    payload = resolve_preview(
+        organization="ARP Astrance", client_workstream="Audit CRM", dry_run=True
+    )
     assert payload["contract"] == "interactions-resolve"
     assert payload["organization"]["id"] == "org_arp_astrance"
 
 
 def test_entity_registry_seeded() -> None:
     from zab.services import local_db
-    from zab.services.conversation_ledger.entity_registry import list_organizations, list_workstreams
+    from zab.services.conversation_ledger.entity_registry import (
+        list_organizations,
+        list_workstreams,
+    )
 
     with local_db.transaction() as conn:
         orgs = list_organizations(conn)
@@ -298,9 +401,13 @@ def test_gmail_sync_uses_all_pages_when_limit_exceeds_single_page(monkeypatch) -
 
     def fake_run(cmd, **_kwargs):
         captured["cmd"] = list(cmd)
-        return SimpleNamespace(returncode=0, stdout=json.dumps({"messages": [{"id": "1"}, {"id": "2"}]}))
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps({"messages": [{"id": "1"}, {"id": "2"}]})
+        )
 
-    monkeypatch.setattr("zab.services.conversation_ledger.sync.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.sync.subprocess.run", fake_run
+    )
 
     rows = _run_gog_gmail(
         {"account": "mehdi@flowmetrik.com"},
@@ -357,6 +464,83 @@ def test_fireflies_sync_uses_valid_transcript_query(monkeypatch) -> None:
     assert "url: transcript_url" in captured["query"]
     assert "summary {" in captured["query"]
     assert rows[0]["summary"]["overview"] == "Overview"
+
+
+def test_calendar_sync_uses_since_and_all_pages(monkeypatch) -> None:
+    from zab.services.conversation_ledger.sync import _run_gog_calendar
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **_kwargs):
+        captured["cmd"] = list(cmd)
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"events": []}))
+
+    monkeypatch.setattr(
+        "zab.services.conversation_ledger.sync.subprocess.run", fake_run
+    )
+    _run_gog_calendar(
+        {"account": "mehdi@example.com"},
+        since="2026-01-01",
+        max_results=500,
+    )
+
+    assert captured["cmd"][-1] == "--all-pages"
+    assert "--from" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("--from") + 1] == "2026-01-01"
+    assert captured["cmd"][captured["cmd"].index("--max") + 1] == "500"
+
+
+def test_calendar_normalizer_indexes_organizer_and_attendees() -> None:
+    from zab.services.conversation_ledger.normalizers import normalize_calendar_event
+
+    event = normalize_calendar_event(
+        {
+            "id": "calendar-1",
+            "summary": "Steering committee",
+            "start": {"dateTime": "2026-07-29T09:00:00+02:00"},
+            "organizer": {"email": "owner@example.com", "displayName": "Owner"},
+            "attendees": [{"email": "guest@client.example", "displayName": "Guest"}],
+        },
+        channel={
+            "channel_id": "calendar-primary",
+            "account": "owner@example.com",
+            "tool_id": "calendar-search",
+        },
+    )
+
+    assert event["actor"]["email"] == "owner@example.com"
+    assert "guest@client.example" in event["counterparties"]
+
+
+def test_local_entity_profile_document_merges_without_repository_data(tmp_path) -> None:
+    from zab.services.conversation_ledger.org_profiles import (
+        _local_profile_document,
+        _merge_profiles,
+    )
+
+    config = tmp_path / "entities.yaml"
+    config.write_text(
+        """
+internal_domains: [internal.example]
+organizations:
+  org_example:
+    label: Example
+    domains: [client.example]
+    workstreams:
+      cw_example:
+        label: Delivery
+        keywords: [delivery]
+""".strip(),
+        encoding="utf-8",
+    )
+    document = _local_profile_document(config)
+    merged = _merge_profiles({}, document)
+
+    assert document["internal_domains"] == ["internal.example"]
+    assert merged["org_example"]["domains"] == ["client.example"]
+    assert merged["org_example"]["workstreams"]["cw_example"]["keywords"] == [
+        "delivery"
+    ]
 
 
 def test_enrich_gmail_event_adds_body(monkeypatch) -> None:
@@ -428,7 +612,10 @@ def test_enrich_gmail_event_fetches_missing_counterparties(monkeypatch) -> None:
         "title": "Point plateforme",
         "snippet": "Point plateforme",
         "body": "Corps déjà enrichi.",
-        "actor": {"display_name": "Mehdi <mehdi@flowmetrik.com>", "email": "mehdi@flowmetrik.com"},
+        "actor": {
+            "display_name": "Mehdi <mehdi@flowmetrik.com>",
+            "email": "mehdi@flowmetrik.com",
+        },
     }
 
     monkeypatch.setattr(
@@ -466,7 +653,10 @@ def test_gmail_normalizer_preserves_snippet_without_body() -> None:
             "snippet": "Bonjour, voici le détail demandé pour le point projet.",
             "labels": ["INBOX"],
         },
-        channel={"channel_id": "gmail-flowmetrik-primary", "account": "mehdi@flowmetrik.com"},
+        channel={
+            "channel_id": "gmail-flowmetrik-primary",
+            "account": "mehdi@flowmetrik.com",
+        },
     )
 
     assert event["body"] is None
@@ -492,7 +682,10 @@ def test_gmail_normalizer_uses_recipient_headers_for_counterparties() -> None:
                 "cc": "Samir BOUZIDI <samir.bouzidi@ofi-invest.com>",
             },
         },
-        channel={"channel_id": "gmail-flowmetrik-primary", "account": "mehdi@flowmetrik.com"},
+        channel={
+            "channel_id": "gmail-flowmetrik-primary",
+            "account": "mehdi@flowmetrik.com",
+        },
     )
 
     assert event["counterparties"] == [
@@ -506,18 +699,41 @@ def test_whatsapp_normalizer_extracts_extended_text_and_timestamp() -> None:
 
     event = normalize_whatsapp_message(
         {
-            "key": {"id": "wa-1", "remoteJid": "33601020304@s.whatsapp.net", "fromMe": False},
+            "key": {
+                "id": "wa-1",
+                "remoteJid": "33601020304@s.whatsapp.net",
+                "fromMe": False,
+            },
             "pushName": "Alice",
             "messageTimestamp": 1785064500,
             "message": {"extendedTextMessage": {"text": "Message WhatsApp complet"}},
         },
-        channel={"channel_id": "whatsapp-evolution-mehdi", "account": "mehdi-perso", "tool_id": "whatsapp-search"},
+        channel={
+            "channel_id": "whatsapp-evolution-mehdi",
+            "account": "mehdi-perso",
+            "tool_id": "whatsapp-search",
+        },
     )
 
     assert not validate_interaction_event(event)
     assert event["body"] == "Message WhatsApp complet"
     assert event["snippet"] == "Message WhatsApp complet"
     assert event["timestamp"].startswith("2026-07-26T")
+
+
+def test_evolution_preflight_rejects_unresolved_dashlane_references(
+    monkeypatch,
+) -> None:
+    from zab.services.conversation_ledger.preflight import check_evolution
+
+    monkeypatch.setenv("EVOLUTION_API_URL", "dl://missing-url")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "dl://missing-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE", "dl://missing-instance")
+
+    payload = check_evolution()
+
+    assert payload["status"] == "error"
+    assert "unresolved Dashlane references" in payload["detail"]
 
 
 def test_fireflies_normalizer_uses_structured_summary_and_sentences() -> None:
@@ -530,10 +746,19 @@ def test_fireflies_normalizer_uses_structured_summary_and_sentences() -> None:
             "date": 1785064500000,
             "host": "Mehdi",
             "participants": ["alice@example.com"],
-            "summary": {"overview": "Synthèse du rendez-vous", "action_items": ["Envoyer le compte rendu"]},
-            "sentences": [{"speaker_name": "Alice", "text": "On valide la prochaine étape."}],
+            "summary": {
+                "overview": "Synthèse du rendez-vous",
+                "action_items": ["Envoyer le compte rendu"],
+            },
+            "sentences": [
+                {"speaker_name": "Alice", "text": "On valide la prochaine étape."}
+            ],
         },
-        channel={"channel_id": "fireflies-flowmetrik", "account": "n/a", "tool_id": "fireflies-search"},
+        channel={
+            "channel_id": "fireflies-flowmetrik",
+            "account": "n/a",
+            "tool_id": "fireflies-search",
+        },
     )
 
     assert not validate_interaction_event(event)
@@ -556,7 +781,10 @@ def test_sync_channels_ingests_whatsapp(monkeypatch) -> None:
     }
     monkeypatch.setattr(
         "zab.services.conversation_ledger.sync.list_channels",
-        lambda check=True: {"summary": {"total": 1, "ok": 1, "degraded": 0, "error": 0}, "channels": [channel]},
+        lambda check=True: {
+            "summary": {"total": 1, "ok": 1, "degraded": 0, "error": 0},
+            "channels": [channel],
+        },
     )
     monkeypatch.setattr(
         "zab.services.conversation_ledger.sync.check_channel_binding",
@@ -566,7 +794,11 @@ def test_sync_channels_ingests_whatsapp(monkeypatch) -> None:
         "zab.services.conversation_ledger.sync.fetch_whatsapp_recent",
         lambda *, limit: [
             {
-                "key": {"id": "wa-sync-1", "remoteJid": "33601020304@s.whatsapp.net", "fromMe": False},
+                "key": {
+                    "id": "wa-sync-1",
+                    "remoteJid": "33601020304@s.whatsapp.net",
+                    "fromMe": False,
+                },
                 "pushName": "Alice",
                 "messageTimestamp": 1785064500,
                 "message": {"conversation": "Signal WhatsApp à indexer"},
