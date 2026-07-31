@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-31 - Join projects and people to the ledger organizations
+
+- Trigger: mention
+- Context: a workspace wanted every object — work packets, interactions, repositories, recurring contacts — anchored to an organization, a project and the people who matter.
+- Observation: two organization namespaces coexisted without ever meeting. The ledger holds client organizations with their email domains and aliases; local projects carry an organization derived from their parent folder, often suffixed with a workspace marker. Nothing joined them, so across 32550 events only 3 carried a project link, no person entity existed at all, and every work packet knew its client but never the repository. Ranking contacts by volume was also useless: the top "people" were newsletters, because a mailing list sends far more than a client writes.
+- Improvement: added an entity graph joining projects and people to organizations on explainable rules only — declared alias, normalized slug, or email domain — each link carrying its reason and confidence, and anything unmatched left unlinked rather than guessed. A counterpart is redefined as someone the operator wrote to or met, which removes newsletters from the ranking. Recurring counterparts whose domain no organization claims are grouped into domain suggestions, since a missing link is nearly always a missing profile entry rather than an algorithm failure. The work packet backfill now fills project references and key people, and a scheduled job refreshes the whole graph daily because repositories appear, move and are renamed continuously.
+- Evidence: `uv run pytest zab/tests -q` passes 472 tests, including 8 that pin the join rules (workspace suffix stripping, alias precedence, newsletter exclusion, domain attachment, internal-domain filtering, suggestion grouping). On a real corpus the graph attached 28 of 106 projects and 163 of 511 real counterparts, and raised work packets carrying key people from 0 to 13 of 14; the remaining gaps are reported as domain suggestions rather than hidden.
+- Status: verified
+
 ## 2026-07-31 - Give WorkPackets a next action instead of a template
 
 - Trigger: mention
