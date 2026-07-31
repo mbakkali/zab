@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from zab.services.agent_memory_import import (
+    PROVIDER_CLAUDE,
     PROVIDER_GEMINI,
     PROVIDER_HERMES,
     _parse_jsonl_transcript_arrays,
@@ -195,3 +198,32 @@ def test_collect_respects_provider_filter(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr("zab.services.agent_memory_import.Path.home", lambda: tmp_path)
     empty = collect_agent_memory_documents(providers=frozenset({PROVIDER_HERMES}))
     assert empty == []
+
+
+def test_collect_skips_transcripts_older_than_cutoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects = tmp_path / ".claude" / "projects" / "demo"
+    projects.mkdir(parents=True)
+    line = json.dumps({"role": "user", "message": {"content": [{"type": "text", "text": "bonjour"}]}}) + "\n"
+    recent = projects / "recent.jsonl"
+    stale = projects / "stale.jsonl"
+    recent.write_text(line, encoding="utf-8")
+    stale.write_text(line, encoding="utf-8")
+
+    now = datetime.now(timezone.utc)
+    old_epoch = (now - timedelta(days=30)).timestamp()
+    os.utime(stale, (old_epoch, old_epoch))
+
+    monkeypatch.setattr("zab.services.agent_memory_import.Path.home", lambda: tmp_path)
+    stats: dict[str, int] = {}
+    docs = collect_agent_memory_documents(
+        providers=frozenset({PROVIDER_CLAUDE}),
+        modified_since=now - timedelta(days=3),
+        stats=stats,
+    )
+
+    assert [d.path.name for d in docs] == ["recent.jsonl"]
+    assert stats["skipped_stale"] == 1
+
+    # Sans seuil, le fichier ancien reste collecté : le filtre est opt-in.
+    all_docs = collect_agent_memory_documents(providers=frozenset({PROVIDER_CLAUDE}))
+    assert sorted(d.path.name for d in all_docs) == ["recent.jsonl", "stale.jsonl"]
