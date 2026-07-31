@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-31 - Make the conversation digest usable for per-workspace review
+
+- Trigger: CLI
+- Context: an agent used the local conversation digest to review the most recent conversations attached to a single workspace directory.
+- Observation: three frictions. First, the digest reports an `intent` taken from the first user message, but some CLI providers prepend a boilerplate block (recommended plugins, environment context) so the intent field is identical across many unrelated conversations and unusable for triage. Second, project attribution is semantic, so sessions started inside a workspace directory can be labelled with a sub-project name, and there is no flag to select conversations by working directory. Third, `--limit` is capped at 300 while the retained set can be larger, and the truncation is silent for anyone filtering the result afterwards.
+- Improvement: skip known provider boilerplate prefixes when deriving `intent` and fall back to the first non-boilerplate user message; add an explicit working-directory filter alongside the semantic project match; and surface a clear "retained but not shown" count so downstream filters do not mistake truncation for an empty set.
+- Evidence: `zab conversations digest --days 14 --limit 300 --json` returns `scanned/retained/shown` counters where `retained > shown`, and repeated `intent` values for one provider.
+- Status: captured
+
 ## 2026-07-29 - Make historical interaction backfills classifiable and storage-safe
 
 - Trigger: debug
@@ -88,6 +97,24 @@ Do not add user data, private workspace data, secrets, raw logs, or customer con
 - Observation: the compact sidebar, Geist typography, Tailwind v4 tokens, shadcn primitives and dense table patterns were straightforward to identify and reuse without copying domain data.
 - Improvement: keep the UI stack and reusable primitives explicit in `zab-ui/package.json` and `src/components/ui/`; no product change was required during this interaction.
 - Evidence: read-only inspection of the UI package, navigation and primitive components; the consuming interface passed its independent TypeScript build and responsive browser checks.
+- Status: verified
+
+## 2026-07-30 - Classify an approved client email reply
+
+- Trigger: CLI
+- Context: an agent classified a user-requested reply to an existing client email thread; all business details were kept outside the public repository.
+- Observation: `zab workpacket intake` returned the expected communication contract, approval gate, source requirements, and reread receipt requirement.
+- Improvement: no product change required; keep the explicit L3 approval and post-send verification contract for message actions.
+- Evidence: `zab workpacket intake "<anonymized email-reply signal>" --source codex --project flowmetrik-cowork --json`.
+- Status: verified
+
+## 2026-07-30 - Classify an approved invoice-and-email workflow
+
+- Trigger: CLI
+- Context: an agent classified a user-approved finance record and administrative email workflow; all customer, amount, invoice and recipient details stayed outside the public repository.
+- Observation: `zab workpacket intake` correctly returned L3 approval, finance-source grounding and post-mutation reread requirements.
+- Improvement: no product change required; the contract usefully enforced duplicate checking, explicit authority and separate finance/email receipts.
+- Evidence: `zab workpacket intake "<anonymized invoice-send signal>" --source codex --project flowmetrik-cowork --json`.
 - Status: verified
 
 ## 2026-07-23 - Make WorkPacket discovery idempotent
