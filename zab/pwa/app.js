@@ -162,17 +162,32 @@ function renderStatus(data) {
 
   el('flush').disabled = busy || !running
 
+  // Un serveur distant ne peut pas voir la sync ni les connexions SSH du Mac :
+  // afficher « 0 » se lirait comme « rien ne tourne » au lieu de « je ne sais pas ».
   const connected = totals.watching ?? 0
   const sessions = totals.sessions ?? 0
-  el('sync-value').textContent = sessions ? `${connected}/${sessions}` : '—'
-  el('sync-hint').textContent = sessions
-    ? `${(totals.alpha_files ?? 0).toLocaleString('fr-FR')} fichiers · écart ${totals.file_delta ?? 0}${
-        totals.conflicts ? ` · ${totals.conflicts} conflit(s)` : ''
-      }`
-    : sync.error || 'aucune session'
+  if (sync.observable === false) {
+    el('sync-value').textContent = 'n/d'
+    el('sync-hint').textContent = 'non visible depuis ce serveur'
+  } else {
+    el('sync-value').textContent = sessions ? `${connected}/${sessions}` : '—'
+    el('sync-hint').textContent = sessions
+      ? `${(totals.alpha_files ?? 0).toLocaleString('fr-FR')} fichiers · écart ${totals.file_delta ?? 0}${
+          totals.conflicts ? ` · ${totals.conflicts} conflit(s)` : ''
+        }`
+      : sync.error || 'aucune session'
+  }
 
-  el('ssh-value').textContent = String((ssh.connections || []).length)
-  el('ssh-hint').textContent = `${ssh.tunnels ?? 0} tunnel · ${ssh.sync_agents ?? 0} agent(s) sync`
+  if (ssh.observable === false) {
+    el('ssh-value').textContent = 'n/d'
+    el('ssh-hint').textContent = 'non visible depuis ce serveur'
+  } else {
+    el('ssh-value').textContent = String((ssh.connections || []).length)
+    el('ssh-hint').textContent = `${ssh.tunnels ?? 0} tunnel · ${ssh.sync_agents ?? 0} agent(s) sync`
+  }
+
+  // Sans mutagen local, forcer un cycle de sync n'a aucun sens.
+  el('flush').hidden = sync.observable === false
 
   el('updated').textContent = `mis à jour ${new Date().toLocaleTimeString('fr-FR', {
     hour: '2-digit',

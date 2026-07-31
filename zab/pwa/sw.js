@@ -22,7 +22,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
   if (request.method !== 'GET' || url.origin !== self.location.origin) return
-  if (url.pathname.startsWith('/api/') || url.pathname === '/healthz') return
+  if (url.pathname.startsWith('/api/') || url.pathname === '/ping') return
 
   // Réseau d'abord pour la coquille : une mise à jour déployée doit arriver
   // dès la première ouverture en ligne, le cache ne sert qu'en repli.

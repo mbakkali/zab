@@ -47,6 +47,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from zab.paths import data_dir
 from zab.user_config import load_user_config
 
@@ -156,6 +158,8 @@ def config() -> dict[str, Any]:
             continue
         cfg["billing"][key] = value
 
+    _apply_env_overrides(cfg)
+
     if not cfg["billing"]["project"] and cfg["project"]:
         cfg["billing"]["project"] = cfg["project"]
     if not cfg["billing"]["gcloud_config"]:
@@ -163,6 +167,33 @@ def config() -> dict[str, Any]:
     if not cfg["billing"]["resource_match"]:
         cfg["billing"]["resource_match"] = _default_resource_match(cfg)
     return cfg
+
+
+ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
+    "ZAB_REMOTE_VM_PROJECT": ("project",),
+    "ZAB_REMOTE_VM_ZONE": ("zone",),
+    "ZAB_REMOTE_VM_INSTANCE": ("instance",),
+    "ZAB_REMOTE_VM_MACHINE_TYPE": ("machine_type",),
+    "ZAB_REMOTE_VM_SSH_ALIAS": ("ssh_alias",),
+    "ZAB_REMOTE_VM_BILLING_TABLE": ("billing", "table"),
+    "ZAB_REMOTE_VM_BILLING_PROJECT": ("billing", "project"),
+    "ZAB_REMOTE_VM_CURRENCY": ("billing", "currency"),
+}
+
+
+def _apply_env_overrides(cfg: dict[str, Any]) -> None:
+    """Configuration par l'environnement, indispensable en conteneur (pas de config.yaml)."""
+    for env_name, path in ENV_OVERRIDES.items():
+        value = os.environ.get(env_name, "").strip()
+        if not value:
+            continue
+        target = cfg
+        for part in path[:-1]:
+            target = target[part]
+        target[path[-1]] = value
+    matches = os.environ.get("ZAB_REMOTE_VM_RESOURCE_MATCH", "").strip()
+    if matches:
+        cfg["billing"]["resource_match"] = [m.strip() for m in matches.split(",") if m.strip()]
 
 
 def _default_resource_match(cfg: dict[str, Any]) -> list[str]:
@@ -258,6 +289,115 @@ def _gcloud(cfg: dict[str, Any], args: list[str], *, timeout: int = 30) -> tuple
     return _run(cmd + args, timeout=timeout)
 
 
+# ── transport REST ───────────────────────────────────────────────────────────
+#
+# Le SDK Google pèse près d'un gigaoctet dans une image de conteneur, pour un
+# service qui n'a besoin que de trois appels Compute et d'une requête BigQuery.
+# Quand les binaires sont absents — typiquement une exécution en conteneur — on
+# passe donc par les API REST avec les identifiants par défaut de l'environnement.
+
+_API_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+
+
+def _adc_token() -> str:
+    import google.auth
+    from google.auth.transport.requests import Request
+
+    creds, _ = google.auth.default(scopes=[_API_SCOPE])
+    creds.refresh(Request())
+    token = getattr(creds, "token", None)
+    if not token:
+        raise RuntimeError("identifiants par défaut indisponibles")
+    return str(token)
+
+
+def _api_call(
+    method: str,
+    url: str,
+    *,
+    json_body: dict[str, Any] | None = None,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    with httpx.Client(timeout=timeout) as client:
+        response = client.request(
+            method,
+            url,
+            json=json_body,
+            headers={"Authorization": f"Bearer {_adc_token()}"},
+        )
+    if response.status_code >= 400:
+        detail = ""
+        try:
+            detail = str(response.json().get("error", {}).get("message", ""))
+        except Exception:  # noqa: BLE001 - le corps peut ne pas être du JSON
+            detail = response.text[:200]
+        raise RuntimeError(f"{method} {url.split('/v1/')[-1]}: {response.status_code} {detail}".strip())
+    if not response.content:
+        return {}
+    return response.json()
+
+
+def _compute_url(cfg: dict[str, Any], suffix: str) -> str:
+    return (
+        "https://compute.googleapis.com/compute/v1/projects/"
+        f"{cfg['project']}/zones/{cfg['zone']}/{suffix}"
+    )
+
+
+def _fetch_instance(cfg: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Description de l'instance, par gcloud si présent, sinon par l'API REST."""
+    if resolve_bin("gcloud"):
+        code, raw, err = _gcloud(
+            cfg,
+            [
+                "compute",
+                "instances",
+                "describe",
+                cfg["instance"],
+                f"--project={cfg['project']}",
+                f"--zone={cfg['zone']}",
+                "--format=json",
+            ],
+            timeout=45,
+        )
+        if code != 0:
+            return None, (err or raw or "gcloud instances describe a échoué").strip().splitlines()[0][:400]
+        try:
+            return json.loads(raw), None
+        except json.JSONDecodeError:
+            return None, "réponse gcloud illisible"
+    try:
+        return _api_call("GET", _compute_url(cfg, f"instances/{cfg['instance']}")), None
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return None, str(exc)[:400]
+
+
+def _fetch_machine_type(cfg: dict[str, Any], machine_type: str) -> dict[str, Any] | None:
+    if resolve_bin("gcloud"):
+        code, out, _ = _gcloud(
+            cfg,
+            [
+                "compute",
+                "machine-types",
+                "describe",
+                machine_type,
+                f"--project={cfg['project']}",
+                f"--zone={cfg['zone']}",
+                "--format=json",
+            ],
+        )
+        if code != 0:
+            return None
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            return None
+    try:
+        return _api_call("GET", _compute_url(cfg, f"machineTypes/{machine_type}"))
+    except (RuntimeError, httpx.HTTPError):
+        return None
+
+
 # ── état de la VM ────────────────────────────────────────────────────────────
 
 
@@ -285,26 +425,14 @@ def _machine_shape(cfg: dict[str, Any], machine_type: str) -> dict[str, Any]:
         return cache[machine_type]
 
     shape: dict[str, Any] = {"vcpus": None, "memory_gb": None}
-    code, out, _ = _gcloud(
-        cfg,
-        [
-            "compute",
-            "machine-types",
-            "describe",
-            machine_type,
-            f"--project={cfg['project']}",
-            f"--zone={cfg['zone']}",
-            "--format=json",
-        ],
-    )
-    if code == 0:
+    data = _fetch_machine_type(cfg, machine_type)
+    if data:
         try:
-            data = json.loads(out)
             shape = {
                 "vcpus": int(data.get("guestCpus") or 0) or None,
                 "memory_gb": round(int(data.get("memoryMb") or 0) / 1024, 2) or None,
             }
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (TypeError, ValueError):
             shape = {"vcpus": None, "memory_gb": None}
     if shape["vcpus"] is None:
         match = re.search(r"-(\d+)$", machine_type)
@@ -333,28 +461,10 @@ def vm_state() -> dict[str, Any]:
         "status": None,
         "error": None,
     }
-    code, raw, err = _gcloud(
-        cfg,
-        [
-            "compute",
-            "instances",
-            "describe",
-            cfg["instance"],
-            f"--project={cfg['project']}",
-            f"--zone={cfg['zone']}",
-            "--format=json",
-        ],
-        timeout=45,
-    )
-    if code != 0:
+    inst, error = _fetch_instance(cfg)
+    if inst is None:
         out["status"] = "error"
-        out["error"] = (err or raw or "gcloud instances describe a échoué").strip().splitlines()[0][:400]
-        return out
-    try:
-        inst = json.loads(raw)
-    except json.JSONDecodeError:
-        out["status"] = "error"
-        out["error"] = "réponse gcloud illisible"
+        out["error"] = error
         return out
 
     machine_type = str(inst.get("machineType") or "").rstrip("/").split("/")[-1]
@@ -460,12 +570,41 @@ ORDER BY day
 """.strip()
 
 
+def _billing_query_rest(project: str, sql: str) -> list[dict[str, Any]]:
+    """Exécute la requête via l'API BigQuery et remet les lignes à plat."""
+    url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries"
+    payload = _api_call(
+        "POST",
+        url,
+        json_body={"query": sql, "useLegacySql": False, "timeoutMs": 120000, "maxResults": 5000},
+        timeout=180.0,
+    )
+    if not payload.get("jobComplete"):
+        job_id = (payload.get("jobReference") or {}).get("jobId")
+        if not job_id:
+            raise RuntimeError("requête BigQuery inachevée sans identifiant de job")
+        payload = _api_call("GET", f"{url}/{job_id}?timeoutMs=120000&maxResults=5000", timeout=180.0)
+        if not payload.get("jobComplete"):
+            raise RuntimeError("requête BigQuery toujours inachevée")
+
+    fields = [f.get("name") for f in (payload.get("schema") or {}).get("fields", [])]
+    rows: list[dict[str, Any]] = []
+    for row in payload.get("rows") or []:
+        cells = [cell.get("v") for cell in row.get("f") or []]
+        rows.append(dict(zip(fields, cells)))
+    return rows
+
+
 def _run_billing_query(cfg: dict[str, Any], days: int) -> list[dict[str, Any]]:
     billing = cfg["billing"]
+    sql = _cost_sql(str(billing["table"]), list(billing["resource_match"]), days)
     bq = resolve_bin("bq")
     if not bq:
-        raise RuntimeError("bq introuvable (Google Cloud SDK)")
-    sql = _cost_sql(str(billing["table"]), list(billing["resource_match"]), days)
+        project = str(billing.get("project") or cfg["project"])
+        try:
+            return _billing_query_rest(project, sql)
+        except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+            raise RuntimeError(str(exc)[:400]) from exc
     env = {}
     if billing.get("gcloud_config"):
         env["CLOUDSDK_ACTIVE_CONFIG_NAME"] = str(billing["gcloud_config"])
@@ -491,16 +630,11 @@ def _float(value: Any) -> float:
 
 
 def _build_cost_report(cfg: dict[str, Any], rows: list[dict[str, Any]], days: int) -> dict[str, Any]:
-    vcpus = None
-    memory_gb = None
-    cache_path = data_dir() / _STATE_DIR / "machine-types.json"
-    if cache_path.is_file():
-        try:
-            shape = json.loads(cache_path.read_text()).get(str(cfg.get("machine_type") or ""), {})
-            vcpus = shape.get("vcpus")
-            memory_gb = shape.get("memory_gb")
-        except (OSError, json.JSONDecodeError):
-            pass
+    # Les heures d'exécution se déduisent des core-heures facturées : sans le
+    # nombre de vCPU, la fenêtre entière s'afficherait à zéro heure.
+    shape = _machine_shape(cfg, str(cfg.get("machine_type") or ""))
+    vcpus = shape.get("vcpus")
+    memory_gb = shape.get("memory_gb")
 
     by_day: dict[str, dict[str, Any]] = {}
     by_sku: dict[str, dict[str, Any]] = {}
@@ -714,6 +848,10 @@ def ssh_state() -> dict[str, Any]:
     }
 
     ssh = resolve_bin("ssh")
+    # Les connexions SSH et la synchronisation sont des faits **locaux** : seule la
+    # machine qui les porte peut les voir. Un serveur distant doit le dire, sinon
+    # « zéro connexion » se lit comme « rien ne tourne » au lieu de « je ne sais pas ».
+    out["observable"] = ssh is not None
     if ssh and cfg.get("ssh_alias"):
         code, sout, serr = _run([ssh, "-O", "check", alias], timeout=10)
         detail = (sout or serr or "").strip().splitlines()
@@ -726,6 +864,8 @@ def ssh_state() -> dict[str, Any]:
             out["control_master"] = {"state": "down", "detail": detail_line}
 
     code, ps_out, _ = _run(["ps", "-eo", "pid=,etime=,command="], timeout=15)
+    if code != 0:
+        out["observable"] = False
     if code == 0:
         for line in ps_out.splitlines():
             stripped = line.strip()
@@ -815,8 +955,9 @@ def sync_state() -> dict[str, Any]:
     }
 
     mutagen = resolve_bin("mutagen")
+    out["observable"] = mutagen is not None
     if not mutagen:
-        out["error"] = "mutagen introuvable"
+        out["error"] = "synchronisation non observable depuis cet hôte (mutagen absent)"
         return out
 
     code, raw, err = _run([mutagen, "sync", "list", "--template={{ json . }}"], timeout=45)
@@ -947,26 +1088,42 @@ def _instance_action(action: str, *, timeout: int) -> dict[str, Any]:
     if via_script is not None:
         return via_script
 
-    code, out, err = _gcloud(
-        cfg,
-        [
-            "compute",
-            "instances",
-            action,
-            cfg["instance"],
-            f"--project={cfg['project']}",
-            f"--zone={cfg['zone']}",
-            "--quiet",
-        ],
-        timeout=timeout,
-    )
+    if resolve_bin("gcloud"):
+        code, out, err = _gcloud(
+            cfg,
+            [
+                "compute",
+                "instances",
+                action,
+                cfg["instance"],
+                f"--project={cfg['project']}",
+                f"--zone={cfg['zone']}",
+                "--quiet",
+            ],
+            timeout=timeout,
+        )
+        return {
+            "ok": code == 0,
+            "action": action,
+            "via": "gcloud",
+            "exit_code": code,
+            "output": (out + err)[-4000:],
+            "error": None if code == 0 else (err or out or "échec").strip()[-400:],
+        }
+
+    try:
+        operation = _api_call("POST", _compute_url(cfg, f"instances/{cfg['instance']}/{action}"))
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return {"ok": False, "action": action, "via": "api", "error": str(exc)[:400]}
+    # L'opération Compute est asynchrone : la VM met encore une minute à être
+    # utilisable. L'appelant suit la suite via `vm_state`.
     return {
-        "ok": code == 0,
+        "ok": True,
         "action": action,
-        "via": "gcloud",
-        "exit_code": code,
-        "output": (out + err)[-4000:],
-        "error": None if code == 0 else (err or out or "échec").strip()[-400:],
+        "via": "api",
+        "operation": operation.get("name"),
+        "output": f"opération {operation.get('status', 'PENDING')}",
+        "error": None,
     }
 
 

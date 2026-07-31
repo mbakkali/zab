@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-31 - Make the VM control app deployable to a serverless container
+
+- Trigger: mention
+- Context: the control app served from a laptop is useless in the exact case it was built for — the laptop being asleep. Moving it to a managed container runtime in the same cloud project removes that dependency.
+- Observation: four things only surfaced against the real platform. Shelling out to the cloud SDK is not viable in a container (roughly a gigabyte of image for three API calls), so the service needs a REST transport. The managed frontend reserves `/healthz` and answers 404 before the request ever reaches the container, so a health probe on that path silently disappears. When the service is private, the platform consumes the `Authorization` header for its own IAM check, colliding with the app's bearer token — the platform offers a second header for its own token precisely for this. And an inherited organisation policy restricting IAM members to the workspace domain blocks public invocation entirely, so a phone browser cannot reach a service that is otherwise perfectly deployed.
+- Improvement: added a REST transport to `remote_vm` — Compute instance read, start, stop, machine type, and the BigQuery billing query — selected automatically when the binaries are absent, using the environment's default credentials. Configuration now also comes from environment variables, since a container has no user config file. Renamed the probe to `/ping`. Endpoints that report purely local facts (SSH connections, file sync) now carry an `observable` flag, because a remote server answering "zero connections" reads as "nothing is running" instead of "I cannot see". The container runs unprivileged from a slim base image.
+- Evidence: `uv run pytest zab/tests -q` passes 454 tests, including five new ones covering the REST path, its error reporting, the operation response, BigQuery row flattening, and the observability flags — the missing `httpx` import that broke the container was invisible locally because the binary path never exercised that branch. Deployed revision verified end to end: instance state and real spend returned through the REST transport under a service account holding admin rights on a single instance.
+- Status: verified
+
 ## 2026-07-31 - Ship a narrow, token-protected control app for the remote dev VM
 
 - Trigger: mention

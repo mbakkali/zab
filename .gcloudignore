@@ -1,0 +1,12 @@
+.git
+.venv
+zab-ui/node_modules
+zab-ui/dist
+zab-ui/test-results
+scratch
+wiki
+docs
+examples
+deploy
+**/__pycache__
+*.pyc

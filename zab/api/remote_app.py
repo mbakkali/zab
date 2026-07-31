@@ -35,7 +35,9 @@ from zab.services import remote_vm
 
 TOKEN_ENV = "ZAB_REMOTE_TOKEN"
 TOKEN_FILENAME = "remote-token"
-PUBLIC_PATHS = {"/healthz"}
+# `/healthz` ne peut pas servir de sonde : le frontend Google le réserve et
+# répond 404 avant même que la requête n'atteigne le conteneur.
+PUBLIC_PATHS = {"/ping"}
 
 
 def pwa_dir() -> Path:
@@ -145,8 +147,8 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
             return JSONResponse({"error": "jeton invalide"}, status_code=401)
         return await call_next(request)
 
-    @app.get("/healthz")
-    def healthz() -> dict[str, Any]:
+    @app.get("/ping")
+    def ping() -> dict[str, Any]:
         # Sonde du tunnel : ne révèle ni l'état de la VM ni la configuration.
         return {"status": "ok", "service": "zab-remote"}
 

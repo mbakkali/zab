@@ -25,10 +25,10 @@ def _auth(token: str = "jeton-de-test") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_healthz_is_public_and_reveals_nothing(monkeypatch, tmp_path: Path) -> None:
+def test_ping_is_public_and_reveals_nothing(monkeypatch, tmp_path: Path) -> None:
     client = _client(monkeypatch, tmp_path)
 
-    response = client.get("/healthz")
+    response = client.get("/ping")
 
     assert response.status_code == 200
     body = response.json()

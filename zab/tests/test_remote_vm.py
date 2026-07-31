@@ -236,6 +236,96 @@ def test_cost_report_requires_billing_table(monkeypatch, tmp_path: Path) -> None
     assert "billing.table" in out["error"]
 
 
+def test_rest_transport_is_used_when_gcloud_is_absent(monkeypatch, tmp_path: Path) -> None:
+    """En conteneur, aucun binaire cloud n'est présent : tout doit passer par l'API."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path, {"machine_type": "e2-standard-4"})
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: None)
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_api(method: str, url: str, *, json_body=None, timeout: float = 120.0):
+        calls.append((method, url))
+        if url.endswith(f"instances/{TEST_INSTANCE}"):
+            return _instance_payload("RUNNING")
+        if "machineTypes" in url:
+            return {"guestCpus": 4, "memoryMb": 16384}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(remote_vm, "_api_call", fake_api)
+
+    out = remote_vm.vm_state()
+
+    assert out["found"] is True
+    assert out["status"] == "RUNNING"
+    assert out["vcpus"] == 4
+    assert all(method == "GET" for method, _ in calls)
+    assert any("compute.googleapis.com" in url for _, url in calls)
+
+
+def test_rest_transport_reports_api_errors(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: None)
+
+    def boom(method: str, url: str, *, json_body=None, timeout: float = 120.0):
+        raise RuntimeError("403 permission refusée sur l'instance")
+
+    monkeypatch.setattr(remote_vm, "_api_call", boom)
+
+    out = remote_vm.vm_state()
+
+    assert out["status"] == "error"
+    assert "permission refusée" in out["error"]
+
+
+def test_rest_start_returns_the_operation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: None)
+    monkeypatch.setattr(remote_vm, "_vmctl", lambda cfg, command, *, timeout: None)
+    monkeypatch.setattr(
+        remote_vm,
+        "_api_call",
+        lambda method, url, *, json_body=None, timeout=120.0: {"name": "op-1", "status": "RUNNING"},
+    )
+
+    out = remote_vm.start_vm()
+
+    assert out["ok"] is True
+    assert out["via"] == "api"
+    assert out["operation"] == "op-1"
+
+
+def test_billing_query_flattens_bigquery_rest_rows(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: None)
+    monkeypatch.setattr(
+        remote_vm,
+        "_api_call",
+        lambda method, url, *, json_body=None, timeout=120.0: {
+            "jobComplete": True,
+            "schema": {"fields": [{"name": "day"}, {"name": "sku"}, {"name": "cost"}]},
+            "rows": [{"f": [{"v": "2026-07-01"}, {"v": "E2 Instance Core"}, {"v": "0.5"}]}],
+        },
+    )
+
+    rows = remote_vm._run_billing_query(remote_vm.config(), 30)
+
+    assert rows == [{"day": "2026-07-01", "sku": "E2 Instance Core", "cost": "0.5"}]
+
+
+def test_ssh_and_sync_declare_when_they_cannot_observe(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: None)
+    monkeypatch.setattr(remote_vm, "_run", lambda cmd, *, timeout=30, env=None: (127, "", "absent"))
+
+    assert remote_vm.ssh_state()["observable"] is False
+    assert remote_vm.sync_state()["observable"] is False
+
+
 def test_elapsed_to_seconds_handles_ps_formats() -> None:
     assert remote_vm._elapsed_to_seconds("12:34") == 754
     assert remote_vm._elapsed_to_seconds("01:02:03") == 3723
