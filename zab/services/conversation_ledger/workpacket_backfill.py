@@ -286,6 +286,8 @@ def rebuild_packet(
     events: list[dict[str, Any]],
     *,
     now: datetime | None = None,
+    project_refs: list[str] | None = None,
+    key_people: list[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Renvoie (paquet réécrit, différences). Le paquet d'entrée n'est pas muté."""
     facts = collect_facts(events, now=now)
@@ -304,6 +306,13 @@ def rebuild_packet(
         if any(scores):
             updated["confidence"] = round(sum(scores) / len(scores), 2)
 
+    # Rattachements du graphe d'entités : dépôts de code et interlocuteurs du client.
+    # Fournis par l'appelant, qui résout le graphe une seule fois pour tous les paquets.
+    if project_refs is not None:
+        updated["zab_project_refs"] = sorted(set(project_refs))
+    if key_people is not None:
+        updated["key_people"] = list(key_people)
+
     metadata = dict(updated.get("metadata") or {})
     metadata["ledger_facts"] = facts
     updated["metadata"] = metadata
@@ -311,7 +320,7 @@ def rebuild_packet(
 
     changes = {
         field: {"before": packet.get(field), "after": updated.get(field)}
-        for field in ("title", "state", "actions", "confidence")
+        for field in ("title", "state", "actions", "confidence", "zab_project_refs", "key_people")
         if packet.get(field) != updated.get(field)
     }
     return updated, changes

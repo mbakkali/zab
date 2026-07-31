@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from typing import Any
 
 from zab.services import local_db
@@ -193,20 +195,42 @@ def backfill_workpackets(*, dry_run: bool = True, limit: int = 200) -> dict[str,
     leurs sources : seule leur lecture est refaite. Idempotent — relancer sans
     nouvel évènement ne produit aucune différence.
     """
+    from zab.services.conversation_ledger.entity_registry import list_organizations
+    from zab.services.conversation_ledger.org_profiles import INTERNAL_DOMAINS
+    from zab.services.entity_graph import key_people_for, link_projects, people_from_events
+    from zab.services.workspace_projects import discover_projects
+
     with local_db.transaction() as conn:
         packets = list_workpackets(conn, limit=limit)
+        organizations = list_organizations(conn)
+        all_events = [
+            json.loads(row[0])
+            for row in conn.execute("SELECT payload_json FROM ledger_events").fetchall()
+        ]
+
+    # Le graphe est résolu une fois pour tous les paquets : les projets locaux et
+    # les interlocuteurs ne dépendent pas du paquet, seulement de l'organisation.
+    graph = link_projects(discover_projects(), organizations)
+    projects_by_org = graph["projects_by_organization"]
+    people = people_from_events(all_events, organizations, internal_domains=INTERNAL_DOMAINS)["people"]
 
     results: list[dict[str, Any]] = []
     changed: list[dict[str, Any]] = []
     for packet in packets:
+        organization_id = str(packet.get("organization_id") or "")
         with local_db.transaction() as conn:
             events = list_events(
                 conn,
-                organization_id=str(packet.get("organization_id") or "") or None,
+                organization_id=organization_id or None,
                 client_workstream_id=str(packet.get("client_workstream_id") or "") or None,
                 limit=1000,
             )
-        updated, changes = rebuild_packet(packet, events)
+        updated, changes = rebuild_packet(
+            packet,
+            events,
+            project_refs=projects_by_org.get(organization_id, []),
+            key_people=key_people_for(people, organization_id=organization_id),
+        )
         entry = {
             "workpacket_id": updated.get("workpacket_id"),
             "display_id": updated.get("display_id"),
@@ -214,6 +238,8 @@ def backfill_workpackets(*, dry_run: bool = True, limit: int = 200) -> dict[str,
             "state": updated.get("state"),
             "actions": updated.get("actions"),
             "event_count": len(events),
+            "project_refs": updated.get("zab_project_refs") or [],
+            "key_people": updated.get("key_people") or [],
             "changes": changes,
         }
         results.append(entry)

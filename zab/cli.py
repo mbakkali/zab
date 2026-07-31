@@ -117,11 +117,84 @@ app.add_typer(command_center_app, name="command-center")
 workpacket_app = typer.Typer(help="Contrats Work Packet : règle globale et intake de signaux.", no_args_is_help=True)
 app.add_typer(workpacket_app, name="workpacket")
 
+entities_app = typer.Typer(help="Graphe d'entités : organisations, projets, personnes.", no_args_is_help=True)
+app.add_typer(entities_app, name="entities")
+
 interactions_app = typer.Typer(help="Conversation Ledger : channels, sync et timeline.", no_args_is_help=True)
 app.add_typer(interactions_app, name="interactions")
 
 ledger_app = typer.Typer(help="Conversation Ledger : eval et preflight.", no_args_is_help=True)
 app.add_typer(ledger_app, name="ledger")
+
+
+
+@entities_app.command("coverage")
+def entities_coverage_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Taux de rattachement des évènements, projets et personnes aux organisations."""
+    from zab.services.conversation_ledger.entity_graph_report import coverage_report
+
+    payload = coverage_report()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    ev = payload["events"]
+    typer.echo(typer.style("Rattachement aux organisations", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  Évènements  : {ev['with_organization']}/{ev['total']} ({ev['organization_pct']} %)")
+    typer.echo(f"  Workstreams : {ev['with_workstream']}/{ev['total']} ({ev['workstream_pct']} %)")
+    pr = payload["projects"]
+    typer.echo(f"  Projets     : {pr['linked_count']}/{pr['total']} rattachés, {pr['organizations_covered']}/{payload['organizations']['total']} organisations couvertes")
+    pe = payload["people"]
+    typer.echo(f"  Personnes   : {pe['counterpart_count']} interlocuteurs réels, {pe['attached_count']} rattachés")
+    wp = payload["workpackets"]
+    typer.echo(f"  WorkPackets : {wp['with_projects']}/{wp['total']} avec projet, {wp['with_people']}/{wp['total']} avec interlocuteurs")
+    if payload["suggested_domains"]:
+        typer.echo("\n  Domaines à rattacher (proposition) :")
+        for row in payload["suggested_domains"][:8]:
+            typer.echo(f"    {row['domain']:32} {row['counterparts']:3} interlocuteurs, {row['events']:5} évts")
+
+
+@entities_app.command("people")
+def entities_people_cmd(
+    *,
+    organization: Optional[str] = typer.Option(None, "--organization"),
+    limit: int = typer.Option(20, "--limit"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Interlocuteurs récurrents dérivés du ledger, rattachés par domaine e-mail."""
+    from zab.services.conversation_ledger.entity_graph_report import people_report
+
+    payload = people_report(organization_id=organization, limit=limit)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for row in payload["people"]:
+        org = row.get("organization_id") or "-"
+        typer.echo(
+            f"  {str(row.get('display_name') or row['email'])[:26]:28} {org:26} "
+            f"in={row['inbound_count']:4} out={row['outbound_count']:4} rdv={row['meeting_count']:4}"
+        )
+
+
+@entities_app.command("projects")
+def entities_projects_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Projets locaux rattachés à une organisation, et ceux qui ne le sont pas."""
+    from zab.services.conversation_ledger.entity_graph_report import projects_report
+
+    payload = projects_report()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for org_id, ids in payload["projects_by_organization"].items():
+        typer.echo(f"  {org_id:28} {len(ids):3} projets")
+    typer.echo(f"\n  Non rattachés : {payload['unlinked_count']}")
+    for row in payload["unlinked"][:10]:
+        typer.echo(f"    {str(row['project_id'])[:44]:46} indice org : {row['org_hint']}")
 
 
 @workpacket_app.command("rule")
