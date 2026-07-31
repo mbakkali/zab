@@ -24,7 +24,7 @@ def test_workpacket_intake_rule_contract() -> None:
 
 def test_workpacket_intake_goal_contract() -> None:
     payload = intake_from_params(
-        "/goal /Users/mbakkali/projects/flowmetrik-cowork/docs/cowork-maintenance/plan-regle-globale-workpacket-intake-zab-2026-07-12.md\n"
+        "/goal docs/plans/workpacket-intake-global-rule.md\n"
         "\n"
         "développe ce plan\n"
         "Et teste le",

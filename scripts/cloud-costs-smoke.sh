@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GCP_CONFIG="${GCP_CONFIG:-zab-flowmetrik-costs}"
-GCP_BILLING_ACCOUNTS="${GCP_BILLING_ACCOUNTS:-015127-B40F4A-7CB527,016C98-D0BEA0-3F18DB}"
-GCP_BILLING_EXPORTS="${GCP_BILLING_EXPORTS:-flowmetrik-all:flowmetrik_billing_export,agile-ipmvp-prod:flowmetrik_billing_export}"
+GCP_CONFIG="${GCP_CONFIG:-zab-costs}"
+GCP_BILLING_ACCOUNTS="${GCP_BILLING_ACCOUNTS:-}"   # ex : 0X0X0X-0X0X0X-0X0X0X,...
+GCP_BILLING_EXPORTS="${GCP_BILLING_EXPORTS:-}"     # ex : <project>:<billing_export_dataset>,...
 
-SCW_CONFIG_PATH="${SCW_CONFIG_PATH:-/Users/mbakkali/projects/credentials/scaleway-config.yaml}"
-SCW_PROFILE="${SCW_PROFILE:-arpastrance-profile}"
+SCW_CONFIG_PATH="${SCW_CONFIG_PATH:-${HOME}/.config/scw/config.yaml}"
+SCW_PROFILE="${SCW_PROFILE:-default}"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
