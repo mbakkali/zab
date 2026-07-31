@@ -15,6 +15,18 @@ type WorkPacket = {
   client_workstream_label?: string
   confidence?: number
   updated_at?: string
+  actions?: string[]
+  metadata?: { ledger_facts?: { next_event_at?: string | null; awaiting_reply_from_us?: boolean; days_since_last_event?: number | null } }
+}
+
+/** Une échéance passe avant une réponse due, qui passe avant un simple suivi. */
+function urgencyRank(item: WorkPacket): number {
+  const facts = item.metadata?.ledger_facts
+  if (facts?.next_event_at) return 0
+  if (facts?.awaiting_reply_from_us) return 1
+  if (item.state === 'active') return 2
+  if (item.state === 'candidate') return 3
+  return 4
 }
 
 async function apiJson<T>(path: string): Promise<T> {
@@ -35,7 +47,10 @@ export function WorkpacketsView() {
     setError(null)
     try {
       const payload = await apiJson<{ items: WorkPacket[] }>('/api/workpackets')
-      setItems(payload.items || [])
+      const rows = [...(payload.items || [])].sort(
+        (a, b) => urgencyRank(a) - urgencyRank(b) || (a.display_id || '').localeCompare(b.display_id || ''),
+      )
+      setItems(rows)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -98,25 +113,26 @@ export function WorkpacketsView() {
             <TableHeader>
               <TableRow>
                 <TableHead>ID</TableHead>
-                <TableHead>Title</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Org / Workstream</TableHead>
+                <TableHead>Tâche et prochaine action</TableHead>
+                <TableHead>État</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((item) => (
                 <TableRow key={item.workpacket_id} className="cursor-pointer" onClick={() => void openDetail(item)}>
-                  <TableCell>{item.display_id || item.workpacket_id}</TableCell>
-                  <TableCell>{item.title}</TableCell>
-                  <TableCell>{item.state}</TableCell>
+                  <TableCell className="align-top">{item.display_id || item.workpacket_id}</TableCell>
                   <TableCell>
-                    {item.organization_label} / {item.client_workstream_label}
+                    <div className="font-medium">{item.title}</div>
+                    {item.actions?.length ? (
+                      <div className="mt-1 text-sm text-muted-foreground">→ {item.actions[0]}</div>
+                    ) : null}
                   </TableCell>
+                  <TableCell className="align-top">{item.state}</TableCell>
                 </TableRow>
               ))}
               {!items.length && !loading ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground">
+                  <TableCell colSpan={3} className="text-muted-foreground">
                     No WorkPackets yet. Run sync + reconstruct from CLI.
                   </TableCell>
                 </TableRow>
