@@ -1237,20 +1237,38 @@ def gateway_cmd(
 
 @app.command("dashboard-dev")
 def dashboard_dev_cmd(
-    host: str = typer.Option("127.0.0.1", help="Bind API (identique à `zab dashboard`)"),
-    port: int = typer.Option(8750, help="Port API en mode dev (défaut 8750 ; `zab dashboard` reste sur 8742)"),
-    ui_port: int = typer.Option(5280, help="Port Vite (zab-ui)"),
+    host: Optional[str] = typer.Option(None, help="Bind API (défaut 127.0.0.1, identique à `zab dashboard`)"),
+    port: Optional[int] = typer.Option(
+        None,
+        help=(
+            "Port API en mode dev (défaut 8750 ; `zab dashboard` reste sur 8742). "
+            "Sans valeur explicite, le lanceur bascule sur un port libre si 8750 est pris."
+        ),
+    ),
+    ui_port: Optional[int] = typer.Option(None, help="Port Vite (zab-ui), défaut 5280"),
 ) -> None:
     """Lance l’API en --reload et Vite (zab-ui) avec proxy /api dans le même terminal."""
     script = zab_repo_root() / "scripts" / "zab-dashboard-dev.sh"
     if not script.is_file():
         typer.echo(f"Script introuvable : {script}", err=True)
         raise typer.Exit(1)
+    # N'exporter que ce que l'appelant a explicitement demandé : forcer les valeurs par
+    # défaut rendrait tout port « explicite » et désactiverait le repli automatique.
     env = os.environ.copy()
-    env["ZAB_DASHBOARD_HOST"] = host
-    env["ZAB_DASHBOARD_PORT"] = str(port)
-    env["ZAB_UI_DEV_PORT"] = str(ui_port)
-    proc = subprocess.run(["bash", str(script)], cwd=str(zab_repo_root()), env=env)
+    if host is not None:
+        env["ZAB_DASHBOARD_HOST"] = host
+    if port is not None:
+        env["ZAB_DASHBOARD_PORT"] = str(port)
+    if ui_port is not None:
+        env["ZAB_UI_DEV_PORT"] = str(ui_port)
+    root = str(zab_repo_root())
+    if os.name == "posix":
+        # `exec` plutôt qu'un sous-processus : un lanceur (Raycast, launchd) qui suit ce
+        # PID envoie alors ses signaux directement au script, dont le trap libère les
+        # ports. Avec un sous-processus, le signal s'arrêtait ici et laissait des orphelins.
+        os.chdir(root)
+        os.execve("/bin/bash", ["bash", str(script)], env)
+    proc = subprocess.run(["bash", str(script)], cwd=root, env=env)
     raise typer.Exit(proc.returncode)
 
 

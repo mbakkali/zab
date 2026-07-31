@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-31 - Make `dashboard-dev` survive a busy API port and stop leaking orphans
+
+- Trigger: debug
+- Context: a desktop launcher shortcut that runs `zab dashboard-dev` in the background stopped opening the dashboard; it silently opened a dead browser tab after a 30-second wait.
+- Observation: five compounding defects. First, an unrelated always-on service supervised by the OS service manager had taken the dev API port, and the launcher aborted with `Port API explicite déjà occupé` instead of reusing a healthy zab API that was already answering `/api/health`. Second, the automatic port fallback was dead code: the CLI always exported `ZAB_DASHBOARD_PORT` from its own option default, so every port looked explicit. Third, the launcher ended with `exec npm run dev`, which replaced the shell and disabled the cleanup trap, so a dying Vite left the API orphaned (reparented to init) and holding the port for every later run. Fourth, the port probe bound without `SO_REUSEADDR`, so a port merely in `TIME_WAIT` was reported as occupied. Fifth, a diagnostic `lsof` pipeline with no match aborted the whole script under `set -o pipefail`.
+- Improvement: reuse an already-listening zab API instead of failing, and print how to get a dedicated `--reload` API on another port; only export host/port/ui-port when the caller passed them; `exec` the launcher script from the CLI so a launcher's signal reaches the shell that owns the cleanup trap; kill the whole process tree of both the API and Vite on exit; run Vite in the background when there is no TTY so a `SIGTERM` is not deferred; set `SO_REUSEADDR` in the port probe; guard the diagnostic pipeline; resolve Node on `PATH` before the first npm call; and name the process holding a busy port in the error output.
+- Evidence: `bash scripts/zab-dashboard-dev.sh` under a minimal environment covers the three paths — reuse of a live API, a dedicated port with `--reload`, and an explicit port held by a non-zab service (now reported with the holder). After `SIGTERM` on the launcher PID, no API or Vite process survives. `uv run pytest zab/tests -q` passes 422 tests.
+- Status: verified
+
 ## 2026-07-31 - Make the conversation digest usable for per-workspace review
 
 - Trigger: CLI
