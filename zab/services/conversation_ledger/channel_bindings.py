@@ -317,9 +317,56 @@ def check_channel_binding(binding: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+_CATALOG_STATUS_TO_CHANNEL = {
+    "ok": "ok",
+    "warn": "degraded",
+    "warning": "degraded",
+    "degraded": "degraded",
+    "fail": "degraded",
+    "error": "degraded",
+}
+
+
+def _cached_channel_status(binding: dict[str, Any]) -> dict[str, Any] | None:
+    """Dernier statut connu du Tools Catalog, sans relancer de sonde.
+
+    Le contrôle live sort vers Gmail, WhatsApp ou Attio : trop coûteux pour un
+    affichage de liste. Sans lui, chaque canal restait pourtant à `unknown`,
+    alors que le catalogue porte déjà un statut daté pour le même `tool_id`.
+    """
+    tool_id = str(binding.get("tool_id") or "")
+    if not tool_id:
+        return None
+    try:
+        payload = tool_catalog.get_tool(tool_id)
+    except Exception:  # noqa: BLE001 - un canal sans verdict vaut mieux qu'une liste en erreur
+        return None
+    tool = (payload or {}).get("tool") if payload else None
+    if not isinstance(tool, dict):
+        return None
+    status = _CATALOG_STATUS_TO_CHANNEL.get(str(tool.get("status") or "").lower())
+    if status is None:
+        return None  # `skipped` ou statut inconnu : ne pas inventer de verdict
+    return {
+        "last_check_status": status,
+        "last_check_reason": tool.get("status_reason"),
+        "last_checked_at": tool.get("last_checked_at_utc"),
+        "last_check_source": "tool_catalog_cache",
+    }
+
+
 def list_channels(*, check: bool = True) -> dict[str, Any]:
     bindings = load_channel_bindings()
-    checked = [check_channel_binding(b) if check else b for b in bindings]
+    checked: list[dict[str, Any]] = []
+    for binding in bindings:
+        if check:
+            checked.append(check_channel_binding(binding))
+            continue
+        item = dict(binding)
+        cached = _cached_channel_status(binding)
+        if cached:
+            item.update(cached)
+        checked.append(item)
     for item in checked:
         validate_channel_binding(item)
     ok = sum(1 for c in checked if c.get("last_check_status") == "ok")

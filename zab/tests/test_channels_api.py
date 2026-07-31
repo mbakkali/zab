@@ -85,3 +85,36 @@ def test_api_dashboard_stats(client, monkeypatch, tmp_path) -> None:
     assert "unread_emails_count" in data
     assert data["total_tasks_count"] == 42
     assert "urgent_actions_count" in data
+
+
+def test_list_channels_uses_cached_tool_status_without_live_probe(monkeypatch) -> None:
+    """Sans sonde live, le statut vient du catalogue plutôt que de rester `unknown`."""
+    from zab.services.conversation_ledger import channel_bindings
+
+    monkeypatch.setattr(
+        channel_bindings,
+        "load_channel_bindings",
+        lambda: [
+            {"channel_id": "c1", "channel_type": "gmail", "label": "C1", "tool_id": "t-warn"},
+            {"channel_id": "c2", "channel_type": "gmail", "label": "C2", "tool_id": "t-skipped"},
+        ],
+    )
+    catalog = {
+        "t-warn": {"tool": {"status": "warn", "status_reason": "connector absent", "last_checked_at_utc": "2026-07-31T08:00:00+00:00"}},
+        "t-skipped": {"tool": {"status": "skipped", "status_reason": "probe inconnue"}},
+    }
+    monkeypatch.setattr(channel_bindings.tool_catalog, "get_tool", lambda tid: catalog.get(tid))
+
+    def _boom(_binding):  # la version non-live ne doit lancer aucune sonde
+        raise AssertionError("check_channel_binding must not run when check=False")
+
+    monkeypatch.setattr(channel_bindings, "check_channel_binding", _boom)
+
+    out = channel_bindings.list_channels(check=False)
+    by_id = {c["channel_id"]: c for c in out["channels"]}
+    assert by_id["c1"]["last_check_status"] == "degraded"
+    assert by_id["c1"]["last_check_source"] == "tool_catalog_cache"
+    assert by_id["c1"]["last_checked_at"] == "2026-07-31T08:00:00+00:00"
+    # `skipped` n'est pas un verdict : on ne fabrique pas de statut.
+    assert "last_check_status" not in by_id["c2"]
+    assert out["summary"]["degraded"] == 1
