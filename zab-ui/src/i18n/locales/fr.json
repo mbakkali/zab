@@ -540,7 +540,9 @@
       "hermes": "Hermes",
       "gcp": "GCP",
       "active": "Actifs",
-      "paused": "Suspendus"
+      "paused": "Suspendus",
+      "error": "Erreurs",
+      "launchd": "launchd"
     },
     "detail": {
       "emptyTitle": "Aucun cron sélectionné",

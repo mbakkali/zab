@@ -43,7 +43,7 @@ export default function CronsView() {
   const [logs, setLogs] = useState<LogRun[]>([])
   const [loadingLogs, setLoadingLogs] = useState(false)
   const [selectedLog, setSelectedLog] = useState<LogRun | null>(null)
-  const [filter, setFilter] = useState<'all' | 'hermes' | 'gcp' | 'active' | 'paused'>('all')
+  const [filter, setFilter] = useState<'all' | 'error' | 'hermes' | 'gcp' | 'launchd' | 'active' | 'paused'>('all')
   const [runningCronId, setRunningCronId] = useState<string | null>(null)
 
   // Charger les crons initialement
@@ -141,9 +141,14 @@ export default function CronsView() {
   }
 
   // Filtrage des crons
+  const errorCount = crons.filter((c) => c.status === 'error').length
+
   const filteredCrons = crons.filter((c) => {
+    // « Erreur » d'abord : une routine morte doit se voir sans faire défiler 28 entrées.
+    if (filter === 'error') return c.status === 'error'
     if (filter === 'hermes') return c.source === 'hermes'
     if (filter === 'gcp') return c.source === 'gcp'
+    if (filter === 'launchd') return c.source === 'launchd'
     if (filter === 'active') return c.enabled
     if (filter === 'paused') return !c.enabled
     return true
@@ -233,7 +238,7 @@ export default function CronsView() {
         <div className="flex w-full flex-col min-w-0 md:w-1/2 lg:w-5/12 bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
           {/* Menu de filtrage */}
           <div className="border-b border-zinc-100 bg-zinc-50/50 p-3 flex gap-1 overflow-x-auto scrollbar-none">
-            {(['all', 'hermes', 'gcp', 'active', 'paused'] as const).map((f) => (
+            {(['all', 'error', 'hermes', 'gcp', 'launchd', 'active', 'paused'] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -244,8 +249,10 @@ export default function CronsView() {
                 }`}
               >
                 {f === 'all' && t('crons.filter.all')}
+                {f === 'error' && `${t('crons.filter.error')}${errorCount ? ` (${errorCount})` : ''}`}
                 {f === 'hermes' && t('crons.filter.hermes')}
                 {f === 'gcp' && t('crons.filter.gcp')}
+                {f === 'launchd' && t('crons.filter.launchd')}
                 {f === 'active' && t('crons.filter.active')}
                 {f === 'paused' && t('crons.filter.paused')}
               </button>
