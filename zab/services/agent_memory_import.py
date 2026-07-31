@@ -375,12 +375,40 @@ def _hermes_session_to_messages(messages: list[dict[str, Any]]) -> list[dict[str
     return out
 
 
-def collect_cursor_documents() -> list[AgentMemoryDocument]:
+def _is_stale(path: Path, modified_since: datetime | None, stats: dict[str, int] | None) -> bool:
+    """Vrai si le fichier est trop ancien pour la fenêtre demandée, sans le lire.
+
+    Parser un transcript coûte plusieurs ordres de grandeur de plus qu'un `stat()` :
+    sur un poste avec des milliers de sessions, filtrer d'abord sur la date de
+    modification évite de désérialiser tout l'historique pour n'en retenir qu'un jour.
+    L'appelant doit inclure une marge dans `modified_since` : un document peut porter
+    un horodatage interne postérieur à son mtime.
+    """
+    if modified_since is None:
+        return False
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return False  # en cas de doute, on parse
+    if mtime >= modified_since:
+        return False
+    if stats is not None:
+        stats["skipped_stale"] = stats.get("skipped_stale", 0) + 1
+    return True
+
+
+def collect_cursor_documents(
+    *,
+    modified_since: datetime | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[AgentMemoryDocument]:
     docs: list[AgentMemoryDocument] = []
     home = Path.home()
     cursor_root = home / ".cursor" / "projects"
     if cursor_root.exists():
         for path in sorted(cursor_root.glob("*/agent-transcripts/**/*.jsonl")):
+            if _is_stale(path, modified_since, stats):
+                continue
             content, raw_events, messages = _parse_jsonl_transcript_arrays(path)
             if content:
                 docs.append(
@@ -418,11 +446,17 @@ def collect_cursor_documents() -> list[AgentMemoryDocument]:
     return docs
 
 
-def collect_claude_documents() -> list[AgentMemoryDocument]:
+def collect_claude_documents(
+    *,
+    modified_since: datetime | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[AgentMemoryDocument]:
     docs: list[AgentMemoryDocument] = []
     claude = Path.home() / ".claude" / "projects"
     if claude.exists():
         for path in sorted(claude.glob("**/*.jsonl")):
+            if _is_stale(path, modified_since, stats):
+                continue
             content, raw_events, messages = _parse_jsonl_transcript_arrays(path)
             if content:
                 docs.append(
@@ -440,10 +474,16 @@ def collect_claude_documents() -> list[AgentMemoryDocument]:
     return docs
 
 
-def collect_codex_documents() -> list[AgentMemoryDocument]:
+def collect_codex_documents(
+    *,
+    modified_since: datetime | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[AgentMemoryDocument]:
     docs: list[AgentMemoryDocument] = []
     codex = Path.home() / ".codex"
     for path in sorted((codex / "sessions").glob("**/*.jsonl")) if (codex / "sessions").exists() else []:
+        if _is_stale(path, modified_since, stats):
+            continue
         content, raw_events, messages = _parse_jsonl_transcript_arrays(path)
         if content:
             docs.append(
@@ -493,12 +533,18 @@ def collect_codex_documents() -> list[AgentMemoryDocument]:
     return docs
 
 
-def collect_kimi_documents() -> list[AgentMemoryDocument]:
+def collect_kimi_documents(
+    *,
+    modified_since: datetime | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[AgentMemoryDocument]:
     docs: list[AgentMemoryDocument] = []
     kimi = Path.home() / ".kimi"
     for directory, room in ((kimi / "user-history", "conversation"), (kimi / "sessions", "conversation"), (kimi / "plans", "plans")):
         if directory.exists():
             for path in _interesting_files(directory):
+                if room == "conversation" and _is_stale(path, modified_since, stats):
+                    continue
                 if path.suffix.lower() == ".jsonl":
                     content, raw_events, messages = _parse_jsonl_transcript_arrays(path)
                 else:
@@ -595,7 +641,11 @@ def _gemini_path_skipped(path: Path) -> str | None:
     return None
 
 
-def collect_gemini_cli_documents() -> list[AgentMemoryDocument]:
+def collect_gemini_cli_documents(
+    *,
+    modified_since: datetime | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[AgentMemoryDocument]:
     """Collecte conservative : uniquement des .jsonl sous ~/.gemini hors chemins sensibles, contenu parsable."""
     docs: list[AgentMemoryDocument] = []
     root = Path.home() / ".gemini"
@@ -604,6 +654,8 @@ def collect_gemini_cli_documents() -> list[AgentMemoryDocument]:
     for path in sorted(root.rglob("*.jsonl")):
         skip = _gemini_path_skipped(path)
         if skip:
+            continue
+        if _is_stale(path, modified_since, stats):
             continue
         try:
             if path.stat().st_size > 5_000_000:
@@ -670,6 +722,8 @@ def discover_gemini_cli_status() -> dict[str, Any]:
 def _collect_agent_memory_documents_with_failures(
     *,
     providers: FrozenSet[str] | None = None,
+    modified_since: datetime | None = None,
+    stats: dict[str, int] | None = None,
 ) -> tuple[list[AgentMemoryDocument], dict[str, str], FrozenSet[str]]:
     want = ALL_CONVERSATION_PROVIDERS if providers is None else providers
     docs: list[AgentMemoryDocument] = []
@@ -682,6 +736,14 @@ def _collect_agent_memory_documents_with_failures(
         PROVIDER_HERMES: _collect_hermes_documents_strict,
         PROVIDER_GEMINI: collect_gemini_cli_documents,
     }
+    # Hermes lit une base SQLite, pas des fichiers : le filtre par mtime ne s'y applique pas.
+    file_backed = {
+        PROVIDER_CURSOR,
+        PROVIDER_CLAUDE,
+        PROVIDER_CODEX,
+        PROVIDER_KIMI,
+        PROVIDER_GEMINI,
+    }
     for provider in (
         PROVIDER_CURSOR,
         PROVIDER_CLAUDE,
@@ -693,15 +755,25 @@ def _collect_agent_memory_documents_with_failures(
         if provider not in want:
             continue
         try:
-            docs.extend(collectors[provider]())
+            if provider in file_backed and (modified_since is not None or stats is not None):
+                docs.extend(collectors[provider](modified_since=modified_since, stats=stats))
+            else:
+                docs.extend(collectors[provider]())
         except Exception as exc:  # noqa: BLE001 - provider isolation: one corrupt source must not kill sync.
             failed[provider] = str(exc) or type(exc).__name__
     successful = frozenset(p for p in want if p not in failed)
     return docs, failed, successful
 
 
-def collect_agent_memory_documents(*, providers: FrozenSet[str] | None = None) -> list[AgentMemoryDocument]:
-    docs, _failed, _successful = _collect_agent_memory_documents_with_failures(providers=providers)
+def collect_agent_memory_documents(
+    *,
+    providers: FrozenSet[str] | None = None,
+    modified_since: datetime | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[AgentMemoryDocument]:
+    docs, _failed, _successful = _collect_agent_memory_documents_with_failures(
+        providers=providers, modified_since=modified_since, stats=stats
+    )
     return docs
 
 

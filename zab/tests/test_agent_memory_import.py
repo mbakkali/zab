@@ -155,7 +155,7 @@ def test_collect_hermes_documents_skips_malformed_sqlite(tmp_path: Path, monkeyp
 
 
 def test_sync_dry_run_reports_failed_provider_without_crashing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("zab.services.agent_memory_import.collect_cursor_documents", lambda: [])
+    monkeypatch.setattr("zab.services.agent_memory_import.collect_cursor_documents", lambda **_: [])
 
     def broken_hermes():
         raise RuntimeError("database disk image is malformed")

@@ -20,6 +20,11 @@ from zab.user_config import organization_slug_set_from_user_config
 
 MAX_INTENT_CHARS = 260
 RECENT_CLOCK_SKEW = timedelta(minutes=5)
+# Marge appliquée au filtre par date de modification des fichiers. Un transcript peut
+# porter un horodatage interne postérieur à son mtime (horloge décalée, écriture
+# différée) : on n'écarte sans le lire qu'un fichier plus vieux que la fenêtre de
+# cette marge, ce qui garde le filtre invisible pour le résultat.
+STALE_FILE_MARGIN = timedelta(days=2)
 
 
 @dataclass(frozen=True)
@@ -62,7 +67,16 @@ def build_conversation_digest(
         raise ValueError("until doit etre posterieur a since")
     lim = max(1, min(int(limit), 300))
     batch_n = max(1, min(int(batch_size), 50))
-    docs = list(documents) if documents is not None else collect_agent_memory_documents(providers=providers)
+    collect_stats: dict[str, int] = {}
+    if documents is not None:
+        docs = list(documents)
+    else:
+        docs = collect_agent_memory_documents(
+            providers=providers,
+            modified_since=window_since - STALE_FILE_MARGIN,
+            stats=collect_stats,
+        )
+    skipped_stale = int(collect_stats.get("skipped_stale", 0))
     project_rows = projects if projects is not None else discover_projects()
 
     items: list[ConversationDigestItem] = []
@@ -136,7 +150,12 @@ def build_conversation_digest(
             "since": window_since.isoformat(),
             "until": window_until.isoformat(),
         },
-        "scanned_conversations": scanned_conversations,
+        # `scanned` reste le total considéré, que le transcript ait été lu ou écarté
+        # sur sa seule date de modification : les compteurs restent comparables d'une
+        # version à l'autre, et le détail du raccourci est exposé séparément.
+        "scanned_conversations": scanned_conversations + skipped_stale,
+        "parsed_conversations": scanned_conversations,
+        "skipped_stale_conversations": skipped_stale,
         "retained_conversations": len(items),
         "shown_conversations": len(limited),
         "batch_size": batch_n,
