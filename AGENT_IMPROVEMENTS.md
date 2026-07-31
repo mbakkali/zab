@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-31 - Audit the capability manifest across every surface
+
+- Trigger: debug
+- Context: an agent exercised every capability the manifest declares — each CLI command, every parameterless GET route, and the dashboard pages — to separate what works from what does not.
+- Observation: the surfaces are broadly healthy (the CLI answers all declared read commands; the HTTP API answers its parameterless GET routes; the pages render). Five real defects surfaced. First, the conversation digest parsed every transcript on disk before applying its time window, costing minutes for a one-day window. Second, the overview counted connectors from a two-file legacy config block, showing `0/0` on a workspace exposing nine MCP servers, while the connectors tab and the local-first index both reported nine. Third, two OS-scheduler routines still pointed at the repository's previous directory, so one had silently stopped running for nine days and the other failed every probe with a missing-directory error that was indistinguishable from a genuine auth failure. Fourth, that same watchdog crashed while writing its snapshot because a subprocess timeout returns raw bytes even in text mode. Fifth, the manifest declares a CLI form for one capability that the CLI does not implement, and one declared command has no JSON mode although the manifest advertises a JSON CLI contract.
+- Improvement: filter transcripts by modification date before parsing, with a safety margin and explicit parsed/skipped counters; read the overview connector count from the real aggregation with the legacy computation as a fallback; repoint the stale routines and make the watchdog resolve the repository root tolerantly and decode timeout output; add error and scheduler-source filters to the crons page so a dead routine is visible without scrolling. The two manifest parity gaps are recorded, not yet fixed.
+- Evidence: `uv run pytest zab/tests -q`; the digest drops from about two and a half minutes to under one on the same corpus with an unchanged retained set; the overview card matches the index; both repaired routines exit zero and produce real measurements; screenshots of the pages before and after.
+- Status: verified
+
 ## 2026-07-31 - Turn the Workstation page into a remote dev VM cockpit
 
 - Trigger: mention
