@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-31 - Give WorkPackets a next action instead of a template
+
+- Trigger: mention
+- Context: a workspace had a dozen discovered WorkPackets, each covering a real client thread with dozens of attached events.
+- Observation: discovery named every packet after its own cluster key (`Organization - Workstream`), copied the same four generic intake steps into each one as its action list, and left every packet in `candidate` indefinitely. The result was a list where no two rows could be told apart and none answered "what do I do next", even though the ledger already held everything needed to answer it. The dashboard made it worse by showing a title, a state and an organization column that repeated the title.
+- Improvement: added a backfill that re-reads the events attached to each packet and derives a title, a canonical state and one to three actions that cite dated facts — who wrote last and in which direction, how long the silence has run, which meeting is scheduled. Four correctness traps only appeared when running it on real data: a message timestamped in the future is clock skew rather than a deadline, and silently dropping it selected the previous day's contact; only calendar entries are deadlines, so an email must never become "a meeting to prepare"; the operator's own identities have to be learned from their outbound messages, otherwise a thread they appear in yields "reply to yourself"; and a past meeting owes a follow-up, not a reply. The list view now shows the first action under each title and orders deadlines before replies owed.
+- Evidence: `uv run pytest zab/tests/test_workpacket_backfill.py -q` (10 tests, one per trap plus idempotency); `uv run pytest zab/tests -q` passes 464 tests; on a real corpus the command rewrote every packet on first run and reported zero changes on the second.
+- Status: verified
+
 ## 2026-07-31 - Make the VM control app deployable to a serverless container
 
 - Trigger: mention
