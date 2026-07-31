@@ -179,6 +179,12 @@ type StateSummary = {
   counts: Record<string, number>
 }
 
+/** Agrégation connecteurs de `/api/connectors`, partagée avec l'onglet Connectors. */
+type ConnectorsSummaryPayload = {
+  data: { id: string; any_enabled?: boolean }[]
+  pagination: { total: number }
+}
+
 type CodeToolRow = {
   key: string
   id: string
@@ -307,6 +313,7 @@ export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [toolsLocal, setToolsLocal] = useState<Record<string, unknown> | null>(null)
   const [stateSummary, setStateSummary] = useState<StateSummary | null>(null)
+  const [connectorsSummary, setConnectorsSummary] = useState<ConnectorsSummaryPayload | null>(null)
   const { lines, jobId, running, runPreset } = useJobRunner()
   const {
     lines: securityLines,
@@ -397,6 +404,12 @@ export default function App() {
     void apiJson<StateSummary>('/api/state')
       .then(setStateSummary)
       .catch(() => {})
+    // Source de vérité des connecteurs : la même agrégation que l'onglet Connectors.
+    // `overview.mcp_configs` ne couvre que deux fichiers de config historiques et
+    // affichait « 0/0 » sur un poste qui expose pourtant des serveurs MCP.
+    void apiJson<ConnectorsSummaryPayload>('/api/connectors?limit=200')
+      .then(setConnectorsSummary)
+      .catch(() => {})
     void apiJson<Record<string, unknown>>('/api/tools/local')
       .then(setToolsLocal)
       .catch(() => {})
@@ -409,23 +422,21 @@ export default function App() {
     () => overview?.orgs.reduce((acc, o) => acc + o.skills.length, 0) ?? 0,
     [overview],
   )
-  const totalConnectors = useMemo(
-    () =>
-      overview
-        ? Object.values(overview.mcp_configs).reduce((acc, b) => acc + b.servers.length, 0)
-        : 0,
-    [overview],
-  )
-  const enabledConnectors = useMemo(
-    () =>
-      overview
-        ? Object.values(overview.mcp_configs).reduce(
-            (acc, b) => acc + b.servers.filter((s) => s.enabled).length,
-            0,
-          )
-        : 0,
-    [overview],
-  )
+  const totalConnectors = useMemo(() => {
+    if (connectorsSummary) return connectorsSummary.pagination.total
+    return overview
+      ? Object.values(overview.mcp_configs).reduce((acc, b) => acc + b.servers.length, 0)
+      : 0
+  }, [connectorsSummary, overview])
+  const enabledConnectors = useMemo(() => {
+    if (connectorsSummary) return connectorsSummary.data.filter((c) => c.any_enabled).length
+    return overview
+      ? Object.values(overview.mcp_configs).reduce(
+          (acc, b) => acc + b.servers.filter((s) => s.enabled).length,
+          0,
+        )
+      : 0
+  }, [connectorsSummary, overview])
 
   const loadSkill = useCallback(async (path?: string) => {
     const target = path ?? skillPath
