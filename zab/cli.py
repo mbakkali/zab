@@ -3492,6 +3492,65 @@ def vm_sync_cmd(
         )
 
 
+@vm_app.command("token")
+def vm_token_cmd(
+    rotate: bool = typer.Option(False, "--rotate", help="Révoque le jeton actuel et en génère un nouveau."),
+    show: bool = typer.Option(False, "--show", help="Affiche le jeton en clair (sinon seul le chemin est donné)."),
+) -> None:
+    """Jeton porteur de la mini-app de contrôle distante."""
+    from zab.api import remote_app
+
+    existed = remote_app.read_token() is not None
+    token = remote_app.ensure_token(rotate=rotate)
+    action = "régénéré" if rotate else ("existant" if existed else "créé")
+    typer.echo(typer.style(f"Jeton {action}", bold=True))
+    typer.echo(f"  fichier : {remote_app.token_path()} (0600)")
+    if show:
+        typer.echo(f"  jeton   : {token}")
+    else:
+        typer.echo("  ajoute --show pour l'afficher, ou utilise `zab vm link`")
+    if rotate:
+        typer.echo(typer.style("  les appareils déjà liés devront être reliés", fg=typer.colors.YELLOW))
+
+
+@vm_app.command("link")
+def vm_link_cmd(
+    url: str = typer.Argument(..., help="URL publique de la mini-app, ex. https://vm.example.com"),
+) -> None:
+    """Affiche le lien de liaison à ouvrir une fois sur le téléphone."""
+    from zab.api import remote_app
+
+    token = remote_app.ensure_token()
+    base = url.rstrip("/")
+    # Le jeton passe en fragment : il n'est jamais transmis au serveur ni journalisé
+    # par un proxy, et la page le retire de la barre d'adresse dès sa lecture.
+    typer.echo(f"{base}/#t={token}")
+    typer.echo(typer.style("Ouvre ce lien une fois sur le téléphone, puis « Ajouter à l'écran d'accueil ».", dim=True))
+
+
+@vm_app.command("serve")
+def vm_serve_cmd(
+    host: str = typer.Option("127.0.0.1", help="Interface d'écoute — laisser en loopback derrière un tunnel."),
+    port: int = typer.Option(8743, help="Port de la mini-app de contrôle."),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Redémarrage automatique si le code change."),
+) -> None:
+    """Sert la PWA de contrôle de la VM (surface réduite, protégée par jeton)."""
+    from zab.api import remote_app
+
+    if not remote_app.read_token():
+        remote_app.ensure_token()
+        typer.echo(typer.style("Jeton créé ; `zab vm link <url>` pour lier un téléphone.", fg=typer.colors.YELLOW))
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        typer.echo(
+            typer.style(
+                f"Écoute sur {host} : n'expose ce port que derrière un tunnel ou un reverse proxy authentifié.",
+                fg=typer.colors.YELLOW,
+            )
+        )
+    typer.echo(f"Mini-app de contrôle sur http://{host}:{port}/")
+    uvicorn.run("zab.api.remote_app:create_remote_app", factory=True, host=host, port=port, reload=reload)
+
+
 # ── Gmail helpers ────────────────────────────────────────────────────────────
 
 gmail_app = typer.Typer(help="Helpers Gmail pour Composio multi-compte.", no_args_is_help=True)

@@ -245,8 +245,42 @@ The import command reads the previous SQLite database (`~/.local/share/zab/zab.d
 | `zab mcp serve` | Read-only MCP stdio server for agents |
 | `zab security status --json` | Local security status without raw secrets |
 | `zab conversations obsidian-daily --yesterday` | Write yesterday's local agent conversation digest to Obsidian |
+| `zab vm status` / `zab vm cost` / `zab vm sync` | Remote dev VM: state, real spend and runtime hours, file sync |
+| `zab vm serve` | Serve the token-protected control PWA (see below) |
 
 Run `zab features` for the full command catalog.
+
+## Remote dev VM
+
+`zab vm` monitors a remote development VM configured under `remote_vm` in
+`config.yaml`: Compute Engine state, running hours and real spend derived from
+the resource-level billing export, live SSH connections, and per-session file
+sync status. It renders on the dashboard's *Workstation* page.
+
+### Control app (PWA)
+
+`zab vm serve` exposes a deliberately narrow surface — status, start, stop,
+sync actions — as an installable mobile web app. It is a **separate application
+from the dashboard**: publishing the full zab API would hand anyone who gets
+past authentication the keys to the whole workspace.
+
+```bash
+zab vm token --show          # create the bearer token (0600 in the config dir)
+zab vm serve                 # loopback by default; put a tunnel or VPN in front
+zab vm link https://vm.example.com   # one-time pairing link for a phone
+```
+
+Properties worth knowing:
+
+- every action is **asynchronous** — starting a VM outlives any HTTP timeout, so
+  the request records a job and the client polls;
+- one action at a time, so a double tap cannot launch two starts;
+- the pairing token travels in the URL **fragment**, never reaching the server or
+  a proxy log, and the page strips it from the address bar on first load;
+- the app shell is cached by a service worker, API responses never are.
+
+Never expose this port directly. Serve it behind a VPN (Tailscale, WireGuard) or
+an authenticated tunnel; the token is a second line of defence, not the first.
 
 Daily conversation digests are documented in
 [docs/conversation-daily-obsidian.md](docs/conversation-daily-obsidian.md).

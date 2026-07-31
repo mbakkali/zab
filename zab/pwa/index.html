@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>VM cowork</title>
+    <meta name="description" content="Pilotage de la VM de dev distante." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" href="/icons/icon-192.png" />
+    <link rel="stylesheet" href="/app.css" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="VM" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#0b0b0c" />
+  </head>
+  <body>
+    <noscript>Cette application a besoin de JavaScript.</noscript>
+
+    <main id="app" hidden>
+      <header class="head">
+        <div class="head-line">
+          <h1>VM cowork</h1>
+          <span id="state" class="pill pill-idle">…</span>
+        </div>
+        <p id="subtitle" class="muted">Lecture de l’état…</p>
+      </header>
+
+      <div id="banner" class="banner" hidden></div>
+
+      <button id="primary" class="action" type="button" disabled>…</button>
+
+      <section class="grid">
+        <article class="card">
+          <p class="label">Synchronisation</p>
+          <p id="sync-value" class="value">—</p>
+          <p id="sync-hint" class="muted small">—</p>
+        </article>
+        <article class="card">
+          <p class="label">Connexions SSH</p>
+          <p id="ssh-value" class="value">—</p>
+          <p id="ssh-hint" class="muted small">—</p>
+        </article>
+        <article class="card">
+          <p class="label">Coût du mois</p>
+          <p id="cost-value" class="value">—</p>
+          <p id="cost-hint" class="muted small">—</p>
+        </article>
+        <article class="card">
+          <p class="label">Heures allumée</p>
+          <p id="hours-value" class="value">—</p>
+          <p id="hours-hint" class="muted small">—</p>
+        </article>
+      </section>
+
+      <div class="row">
+        <button id="flush" class="ghost" type="button">Forcer un cycle de sync</button>
+        <button id="refresh" class="ghost" type="button">Rafraîchir</button>
+      </div>
+
+      <footer class="muted small">
+        <span id="updated">—</span>
+        <button id="forget" class="link" type="button">Oublier ce téléphone</button>
+      </footer>
+    </main>
+
+    <form id="login" class="login" hidden>
+      <h1>VM cowork</h1>
+      <p class="muted">Colle le jeton d’accès pour lier ce téléphone.</p>
+      <input
+        id="token"
+        type="password"
+        inputmode="text"
+        autocomplete="off"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        placeholder="jeton"
+        required
+      />
+      <button class="action" type="submit">Lier</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
