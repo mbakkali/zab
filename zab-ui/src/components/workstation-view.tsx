@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/loading-state'
+import { RemoteVmView } from '@/components/remote-vm-view'
 
 type WorkstationStatus = {
   found: boolean
@@ -73,7 +74,21 @@ function short(value?: string | null) {
   return value && value.trim() ? value : '—'
 }
 
+/** Page Workstation : cockpit de la VM de dev distante + bloc GCS historique. */
 export function WorkstationView() {
+  return (
+    <div className="space-y-8">
+      <RemoteVmView />
+      <LegacyWorkstationSection />
+    </div>
+  )
+}
+
+/**
+ * Bloc historique « Cloud Workstation + bucket GCS ». Il ne s'affiche que si la
+ * clé `workstation` est renseignée dans la configuration utilisateur.
+ */
+function LegacyWorkstationSection() {
   const [status, setStatus] = useState<WorkstationStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [busyAction, setBusyAction] = useState<'start' | 'stop' | 'sync_dry' | 'sync_run' | null>(null)
@@ -175,13 +190,16 @@ export function WorkstationView() {
     )
   }
 
+  // Déploiement historique absent : rien à afficher, le cockpit VM suffit.
+  if (status?.status === 'not_configured') return null
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="workstation-view">
       <header className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Workstation</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Cloud Workstation + bucket GCS</h2>
           <p className="text-muted-foreground text-sm">
-            Pilotage local de la VM remote dev Flowmetrik : état, démarrage, arrêt, SSH et garde-fous réseau.
+            Déploiement historique : état de l’instance, garde-fous réseau et transit de `~/projects` par GCS.
           </p>
         </div>
         <Button type="button" variant="secondary" disabled={loading} onClick={() => void loadStatus()}>

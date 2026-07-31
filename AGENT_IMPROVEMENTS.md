@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-07-31 - Turn the Workstation page into a remote dev VM cockpit
+
+- Trigger: mention
+- Context: a user runs a remote development VM that mirrors a local workspace directory, with a file synchronizer over SSH and a coding agent on the far side. The Workstation page only knew about an older Cloud Workstation plus GCS bucket layout, so nothing reported what the VM actually costs, how long it has been running, whether any SSH connection is live, or how far the file sync has progressed.
+- Observation: four blind spots, each with a different source of truth. Spend and historical runtime only exist in the resource-level billing export, not in the compute API; the current session length is only derivable from the instance start timestamp; SSH liveness is a local fact (multiplexing socket, tunnel processes, synchronizer agents), not a cloud one; and file counts and drift live in the synchronizer daemon. A single "status" call could not answer any of them.
+- Improvement: added `zab/services/remote_vm.py`, a provider-generic monitor that reads compute state, derives running hours from instance-core usage divided by the machine type's vCPU count, classifies billing SKUs into compute/storage/network, and reports per-session file counts, drift and conflicts from the synchronizer. Every resource identifier comes from user configuration (`remote_vm` block, optionally pre-filled from a deployment descriptor JSON), so no environment-specific value lives in the repository. Billing queries are cached on disk with a stale-cache fallback, and the SQL is built only from a validated table identifier and validated match patterns. Exposed as `/api/remote-vm/*`, `zab vm status|cost|sync`, and a Workstation page showing stacked daily cost bars with a runtime curve, a live session counter, SSH connection list and per-session sync progress. The legacy Cloud Workstation block now hides itself when unconfigured.
+- Evidence: `uv run pytest zab/tests/test_remote_vm.py -q` (15 tests: config merge, SQL injection guards, hour derivation, cache and stale fallback, process classification, session filtering, API routes); `uv run pytest zab/tests -q` passes; `npm run build` and `npx playwright test e2e/pages-load.spec.ts` pass with the Workstation view mounting without JS errors.
+- Status: verified
+
 ## 2026-07-31 - Make `dashboard-dev` survive a busy API port and stop leaking orphans
 
 - Trigger: debug

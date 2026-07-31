@@ -40,6 +40,23 @@ tracked_env_extra: []
 #   firewall_rule: allow-your-ip
 #   gcloud_config: default
 
+# Optional: remote dev VM monitoring (cost, runtime hours, SSH, file sync)
+# remote_vm:
+#   project: your-gcp-project
+#   zone: europe-west9-b
+#   instance: your-dev-vm
+#   gcloud_config: default              # gcloud configuration used for compute reads
+#   ssh_alias: your-dev-vm-iap          # ~/.ssh/config alias used by the file synchronizer
+#   vmctl: ~/path/to/vmctl.sh           # optional start/stop script that also drives the sync
+#   deploy_config: ~/path/to/config.json  # optional descriptor pre-filling the keys above
+#   auto_stop_idle_minutes: 60
+#   billing:
+#     gcloud_config: your-billing-reader-config
+#     project: your-gcp-project
+#     table: your-project.your_dataset.gcp_billing_export_resource_v1_XXXXXX
+#     currency: EUR
+#     resource_match: ["%your-dev-vm%"]   # optional, derived from the instance name otherwise
+
 # Optional: Conversation Ledger channel bindings
 # conversation_ledger:
 #   channels:

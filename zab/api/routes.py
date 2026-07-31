@@ -34,6 +34,7 @@ from zab.services import (
     memory_db,
     model_runtimes,
     postgres_store,
+    remote_vm,
     request_logs,
     scan_persist,
     scanner,
@@ -1718,6 +1719,69 @@ def workstation_ssh_command_api() -> dict[str, Any]:
 def workstation_sync_api(dry_run: bool = False) -> dict[str, Any]:
     """Synchronise ou prévisualise la copie locale ~/projects vers le bucket."""
     result = workstation.sync_workstation(dry_run=dry_run)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result)
+    return result
+
+
+@router.get("/remote-vm/overview")
+def remote_vm_overview_api() -> dict[str, Any]:
+    """VM de dev distante : état Compute, connexions SSH et sessions de sync."""
+
+    return remote_vm.overview()
+
+
+@router.get("/remote-vm/cost")
+def remote_vm_cost_api(
+    days: int = Query(30, ge=1, le=180, description="Fenêtre d'analyse en jours"),
+    refresh: bool = Query(False, description="Ignore le cache disque et relance la requête de facturation"),
+) -> dict[str, Any]:
+    """Coûts et heures d'exécution depuis l'export BigQuery de facturation."""
+
+    return remote_vm.cost_report(days=days, refresh=refresh)
+
+
+@router.get("/remote-vm/sync")
+def remote_vm_sync_api() -> dict[str, Any]:
+    """Détail des sessions de synchronisation (fichiers, écart, conflits)."""
+
+    return remote_vm.sync_state()
+
+
+@router.get("/remote-vm/ssh")
+def remote_vm_ssh_api() -> dict[str, Any]:
+    """Connexions SSH locales vers la VM (multiplexage, tunnels, agents de sync)."""
+
+    return remote_vm.ssh_state()
+
+
+@router.post("/remote-vm/start")
+def remote_vm_start_api() -> dict[str, Any]:
+    """Démarre la VM distante (via le script de pilotage si configuré)."""
+
+    result = remote_vm.start_vm()
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result)
+    return result
+
+
+@router.post("/remote-vm/stop")
+def remote_vm_stop_api() -> dict[str, Any]:
+    """Arrête la VM distante après avoir vidé la sync si le script le prévoit."""
+
+    result = remote_vm.stop_vm()
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result)
+    return result
+
+
+@router.post("/remote-vm/sync-action")
+def remote_vm_sync_action_api(
+    action: str = Query(..., description="sync-flush | sync-resume | sync-pause"),
+) -> dict[str, Any]:
+    """Actions de synchronisation non destructives sur les sessions locales."""
+
+    result = remote_vm.sync_action(action)
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result)
     return result

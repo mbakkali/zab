@@ -102,6 +102,9 @@ ws_sync_app = typer.Typer(help="Sync Mac ↔ GCS ↔ Workstation par profils.", 
 ws_app.add_typer(ws_sync_app, name="sync")
 app.add_typer(ws_app, name="ws")
 
+vm_app = typer.Typer(help="VM de dev distante : coût, heures, SSH et sync.", no_args_is_help=True)
+app.add_typer(vm_app, name="vm")
+
 tasks_app = typer.Typer(help="Gestion des tâches unifiée (GitLab, Linear, Notion, GitHub).", no_args_is_help=True)
 app.add_typer(tasks_app, name="tasks")
 
@@ -3369,6 +3372,124 @@ def ws_cli_install_missing_cmd(
         typer.echo(typer.style(f"{row.get('name')}: {status}", fg=color))
         if row.get("command"):
             typer.echo(typer.style("  " + " ".join(row["command"]), dim=True))
+
+
+# ── VM de dev distante ───────────────────────────────────────────────────────
+
+
+def _fmt_duration(seconds: Any) -> str:
+    try:
+        total = int(seconds)
+    except (TypeError, ValueError):
+        return "—"
+    if total < 0:
+        return "—"
+    hours, rest = divmod(total, 3600)
+    return f"{hours}h{rest // 60:02d}"
+
+
+@vm_app.command("status")
+def vm_status_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """État de la VM distante, connexions SSH et sessions de sync."""
+    from zab.services import remote_vm
+
+    payload = remote_vm.overview()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not payload.get("configured"):
+        typer.echo(typer.style(payload["vm"].get("error") or "remote_vm non configuré", fg=typer.colors.YELLOW))
+        raise typer.Exit(1)
+
+    vm = payload["vm"]
+    state = str(vm.get("status") or "—")
+    color = typer.colors.GREEN if state == "RUNNING" else typer.colors.BRIGHT_BLACK
+    typer.echo(typer.style(f"{vm.get('instance')} — {state}", bold=True, fg=color))
+    typer.echo(f"  {vm.get('machine_type')} · {vm.get('vcpus')} vCPU · {vm.get('memory_gb')} Go RAM · {vm.get('disk_total_gb')} Go disque")
+    typer.echo(f"  zone {vm.get('zone')} · projet {vm.get('project')}")
+    if vm.get("session_seconds"):
+        typer.echo(f"  session en cours: {_fmt_duration(vm['session_seconds'])} (démarrée {vm.get('last_start')})")
+    elif vm.get("last_session_seconds"):
+        typer.echo(typer.style(f"  dernière session: {_fmt_duration(vm['last_session_seconds'])}", dim=True))
+
+    ssh = payload["ssh"]
+    typer.echo(typer.style("SSH", bold=True))
+    typer.echo(
+        f"  control master: {ssh['control_master']['state']} · tunnels: {ssh.get('tunnels')} · "
+        f"agents sync: {ssh.get('sync_agents')} · shells: {ssh.get('shells')}"
+    )
+
+    sync = payload["sync"]
+    totals = sync.get("totals") or {}
+    if sync.get("error"):
+        typer.echo(typer.style(f"Sync: {sync['error']}", fg=typer.colors.YELLOW))
+    else:
+        typer.echo(typer.style("Sync", bold=True))
+        typer.echo(
+            f"  {totals.get('connected')}/{totals.get('sessions')} sessions connectées · "
+            f"{totals.get('alpha_files')} fichiers local / {totals.get('beta_files')} distant · "
+            f"écart {totals.get('file_delta')} · conflits {totals.get('conflicts')}"
+        )
+        for row in sync.get("sessions") or []:
+            if row.get("conflicts") or row.get("problems") or row.get("last_error"):
+                typer.echo(typer.style(f"    ⚠ {row['name']}: {row.get('last_error') or 'conflits/problèmes'}", fg=typer.colors.YELLOW))
+
+
+@vm_app.command("cost")
+def vm_cost_cmd(
+    days: int = typer.Option(30, "--days", "-d", help="Fenêtre d'analyse en jours."),
+    refresh: bool = typer.Option(False, "--refresh", help="Ignorer le cache et relancer la requête de facturation."),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Coût et heures d'exécution de la VM depuis l'export de facturation."""
+    from zab.services import remote_vm
+
+    payload = remote_vm.cost_report(days=days, refresh=refresh)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if payload.get("error") and not payload.get("days"):
+        typer.echo(typer.style(payload["error"], fg=typer.colors.YELLOW))
+        raise typer.Exit(1)
+
+    totals = payload.get("totals") or {}
+    cur = payload.get("currency") or ""
+    typer.echo(typer.style(f"Coût VM — fenêtre {payload.get('window_days')} j", bold=True))
+    typer.echo(f"  mois en cours : {totals.get('mtd_cost')} {cur} · {totals.get('mtd_hours')} h")
+    typer.echo(f"  7 derniers j  : {totals.get('last7_cost')} {cur} · {totals.get('last7_hours')} h")
+    typer.echo(f"  taux allumée  : {totals.get('hourly_rate')} {cur}/h")
+    typer.echo(f"  socle éteinte : {totals.get('fixed_daily_cost')} {cur}/j")
+    typer.echo(f"  projection    : {totals.get('month_projection')} {cur} sur le mois")
+    freshness = payload.get("freshness") or {}
+    typer.echo(typer.style(f"  facturé jusqu'au {freshness.get('billed_through') or '—'}", dim=True))
+    for row in (payload.get("by_sku") or [])[:6]:
+        typer.echo(f"    · {row['sku']}: {round(row['cost'], 4)} {cur}")
+
+
+@vm_app.command("sync")
+def vm_sync_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Détail des sessions de synchronisation avec la VM."""
+    from zab.services import remote_vm
+
+    payload = remote_vm.sync_state()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if payload.get("error"):
+        typer.echo(typer.style(payload["error"], fg=typer.colors.YELLOW))
+        raise typer.Exit(1)
+    for row in payload.get("sessions") or []:
+        status = str(row.get("status") or "—")
+        color = typer.colors.GREEN if status == "watching" else typer.colors.YELLOW
+        typer.echo(typer.style(f"{row['name']}: {status}", fg=color))
+        typer.echo(
+            f"    local {row['alpha']['files']} fichiers · distant {row['beta']['files']} · "
+            f"écart {row['file_delta']} · conflits {row['conflicts']}"
+        )
 
 
 # ── Gmail helpers ────────────────────────────────────────────────────────────
