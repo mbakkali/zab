@@ -9,11 +9,13 @@ from zab.services.conversation_ledger.clustering import cluster_events
 from zab.services.conversation_ledger.store import (
     find_workpacket,
     list_events,
+    list_workpackets,
     next_display_id,
     upsert_workpacket,
 )
 from zab.services.conversation_ledger.sync import parse_since
 from zab.services.conversation_ledger.workpacket import build_from_cluster
+from zab.services.conversation_ledger.workpacket_backfill import rebuild_packet
 
 SEED_CANDIDATES: list[dict[str, str]] = [
     {
@@ -182,6 +184,62 @@ def discover_workpackets(
         "updated_count": updated_count,
         "candidates": stored or candidates,
     }
+
+
+def backfill_workpackets(*, dry_run: bool = True, limit: int = 200) -> dict[str, Any]:
+    """Réécrit titre, état et actions des paquets stockés depuis les faits du ledger.
+
+    Les paquets existants gardent leur identité (organisation + workstream) et
+    leurs sources : seule leur lecture est refaite. Idempotent — relancer sans
+    nouvel évènement ne produit aucune différence.
+    """
+    with local_db.transaction() as conn:
+        packets = list_workpackets(conn, limit=limit)
+
+    results: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    for packet in packets:
+        with local_db.transaction() as conn:
+            events = list_events(
+                conn,
+                organization_id=str(packet.get("organization_id") or "") or None,
+                client_workstream_id=str(packet.get("client_workstream_id") or "") or None,
+                limit=1000,
+            )
+        updated, changes = rebuild_packet(packet, events)
+        entry = {
+            "workpacket_id": updated.get("workpacket_id"),
+            "display_id": updated.get("display_id"),
+            "title": updated.get("title"),
+            "state": updated.get("state"),
+            "actions": updated.get("actions"),
+            "event_count": len(events),
+            "changes": changes,
+        }
+        results.append(entry)
+        if changes:
+            changed.append(entry)
+            if not dry_run:
+                with local_db.transaction() as conn:
+                    upsert_workpacket(conn, updated)
+
+    return {
+        "contract": "workpacket-backfill",
+        "contract_version": "1.0",
+        "dry_run": dry_run,
+        "scanned_count": len(packets),
+        "changed_count": len(changed),
+        "state_counts": _count_by(results, "state"),
+        "items": results,
+    }
+
+
+def _count_by(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get(field) or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _org_label(cluster: dict[str, Any]) -> str:

@@ -261,6 +261,36 @@ def workpacket_reconstruct_cmd(
     typer.echo(f"Reconstructed: {payload.get('count')}")
 
 
+@workpacket_app.command("backfill")
+def workpacket_backfill_cmd(
+    *,
+    dry_run: bool = typer.Option(True, "--dry-run/--apply", help="Par défaut, rien n'est écrit"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Recalcule titre, état et actions des paquets depuis les faits du ledger."""
+    from zab.services.conversation_ledger.workpacket_builder import backfill_workpackets
+
+    payload = backfill_workpackets(dry_run=dry_run)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    mode = "dry-run" if dry_run else "appliqué"
+    typer.echo(
+        typer.style(
+            f"Backfill {mode} : {payload['changed_count']}/{payload['scanned_count']} paquets modifiés",
+            fg=typer.colors.GREEN,
+            bold=True,
+        )
+    )
+    typer.echo(f"  États : {payload['state_counts']}")
+    for item in payload["items"]:
+        marker = "*" if item["changes"] else " "
+        typer.echo(f"\n{marker} {item['display_id']}  [{item['state']}]  {item['title']}")
+        for action in item["actions"]:
+            typer.echo(f"      → {action}")
+
+
 @workpacket_app.command("project-linear")
 def workpacket_project_linear_cmd(
     wp_id: str = typer.Argument(..., help="workpacket_id"),
