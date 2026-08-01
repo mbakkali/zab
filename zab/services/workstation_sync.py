@@ -113,6 +113,9 @@ CLI_INSTALL_COMMANDS: dict[str, list[str]] = {
     "hermes": ["bash", "-lc", "mkdir -p ~/.hermes && if [ ! -d ~/.hermes/hermes-agent ]; then git clone https://github.com/NousResearch/hermes-agent.git ~/.hermes/hermes-agent 2>&1; fi && cd ~/.hermes/hermes-agent && python3 -m venv venv && venv/bin/pip install -e . 2>&1 | tail -3 && mkdir -p ~/.local/bin && printf '#!/usr/bin/env bash\\nunset PYTHONPATH PYTHONHOME\\nH=\"${HOME}/.hermes\"\\nVENV=\"${H}/hermes-agent/venv\"\\nPY=\"${VENV}/bin/python\"\\nTOK=\"${H}/scripts/vertex_access_token.py\"\\nif [[ -f \"${H}/.env.vertex\" ]]; then set -a; . \"${H}/.env.vertex\"; set +a; fi\\nif [[ -n \"${GOOGLE_APPLICATION_CREDENTIALS:-}\" && -f \"${TOK}\" && -z \"${VERTEX_ACCESS_TOKEN:-}\" ]]; then eval \"$(\"${PY}\" \"${TOK}\" 2>/dev/null)\" 2>/dev/null || true; fi\\nif [[ -z \"${ANTHROPIC_API_KEY:-}\" && -n \"${CLAUDE_CODE_API_KEY:-}\" ]]; then export ANTHROPIC_API_KEY=\"${CLAUDE_CODE_API_KEY}\"; fi\\nexec \"${VENV}/bin/hermes\" \"$@\"\\n' > ~/.local/bin/hermes && chmod +x ~/.local/bin/hermes"],
     "cn": ["npm", "install", "-g", "@continuedev/cli"],
     "mempalace": ["uv", "tool", "install", "mempalace"],
+    # `gemini` figurait dans la watchlist sans installateur : il etait signale
+    # manquant a chaque passage, sans aucun moyen de l'obtenir.
+    "gemini": ["npm", "install", "-g", "@google/gemini-cli"],
     "conda": ["bash", "-lc", "curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh && bash /tmp/miniconda.sh -b -p $HOME/miniconda3 && rm /tmp/miniconda.sh && $HOME/miniconda3/bin/conda init bash 2>&1 | tail -1"],
 }
 
