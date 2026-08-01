@@ -3485,7 +3485,14 @@ def ws_cli_status_cmd(
     typer.echo(typer.style("Workstation CLI status", bold=True))
     typer.echo(f"  présents: {payload['ok']}/{payload['total']}")
     missing = payload.get("missing") or []
-    if missing:
+    if not payload.get("configured", True):
+        typer.echo(
+            typer.style(
+                "  aucune watchlist configurée : renseigne cli_watchlist dans config.yaml",
+                fg=typer.colors.YELLOW,
+            )
+        )
+    elif missing:
         typer.echo(typer.style(f"  manquants: {len(missing)}", fg=typer.colors.YELLOW))
         for name in missing:
             typer.echo(f"    · {name}")

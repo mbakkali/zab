@@ -197,3 +197,21 @@ Do not add user data, private workspace data, secrets, raw logs, or customer con
 - Improvement: reuse the existing WorkPacket identity and display ID, preserve its creation timestamp, and report separate created and updated counts.
 - Evidence: the ledger contract suite includes a repeat-discovery regression test; all 16 focused tests pass.
 - Status: verified
+
+## 2026-08-01 - Report an unconfigured CLI watchlist instead of a clean bill
+
+- Trigger: CLI
+- Context: provisioning a freshly built remote machine so agents could work on it, using the CLI watchlist to tell what was missing.
+- Observation: on the new machine the status command answered `0/0 — tous les CLIs surveillés sont présents`, which reads as success. The watchlist simply had not been deployed yet, so the check was reporting on an empty set. The same run also showed that two entries of the watchlist, the GitHub CLI and ripgrep, had no installer at all: they were listed as missing on every pass with no way to obtain them. A third defect belonged to the host rather than to the tool — writing a PATH for non-interactive sessions dropped the distribution's snap directory, which silently hid the cloud SDK from every automation.
+- Improvement: the status payload now carries whether a watchlist exists, and the CLI says so rather than declaring victory over nothing. Added installers for the two orphaned entries. The provisioning script keeps the distribution's default directories when it writes the non-interactive PATH.
+- Evidence: `uv run pytest zab/tests -q` passes 501 tests, including three new ones pinning the empty-watchlist case, the populated case, and the presence of an installer for the two orphans. On the target machine the watchlist moved from a misleading `0/0` to `36/60`, and the remaining absences are entries for which no installer is declared.
+- Status: verified
+
+## 2026-08-01 - Audit remote VM readiness from Zab
+
+- Trigger: CLI
+- Context: an agent performed a privacy-safe, read-only readiness audit of a remote development VM from a local control machine.
+- Observation: `zab vm status --json` correctly reported the running VM, active SSH control connection and conflict-free synchronization sessions. On the remote host, the login shell exposed the expected Node, Python and agent CLIs, while a non-login SSH command did not inherit the toolchain path. The user configuration parent directory was not writable, so the repository-local `uv run zab doctor` could not create its configuration. The generic CLI check also reported several installed tools as failed because it used unsupported `--version` flags.
+- Improvement: add a remote readiness contract that checks login and non-login PATH parity, user-config writability, global or repository-local Zab resolution, and Node dependency readiness. Replace generic version flags with tool-specific side-effect-free commands and distinguish a missing executable from an invalid probe command.
+- Evidence: `zab vm status --json`, `zab vm sync --json`, remote login/non-login command resolution, repository-local `uv run zab doctor`, dependency-tree inspection, production UI builds on both hosts, and the full backend test suite.
+- Status: captured

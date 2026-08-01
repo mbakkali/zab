@@ -114,6 +114,10 @@ CLI_INSTALL_COMMANDS: dict[str, list[str]] = {
     "cn": ["npm", "install", "-g", "@continuedev/cli"],
     "mempalace": ["uv", "tool", "install", "mempalace"],
     "conda": ["bash", "-lc", "curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh && bash /tmp/miniconda.sh -b -p $HOME/miniconda3 && rm /tmp/miniconda.sh && $HOME/miniconda3/bin/conda init bash 2>&1 | tail -1"],
+    # `gh` et `rg` figuraient dans la watchlist sans installateur : ils restaient
+    # signalés comme manquants après chaque passage, sans moyen de les obtenir.
+    "gh": ["bash", "-lc", "sudo mkdir -p -m 755 /etc/apt/keyrings && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt-get update -qq && sudo apt-get install -y gh"],
+    "rg": ["bash", "-lc", "sudo apt-get update -qq && sudo apt-get install -y ripgrep"],
 }
 
 
@@ -558,6 +562,10 @@ def cli_status() -> dict[str, Any]:
         "ok": sum(1 for r in rows if r["ok"]),
         "missing": [r["name"] for r in rows if not r["ok"]],
         "items": rows,
+        # Une watchlist vide rendait « 0/0 · tous les CLIs sont présents », qui se
+        # lit comme un succès. Sur une machine fraîchement provisionnée, où la
+        # configuration n'a pas encore été déposée, c'est exactement l'inverse.
+        "configured": bool(items),
     }
 
 
