@@ -334,6 +334,43 @@ def workpacket_reconstruct_cmd(
     typer.echo(f"Reconstructed: {payload.get('count')}")
 
 
+@workpacket_app.command("from-intent")
+def workpacket_from_intent_cmd(
+    *,
+    days: int = typer.Option(7, "--days", help="Fenêtre de conversations d'agents"),
+    limit: int = typer.Option(100, "--limit"),
+    dry_run: bool = typer.Option(True, "--dry-run/--apply", help="Par défaut, rien n'est écrit"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Crée un WorkPacket par tâche démarrée dans une conversation d'agent."""
+    from zab.services.conversation_ledger.workpacket_builder import (
+        discover_workpackets_from_intent,
+    )
+
+    payload = discover_workpackets_from_intent(days=days, limit=limit, dry_run=dry_run)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    mode = "dry-run" if dry_run else "appliqué"
+    typer.echo(
+        typer.style(
+            f"Intentions {mode} : {payload['candidate_count']} tâches "
+            f"({payload['human_intents']} intentions humaines sur "
+            f"{payload['conversations_retained']} conversations retenues)",
+            fg=typer.colors.GREEN,
+            bold=True,
+        )
+    )
+    typer.echo(f"  Écartées : {payload['rejected_intents']}")
+    for item in payload["candidates"]:
+        meta = item.get("metadata") or {}
+        typer.echo(f"\n  [{item.get('state')}] {item.get('title')}")
+        typer.echo(f"      projet={meta.get('project')} sessions={meta.get('session_count')}")
+        for action in item.get("actions") or []:
+            typer.echo(f"      → {action}")
+
+
 @workpacket_app.command("backfill")
 def workpacket_backfill_cmd(
     *,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from typing import Any
 
 from zab.services import local_db
@@ -186,6 +188,197 @@ def discover_workpackets(
         "updated_count": updated_count,
         "candidates": stored or candidates,
     }
+
+
+def _org_for_project(project: str, *, project_path: str | None = None) -> tuple[str | None, str | None]:
+    """Organisation d'un projet, déduite de son nom.
+
+    Le nom d'un dépôt porte presque toujours son rattachement : `danmdata` est
+    un chantier client, `flowmetrik-cowork` est interne. On réutilise la même
+    résolution que pour le courrier plutôt que d'inventer une table de plus.
+    """
+    from zab.services.conversation_ledger.entity_resolver import (
+        DEFAULT_ORGANIZATIONS,
+        resolve_organization,
+    )
+    from zab.services.conversation_ledger.org_profiles import INTERNAL_ORG_IDS
+
+    name = str(project or "").replace("-", " ").replace("_", " ").strip()
+    # Le chemin est plus fiable que le nom : un dépôt rangé dans un espace de
+    # travail hérite de son organisation, même si son nom ne l'évoque pas.
+    haystack = f"{name} {str(project_path or '').replace('-', ' ').replace('/', ' ')}".strip()
+    if not haystack:
+        return None, None
+    org_id, org_label, _conf, _evidence = resolve_organization(text=name)
+    if org_id:
+        return org_id, org_label
+    # Convention des espaces de travail : `<organisation>-cowork`. Le préfixe
+    # suffit à rattacher un dépôt dont le nom complet ne dit rien au résolveur.
+    prefix = str(project or "").split("-cowork")[0].split("_cowork")[0].strip().lower()
+    if prefix and prefix != str(project or "").strip().lower():
+        for candidate_id, org in DEFAULT_ORGANIZATIONS.items():
+            names = [candidate_id.removeprefix("org_"), str(org.get("label") or "")]
+            names += list(org.get("aliases") or [])
+            if any(str(n).lower().replace(" ", "-").startswith(prefix) for n in names if n):
+                return candidate_id, org.get("label") or candidate_id
+
+    # Les alias internes sont volontairement ignorés côté courrier ; sur un nom
+    # de projet, en revanche, ils sont le signal le plus fiable.
+    for internal_id in sorted(INTERNAL_ORG_IDS):
+        org = DEFAULT_ORGANIZATIONS.get(internal_id) or {}
+        for alias in org.get("aliases") or []:
+            if len(alias) >= 4 and alias in haystack.lower():
+                return internal_id, org.get("label") or internal_id
+    return None, None
+
+
+def discover_workpackets_from_intent(
+    *,
+    days: int = 7,
+    limit: int = 100,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Crée un WorkPacket par tâche réellement démarrée dans une conversation d'agent.
+
+    La découverte historique part du courrier reçu : elle décrit des dossiers
+    clients, pas des tâches. Ici le déclencheur est l'intention — ce que
+    l'utilisateur a demandé à un agent — et le ledger d'interactions ne sert
+    qu'à enrichir ensuite.
+    """
+    from zab.services.conversation_ledger.intent_signals import (
+        classify_intent,
+        intent_key,
+        intent_title,
+        is_human_intent,
+    )
+    from zab.services.conversation_ledger.store import get_workpacket
+    from zab.services.conversation_digest import build_conversation_digest
+    from zab.services.workpacket_intake import intake_from_params
+    from zab.services.conversation_ledger.workpacket import from_intake_and_cluster
+
+    digest = build_conversation_digest(days=days, limit=300, include_subagents=False)
+    items = digest.get("items") or []
+    rejected = Counter(
+        classify_intent(item.get("intent")) for item in items if not is_human_intent(item.get("intent"))
+    )
+
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        if not is_human_intent(item.get("intent")):
+            continue
+        project = str(item.get("project") or "sans-projet")
+        groups[(project, intent_key(item.get("intent")))].append(item)
+
+    now = datetime.now(timezone.utc)
+    candidates: list[dict[str, Any]] = []
+    for (project, key), members in groups.items():
+        members.sort(key=lambda row: str(row.get("updated_at") or ""))
+        latest = members[-1]
+        intent_text = str(latest.get("intent") or "")
+        org_id, org_label = _org_for_project(project, project_path=latest.get("project_path"))
+        intake = intake_from_params(
+            intent_text, source="conversation_ledger", project=project, requested_by="Mehdi"
+        )
+        packet = from_intake_and_cluster(
+            intake_payload=intake,
+            organization_id=org_id or "org_unassigned",
+            organization_label=org_label or "Sans organisation",
+            client_workstream_id=f"proj_{project}",
+            client_workstream_label=project,
+            subject=intent_title(intent_text),
+            canonical_source_event_id=f"conversation:{latest.get('conversation_id')}",
+            event_ids=[f"conversation:{row.get('conversation_id')}" for row in members],
+            zab_project_refs=[project],
+        )
+        packet["title"] = f"{org_label or project} — {intent_title(intent_text)}"
+        packet["owner"] = "Mehdi"
+        packet["metadata"] = {
+            **(packet.get("metadata") or {}),
+            "intent_key": key,
+            "project": project,
+            "session_count": len(members),
+            "agent_tools": sorted({str(row.get("agent_tool")) for row in members if row.get("agent_tool")}),
+            "last_session_at": latest.get("updated_at"),
+        }
+        packet["actions"] = _intent_actions(members, project=project, now=now)
+        packet["state"] = _intent_state(latest.get("updated_at"), now=now)
+        candidates.append(packet)
+
+    candidates.sort(key=lambda p: str(p["metadata"].get("last_session_at") or ""), reverse=True)
+    candidates = candidates[: max(1, min(int(limit), 300))]
+
+    created = updated = 0
+    stored: list[dict[str, Any]] = []
+    if not dry_run:
+        with local_db.transaction() as conn:
+            by_key = {
+                str((p.get("metadata") or {}).get("intent_key")): p
+                for p in list_workpackets(conn, limit=1000)
+                if (p.get("metadata") or {}).get("intent_key")
+            }
+            for packet in candidates:
+                existing = by_key.get(packet["metadata"]["intent_key"])
+                if existing:
+                    packet["workpacket_id"] = existing["workpacket_id"]
+                    packet["display_id"] = existing.get("display_id")
+                    packet["created_at"] = existing.get("created_at") or packet.get("created_at")
+                    updated += 1
+                else:
+                    packet["display_id"] = next_display_id(conn)
+                    created += 1
+                stored.append(upsert_workpacket(conn, packet))
+        _ = get_workpacket  # conservé pour les consommateurs qui rechargent après écriture
+
+    return {
+        "contract": "workpacket-intent-discovery",
+        "contract_version": "1.0",
+        "dry_run": dry_run,
+        "window_days": days,
+        "conversations_scanned": digest.get("scanned_conversations"),
+        "conversations_retained": len(items),
+        "human_intents": sum(len(v) for v in groups.values()),
+        "rejected_intents": dict(rejected),
+        "candidate_count": len(candidates),
+        "created_count": created,
+        "updated_count": updated,
+        "candidates": stored or candidates,
+    }
+
+
+def _intent_state(last_session_at: Any, *, now: datetime) -> str:
+    parsed = _parse_iso(last_session_at)
+    if parsed is None:
+        return "candidate"
+    days = (now - parsed).days
+    if days <= 14:
+        return "active"
+    if days <= 60:
+        return "candidate"
+    return "archived"
+
+
+def _intent_actions(members: list[dict[str, Any]], *, project: str, now: datetime) -> list[str]:
+    latest = members[-1]
+    parsed = _parse_iso(latest.get("updated_at"))
+    days = (now - parsed).days if parsed else None
+    tools = ", ".join(sorted({str(row.get("agent_tool")) for row in members if row.get("agent_tool")}))
+    when = "aujourd'hui" if days == 0 else (f"il y a {days} j" if days is not None else "date inconnue")
+    actions = [
+        f"Reprendre le travail sur {project} — {len(members)} session(s) {tools or 'agent'}, dernière {when}."
+    ]
+    if days is not None and days >= 7:
+        actions.append(f"Sans reprise depuis {days} j : conclure, replanifier ou abandonner explicitement.")
+    return actions
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def backfill_workpackets(*, dry_run: bool = True, limit: int = 200) -> dict[str, Any]:
