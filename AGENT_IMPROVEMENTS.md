@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-08-01 - Trigger WorkPackets on intent rather than on inbound mail
+
+- Trigger: mention
+- Context: an operator running dozens of agent sessions a day found only fourteen WorkPackets, and expected a packet to represent a task they start.
+- Observation: three compounding causes. Discovery clustered inbound client mail by organisation and workstream, so fourteen was the arithmetic ceiling — the number of client-workstream pairs — no matter how many threads ran; a single packet covered a workstream holding 226 distinct subjects. A hand audit of forty random ledger rows then showed the stream itself is 43% automated mail and 38% personal messages, with only 20% real work, and that recruitment and newsletter mail naming a client was being attributed to that client. Finally, every domain belonging to the operator's own companies was declared internal and therefore excluded, so work that was not for a client had nowhere to land at all.
+- Improvement: classify senders and opening messages by shape rather than by subject. Automated mail no longer attributes to anyone, on a three-day sample of agent conversations 63% proved to be cron or scheduled runs and 14% tool boilerplate, and the remaining human intents — about sixteen a day — each become a packet grouped by project and restated-intent key. Internal exchanges resolve to an internal organisation, last in the chain and never through name aliases, since one's own company name appears in every signature. Project-to-organisation resolution reuses the mail resolver plus the `<org>-cowork` directory convention.
+- Evidence: `uv run pytest zab/tests -q` passes 498 tests, including one per classification trap; on a real corpus the packet count moved from 14 to 74, of which 60 are tasks the operator started, and a second run created none.
+- Status: verified
+
 ## 2026-07-31 - Join projects and people to the ledger organizations
 
 - Trigger: mention
