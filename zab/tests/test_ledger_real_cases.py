@@ -81,10 +81,12 @@ REAL_CASES = [
         "workstream_id": "cw_delivery",
     },
     {
-        "name": "not_agile_from_upfund_calendar",
+        # Un évènement purement interne revient à l'organisation interne, jamais
+        # à un client dont le nom traînerait dans le texte.
+        "name": "internal_calendar_is_not_a_client",
         "subject": "Bureau",
         "actor": "mehdi@upfundpro.com",
-        "org_id": None,
+        "org_id": "org_upfund",
         "workstream_id": "unclassified",
     },
 ]

@@ -198,12 +198,43 @@ def resolve_organization(
                     evidence.append(f"email domain {d}")
                     return org_id, org["label"], 0.9, evidence
 
-    # 3) Aliases génériques
+    # 3) Aliases génériques. Les organisations internes en sont exclues : le nom
+    # de sa propre société figure dans sa signature et son adresse, donc dans
+    # presque tous les messages, y compris ceux d'un client.
+    from zab.services.conversation_ledger.org_profiles import INTERNAL_ORG_IDS
+
     for org_id, org in DEFAULT_ORGANIZATIONS.items():
+        if org_id in INTERNAL_ORG_IDS:
+            continue
         for alias in org.get("aliases") or []:
             if len(alias) >= 4 and alias in normalized:
                 evidence.append(f"alias {alias}")
                 return org_id, org["label"], 0.75, evidence
+
+    # 4) Aucun client : le travail interne revient à son organisation interne,
+    # mais seulement si l'échange est interne des deux côtés. L'adresse de
+    # l'utilisateur figure dans tout son courrier : s'en contenter rattacherait
+    # à l'interne la moindre infolettre reçue.
+    from zab.services.conversation_ledger.org_profiles import INTERNAL_ORG_DOMAINS
+
+    def _internal_org_of(domain: str) -> str | None:
+        for internal_domain, org_id in INTERNAL_ORG_DOMAINS.items():
+            if domain == internal_domain or domain.endswith(f".{internal_domain}"):
+                return org_id
+        return None
+
+    if domains:
+        internal_orgs = [_internal_org_of(domain) for domain in domains]
+        external = [d for d, org in zip(domains, internal_orgs) if org is None and d not in INTERNAL_DOMAINS]
+        if not external:
+            for org_id in internal_orgs:
+                if org_id:
+                    org = DEFAULT_ORGANIZATIONS.get(org_id) or {}
+                    # Signal fort : tous les domaines identifiés sont internes,
+                    # donc l'appartenance ne fait pas de doute. Ce qui reste
+                    # incertain, c'est le chantier, pas l'organisation.
+                    evidence.append("internal exchange")
+                    return org_id, org.get("label") or org_id, 0.8, evidence
     return None, None, 0.0, evidence
 
 
@@ -238,6 +269,29 @@ def resolve_zab_project(*, text: str) -> tuple[str | None, float, list[str]]:
 
 
 def build_entity_links(event: dict[str, Any]) -> list[dict[str, Any]]:
+    from zab.services.conversation_ledger.automated_senders import (
+        automated_reason,
+        is_automated_event,
+    )
+
+    # Une infolettre ou une alerte d'offres d'emploi cite des noms d'entreprises
+    # sans qu'aucun échange n'ait eu lieu. L'attribuer à un client fabrique une
+    # relation qui n'existe pas : on marque et on s'arrête.
+    if is_automated_event(event):
+        event["automated_sender"] = True
+        event["automated_reason"] = automated_reason(event)
+        # Effacer explicitement plutôt que retirer la clé : à l'écriture, une clé
+        # absente est reprise de la ligne existante, donc un rattachement erroné
+        # survivrait à toutes les réindexations.
+        for key in (
+            "organization_id",
+            "organization_label",
+            "client_workstream_id",
+            "client_workstream_label",
+        ):
+            event[key] = None
+        return []
+
     counterparties = event.get("counterparties") or []
     counterparty_text = " ".join(str(item) for item in counterparties if item)
     text = " ".join(

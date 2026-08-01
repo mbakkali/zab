@@ -12,6 +12,10 @@ from zab.services.conversation_ledger.channel_bindings import (
     check_channel_binding,
     list_channels,
 )
+from zab.services.conversation_ledger.org_profiles import INTERNAL_DOMAINS
+
+# Une boîte grand public identifie un tiers, pas l'utilisateur : elle discrimine.
+PUBLIC_MAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com", "hotmail.com", "outlook.com", "yahoo.com", "yahoo.fr"})
 from zab.services.conversation_ledger.entity_resolver import (
     build_entity_links,
     extract_contact_addresses,
@@ -242,6 +246,12 @@ def _unique_history_indexes(
         if thread_id:
             thread_orgs.setdefault(thread_id, set()).add(identity)
         for address in extract_contact_addresses(event):
+            # L'adresse de l'utilisateur figure dans presque tous ses évènements :
+            # la traiter comme un indice propagerait une seule organisation à tout
+            # le ledger. Un contact interne ne discrimine rien.
+            domain = address.partition("@")[2]
+            if domain in INTERNAL_DOMAINS and domain not in PUBLIC_MAIL_DOMAINS:
+                continue
             contact_orgs.setdefault(address, set()).add(identity)
     unique_contacts = {
         address: next(iter(organizations))
@@ -263,6 +273,10 @@ def _infer_from_history(
     unique_threads: dict[str, tuple[str, str]],
 ) -> str | None:
     if _organization_link(event):
+        return None
+    # Un émetteur automatique ne devient pas un échange client parce qu'il partage
+    # un fil ou un contact : la propagation doit s'arrêter à lui aussi.
+    if event.get("automated_sender"):
         return None
     identity: tuple[str, str] | None = None
     reason: str | None = None

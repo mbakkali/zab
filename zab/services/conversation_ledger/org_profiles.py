@@ -251,6 +251,28 @@ INTERNAL_DOMAINS = frozenset(
         *_string_list(_LOCAL_DOCUMENT.get("internal_domains") or []),
     }
 )
+
+
+def _internal_org_domains(document: dict[str, Any]) -> dict[str, str]:
+    """domaine -> organisation interne, pour les profils marqués `internal: true`.
+
+    Le travail qui n'est pas pour un client est du travail quand même. Sans
+    organisation interne, il n'a nulle part où aller et disparaît du système.
+    """
+    mapping: dict[str, str] = {}
+    organizations = document.get("organizations")
+    if not isinstance(organizations, dict):
+        return mapping
+    for org_id, profile in organizations.items():
+        if not isinstance(profile, dict) or not profile.get("internal"):
+            continue
+        for domain in _string_list(profile.get("domains") or []):
+            mapping[domain.lower()] = str(org_id)
+    return mapping
+
+
+INTERNAL_ORG_DOMAINS: dict[str, str] = _internal_org_domains(_LOCAL_DOCUMENT)
+INTERNAL_ORG_IDS: frozenset[str] = frozenset(INTERNAL_ORG_DOMAINS.values())
 ORG_PROFILES: dict[str, dict[str, Any]] = _merge_profiles(
     _BUILTIN_ORG_PROFILES, _LOCAL_DOCUMENT
 )
