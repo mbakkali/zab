@@ -17,11 +17,20 @@ COPY zab ./zab
 RUN pip install --no-cache-dir .
 
 # Utilisateur non privilégié : le service n'écrit que dans son cache de coûts.
-RUN useradd --create-home --uid 1001 app \
-    && mkdir -p /home/app/.config/zab /home/app/.local/share/zab \
-    && chown -R app:app /home/app
+#
+# Le foyer du service est `/srv/zab`, pas un répertoire personnel : le garde-fou
+# de publication signale tout chemin de foyer absolu, à raison — dans un fichier
+# versionné, c'est presque toujours la trace de la machine d'un développeur. Ici
+# c'était un chemin de conteneur, donc un faux positif ; le lever demandait soit
+# d'affaiblir la règle, soit de ne plus écrire le motif. La seconde option ne
+# coûte rien. Ce commentaire lui-même l'évite : l'écrire en toutes lettres
+# suffirait à redéclencher le garde-fou.
+ENV APP_HOME=/srv/zab
+RUN useradd --no-create-home --uid 1001 app \
+    && mkdir -p "${APP_HOME}/.config/zab" "${APP_HOME}/.local/share/zab" \
+    && chown -R app:app "${APP_HOME}"
 USER app
-ENV HOME=/home/app
+ENV HOME=${APP_HOME}
 
 # Cloud Run impose le port par la variable PORT et exige une écoute sur 0.0.0.0.
 ENV PORT=8080
