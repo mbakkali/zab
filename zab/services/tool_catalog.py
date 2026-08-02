@@ -1168,7 +1168,7 @@ def _probe_status(tool: dict[str, Any], state: dict[str, Any] | None = None) -> 
         detail = connectors_aggregate.get_connector(slug)
         if not detail:
             env_keys = _string_list(probe.get("env_keys"))
-            if any((shutil.which("composio") or composio_cli_path()) and env_keys):
+            if (shutil.which("composio") or composio_cli_path()) and env_keys:
                 return "warn"
             return "fail"
         forms = detail.get("forms") if isinstance(detail.get("forms"), list) else []
