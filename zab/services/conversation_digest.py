@@ -15,6 +15,7 @@ from zab.services.agent_memory_import import (
     AgentMemoryDocument,
     collect_agent_memory_documents,
 )
+from zab.services.conversation_ledger.intent_signals import AUTOMATED, BOILERPLATE, classify_intent
 from zab.services.workspace_projects import discover_projects
 from zab.user_config import organization_slug_set_from_user_config
 
@@ -506,9 +507,15 @@ def _redact_sensitive_text(text: str) -> str:
 
 
 def _intent_from_messages(messages: list[str]) -> str:
+    """Première tournure vraiment humaine : certains outils CLI injectent un bloc
+    d'amorce (plugins recommandés, contexte d'environnement) avant le premier mot
+    de l'utilisateur, ce qui rendait `intent` identique sur des dizaines de
+    conversations sans rapport. On saute ce bruit plutôt que de le citer."""
     for msg in messages:
         s = msg.strip()
         if not s:
+            continue
+        if classify_intent(s) in (AUTOMATED, BOILERPLATE):
             continue
         if len(s) > MAX_INTENT_CHARS:
             return s[: MAX_INTENT_CHARS - 1].rstrip() + "..."
