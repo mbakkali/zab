@@ -49,7 +49,6 @@ tracked_env_extra: []
 #   ssh_alias: your-dev-vm-iap          # ~/.ssh/config alias used by the file synchronizer
 #   vmctl: ~/path/to/vmctl.sh           # optional start/stop script that also drives the sync
 #   deploy_config: ~/path/to/config.json  # optional descriptor pre-filling the keys above
-#   auto_stop_idle_minutes: 60
 #   billing:
 #     gcloud_config: your-billing-reader-config
 #     project: your-gcp-project

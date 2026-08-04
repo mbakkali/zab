@@ -115,17 +115,23 @@ def test_long_action_returns_immediately_and_rejects_a_second_one(monkeypatch, t
     assert after["job"]["ok"] is True
 
 
-def test_failing_action_is_reported_not_raised(monkeypatch, tmp_path: Path) -> None:
+def test_start_failure_is_reported_not_raised(monkeypatch, tmp_path: Path) -> None:
     client = _client(monkeypatch, tmp_path)
-    monkeypatch.setattr(remote_app.remote_vm, "stop_vm", lambda: {"ok": False, "error": "zone inconnue"})
+    monkeypatch.setattr(remote_app.remote_vm, "start_vm", lambda: {"ok": False, "error": "zone inconnue"})
 
-    assert client.post("/api/stop", headers=_auth()).status_code == 200
+    assert client.post("/api/start", headers=_auth()).status_code == 200
     for _ in range(50):
         job = client.get("/api/status", headers=_auth()).json()["job"]
         if job and job.get("state") != "running":
             break
     assert job["state"] == "failed"
     assert job["error"] == "zone inconnue"
+
+
+def test_stop_endpoint_is_not_exposed(monkeypatch, tmp_path: Path) -> None:
+    client = _client(monkeypatch, tmp_path)
+
+    assert client.post("/api/stop", headers=_auth()).status_code in {404, 405}
 
 
 def test_sync_action_allowlist(monkeypatch, tmp_path: Path) -> None:

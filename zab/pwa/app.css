@@ -139,11 +139,6 @@ h1 {
   cursor: default;
 }
 
-.action-stop {
-  background: color-mix(in srgb, var(--danger) 88%, black);
-  color: #fff;
-}
-
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

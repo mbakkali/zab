@@ -106,7 +106,6 @@ function renderJobBanner(job, busy) {
   }
   const labels = {
     start: 'Démarrage de la VM et reprise de la synchronisation',
-    stop: 'Vidage de la synchronisation puis arrêt de la VM',
     'sync-flush': 'Convergence forcée de la synchronisation',
     'sync-resume': 'Reprise des sessions de synchronisation',
     'sync-pause': 'Mise en pause des sessions',
@@ -155,10 +154,9 @@ function renderStatus(data) {
   renderJobBanner(data.job, busy)
 
   const primary = el('primary')
-  primary.disabled = busy
-  primary.textContent = busy ? 'Action en cours…' : running ? 'Arrêter la VM' : 'Démarrer la VM'
-  primary.className = running ? 'action action-stop' : 'action'
-  primary.dataset.action = running ? 'stop' : 'start'
+  primary.disabled = busy || running
+  primary.textContent = busy ? 'Action en cours…' : running ? 'VM déjà allumée' : 'Démarrer la VM'
+  primary.className = 'action'
 
   el('flush').disabled = busy || !running
 
@@ -269,14 +267,7 @@ async function act(path, confirmMessage) {
 }
 
 function wire() {
-  el('primary').addEventListener('click', () => {
-    const action = el('primary').dataset.action
-    if (action === 'stop') {
-      act('/api/stop', 'Arrêter la VM ? Toute session distante en cours sera coupée.')
-    } else {
-      act('/api/start')
-    }
-  })
+  el('primary').addEventListener('click', () => act('/api/start'))
   el('flush').addEventListener('click', () => act('/api/sync-action?action=sync-flush'))
   el('refresh').addEventListener('click', () => refresh())
   el('forget').addEventListener('click', () => {

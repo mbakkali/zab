@@ -175,10 +175,6 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
     def start() -> dict[str, Any]:
         return {"job": runner.submit("start", remote_vm.start_vm)}
 
-    @app.post("/api/stop")
-    def stop() -> dict[str, Any]:
-        return {"job": runner.submit("stop", remote_vm.stop_vm)}
-
     @app.post("/api/sync-action")
     def sync_action(action: str = Query(..., description="sync-flush | sync-resume | sync-pause")) -> dict[str, Any]:
         if action not in {"sync-flush", "sync-resume", "sync-pause"}:

@@ -259,10 +259,11 @@ sync status. It renders on the dashboard's *Workstation* page.
 
 ### Control app (PWA)
 
-`zab vm serve` exposes a deliberately narrow surface — status, start, stop,
-sync actions — as an installable mobile web app. It is a **separate application
-from the dashboard**: publishing the full zab API would hand anyone who gets
-past authentication the keys to the whole workspace.
+`zab vm serve` exposes a deliberately narrow surface — status, start, and sync
+actions, plus read-only cost data — as an installable mobile web app. There is
+no remote stop action; shutdown stays local through `vmctl.sh stop`. It is a
+**separate application from the dashboard**: publishing the full zab API would
+hand anyone who gets past authentication the keys to the whole workspace.
 
 ```bash
 zab vm token --show          # create the bearer token (0600 in the config dir)
