@@ -167,3 +167,60 @@ def test_environment_token_wins_over_file(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv(remote_app.TOKEN_ENV, "depuis-environnement")
 
     assert remote_app.read_token() == "depuis-environnement"
+
+
+def test_agent_tab_is_absent_until_an_upstream_is_configured(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/agent", headers=_auth()).json()
+
+    assert body["enabled"] is False
+    assert body["label"] == "Agent"
+
+
+def test_agent_tab_reports_its_label_once_configured(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "http://agent.invalid:9119/")
+    monkeypatch.setenv("ZAB_AGENT_LABEL", "Hermès")
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/agent", headers=_auth()).json()
+
+    assert body == {"enabled": True, "path": "/agent/", "label": "Hermès"}
+
+
+def test_agent_upstream_drops_its_trailing_slash(monkeypatch) -> None:
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "http://agent.invalid:9119/")
+
+    assert remote_app.agent_upstream() == "http://agent.invalid:9119"
+
+
+def test_agent_proxy_says_so_when_no_upstream_is_configured(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get("/agent/")
+
+    # 503 et non 404 : la route existe, c'est le déploiement qui est incomplet.
+    assert response.status_code == 503
+    assert remote_app.AGENT_UPSTREAM_ENV in response.json()["error"]
+
+
+def test_agent_proxy_surfaces_an_unreachable_agent(monkeypatch, tmp_path: Path) -> None:
+    # L'agent vit sur une machine qui peut être éteinte ; le proxy doit rendre
+    # un 502 lisible plutôt que de laisser filer l'exception.
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "http://127.0.0.1:1/")
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get("/agent/")
+
+    assert response.status_code == 502
+    assert "injoignable" in response.json()["error"]
+
+
+def test_hop_by_hop_headers_are_not_forwarded() -> None:
+    headers = {"Host": "vm.example.com", "Connection": "keep-alive", "Accept": "text/html"}
+
+    forwarded = remote_app._forwardable(headers)
+
+    assert forwarded == {"Accept": "text/html"}

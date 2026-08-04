@@ -266,7 +266,34 @@ async function act(path, confirmMessage) {
   }
 }
 
+function showView(name) {
+  el('view-vm').hidden = name !== 'vm'
+  el('view-agent').hidden = name !== 'agent'
+  for (const id of ['tab-vm', 'tab-agent']) {
+    el(id).classList.toggle('tab-on', el(id).dataset.view === name)
+  }
+}
+
+async function loadAgentTab() {
+  // L'onglet n'apparaît que si un agent est effectivement configuré côté
+  // serveur : sur un déploiement qui n'en a pas, la barre reste invisible
+  // plutôt que d'offrir un bouton qui mène à une erreur.
+  try {
+    const info = await api('/api/agent')
+    if (!info || !info.enabled) return
+    el('agent-link').href = info.path || '/agent/'
+    el('tab-agent').textContent = info.label || 'Agent'
+    el('agent-link').textContent = `Ouvrir ${info.label || 'l’agent'}`
+    el('tabs').hidden = false
+  } catch (error) {
+    if (error.message === 'unauthorized') throw error
+  }
+}
+
 function wire() {
+  for (const id of ['tab-vm', 'tab-agent']) {
+    el(id).addEventListener('click', () => showView(el(id).dataset.view))
+  }
   el('primary').addEventListener('click', () => act('/api/start'))
   el('flush').addEventListener('click', () => act('/api/sync-action?action=sync-flush'))
   el('refresh').addEventListener('click', () => refresh())
@@ -305,6 +332,7 @@ function start() {
   }, 1000)
   refresh()
   refreshCost()
+  loadAgentTab().catch(() => {})
   window.setInterval(refreshCost, 5 * 60 * 1000)
 }
 

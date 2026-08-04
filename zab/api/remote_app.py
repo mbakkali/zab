@@ -26,8 +26,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+import httpx
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from zab.paths import config_dir, zab_package_dir
@@ -38,6 +39,43 @@ TOKEN_FILENAME = "remote-token"
 # `/healthz` ne peut pas servir de sonde : le frontend Google le réserve et
 # répond 404 avant même que la requête n'atteigne le conteneur.
 PUBLIC_PATHS = {"/ping"}
+
+# Agent embarqué joignable derrière la même origine que la mini-app. Vide, la
+# fonctionnalité disparaît : ni route, ni onglet côté PWA.
+AGENT_UPSTREAM_ENV = "ZAB_AGENT_UPSTREAM"
+AGENT_PREFIX = "/agent"
+# En-têtes propres à un saut de connexion : les recopier casserait le tunnel.
+HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "content-encoding",
+        "content-length",
+        "host",
+    }
+)
+PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+
+def agent_upstream() -> str | None:
+    """Base HTTP de l'agent à relayer, sans barre oblique finale."""
+    return os.environ.get(AGENT_UPSTREAM_ENV, "").strip().rstrip("/") or None
+
+
+def _forwardable(headers: Any, *, drop_host: bool = True) -> dict[str, str]:
+    out = {}
+    for key, value in headers.items():
+        low = key.lower()
+        if low in HOP_BY_HOP and (low != "host" or drop_host):
+            continue
+        out[key] = value
+    return out
 
 
 def pwa_dir() -> Path:
@@ -180,6 +218,123 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
         if action not in {"sync-flush", "sync-resume", "sync-pause"}:
             raise HTTPException(status_code=400, detail={"error": f"action non autorisée: {action}"})
         return {"job": runner.submit(action, lambda: remote_vm.sync_action(action))}
+
+    @app.get("/api/agent")
+    def agent_info() -> dict[str, Any]:
+        """Dit à la PWA si l'onglet doit exister, et sous quel libellé."""
+        return {
+            "enabled": agent_upstream() is not None,
+            "path": AGENT_PREFIX + "/",
+            "label": os.environ.get("ZAB_AGENT_LABEL", "Agent").strip() or "Agent",
+        }
+
+    @app.websocket(AGENT_PREFIX + "/{path:path}")
+    async def agent_ws(client: WebSocket, path: str) -> None:
+        """Relaie le WebSocket de l'agent — sans lui, sa SPA reste muette."""
+        import websockets
+
+        base = agent_upstream()
+        if not base:
+            await client.close(code=1011)
+            return
+        target = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        url = f"{target}/{path}"
+        if client.url.query:
+            url += f"?{client.url.query}"
+        await client.accept()
+        try:
+            async with websockets.connect(url, open_timeout=20, max_size=None) as upstream:
+                async def pump_up() -> None:
+                    while True:
+                        message = await client.receive()
+                        if message["type"] == "websocket.disconnect":
+                            await upstream.close()
+                            return
+                        if (text := message.get("text")) is not None:
+                            await upstream.send(text)
+                        elif (data := message.get("bytes")) is not None:
+                            await upstream.send(data)
+
+                async def pump_down() -> None:
+                    async for frame in upstream:
+                        if isinstance(frame, str):
+                            await client.send_text(frame)
+                        else:
+                            await client.send_bytes(frame)
+
+                import asyncio
+
+                done, pending = await asyncio.wait(
+                    {asyncio.create_task(pump_up()), asyncio.create_task(pump_down())},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+        except Exception:  # noqa: BLE001 - une coupure réseau ne doit pas tuer le worker
+            pass
+        finally:
+            try:
+                await client.close()
+            except RuntimeError:
+                pass
+
+    @app.api_route(AGENT_PREFIX, methods=PROXY_METHODS)
+    @app.api_route(AGENT_PREFIX + "/{path:path}", methods=PROXY_METHODS)
+    async def agent_proxy(request: Request, path: str = "") -> Response:
+        """Relaie l'agent sous un sous-chemin de cette origine.
+
+        `X-Forwarded-Prefix` est la convention que suivent les SPA servies
+        derrière un préfixe : elle leur permet de réécrire leurs URLs d'assets
+        absolues sans rebuild. Sans cet en-tête, la page se charge mais
+        réclame ses bundles à la racine, où vit la PWA — et reste blanche.
+        """
+        base = agent_upstream()
+        if not base:
+            return JSONResponse(
+                {"error": f"aucun agent configuré ; renseigne {AGENT_UPSTREAM_ENV}"},
+                status_code=503,
+            )
+        # Convention du préfixe : on le retire de l'URL amont et on l'annonce
+        # dans l'en-tête. L'agent sert ses assets à la racine ; les lui
+        # réclamer sous /agent renverrait sa page d'index à la place du bundle.
+        url = f"{base}/{path}"
+        headers = _forwardable(request.headers)
+        headers["X-Forwarded-Prefix"] = AGENT_PREFIX
+        headers["X-Forwarded-Proto"] = request.url.scheme
+        client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0), follow_redirects=False)
+        try:
+            upstream = await client.send(
+                client.build_request(
+                    request.method,
+                    url,
+                    headers=headers,
+                    params=dict(request.query_params),
+                    content=await request.body(),
+                ),
+                stream=True,
+            )
+        except httpx.RequestError as exc:
+            await client.aclose()
+            # L'agent vit sur une machine qui peut être éteinte : le dire
+            # franchement vaut mieux qu'une page blanche.
+            return JSONResponse(
+                {"error": f"agent injoignable: {type(exc).__name__}"}, status_code=502
+            )
+
+        async def drain():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            drain(),
+            status_code=upstream.status_code,
+            headers=_forwardable(upstream.headers, drop_host=False),
+            media_type=upstream.headers.get("content-type"),
+        )
 
     root = pwa_dir()
     if root.is_dir():

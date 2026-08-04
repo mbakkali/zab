@@ -29,6 +29,12 @@
 
       <div id="banner" class="banner" hidden></div>
 
+      <nav id="tabs" class="tabs" hidden>
+        <button id="tab-vm" class="tab tab-on" type="button" data-view="vm">VM</button>
+        <button id="tab-agent" class="tab" type="button" data-view="agent">Agent</button>
+      </nav>
+
+      <div id="view-vm">
       <button id="primary" class="action" type="button" disabled>…</button>
 
       <section class="grid">
@@ -58,6 +64,15 @@
         <button id="flush" class="ghost" type="button">Forcer un cycle de sync</button>
         <button id="refresh" class="ghost" type="button">Rafraîchir</button>
       </div>
+      </div>
+
+      <section id="view-agent" hidden>
+        <p class="muted">
+          L’agent tourne sur la VM. Il n’est joignable que lorsqu’elle est
+          allumée : démarre-la depuis l’onglet VM si la page reste vide.
+        </p>
+        <a id="agent-link" class="action" href="/agent/">Ouvrir l’agent</a>
+      </section>
 
       <footer class="muted small">
         <span id="updated">—</span>

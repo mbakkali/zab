@@ -283,6 +283,28 @@ Properties worth knowing:
 Never expose this port directly. Serve it behind a VPN (Tailscale, WireGuard) or
 an authenticated tunnel; the token is a second line of defence, not the first.
 
+#### Reaching an agent from the same app
+
+Set `ZAB_AGENT_UPSTREAM` and the app grows a second tab that relays an agent UI
+running on the VM — a coding agent's dashboard, say — under `/agent/`, so the
+phone only ever talks to one origin. `ZAB_AGENT_LABEL` names the tab. Leave the
+variable unset and the tab does not exist: no route, no button.
+
+```bash
+ZAB_AGENT_UPSTREAM=http://10.0.0.2:9119 ZAB_AGENT_LABEL=Hermès zab vm serve
+```
+
+The proxy strips the `/agent` prefix before forwarding and announces it with
+`X-Forwarded-Prefix`, which is the convention single-page apps follow to rewrite
+their absolute asset URLs without a rebuild. WebSocket traffic is relayed too —
+most agent UIs are mute without it.
+
+Two things this does **not** do. It does not authenticate the agent: `/agent/*`
+sits outside the bearer-token middleware, because a browser navigating to a page
+cannot carry an `Authorization` header, so whatever the upstream enforces is the
+only barrier — check that it enforces something. And it does not make an
+unreachable machine reachable: a stopped VM yields a plain 502.
+
 Daily conversation digests are documented in
 [docs/conversation-daily-obsidian.md](docs/conversation-daily-obsidian.md).
 
