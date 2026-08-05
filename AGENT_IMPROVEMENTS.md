@@ -215,3 +215,30 @@ Do not add user data, private workspace data, secrets, raw logs, or customer con
 - Improvement: add a remote readiness contract that checks login and non-login PATH parity, user-config writability, global or repository-local Zab resolution, and Node dependency readiness. Replace generic version flags with tool-specific side-effect-free commands and distinguish a missing executable from an invalid probe command.
 - Evidence: `zab vm status --json`, `zab vm sync --json`, remote login/non-login command resolution, repository-local `uv run zab doctor`, dependency-tree inspection, production UI builds on both hosts, and the full backend test suite.
 - Status: captured
+
+## 2026-08-01 - Inventory Zab for a local project hub
+
+- Trigger: mention
+- Context: an agent inventoried local developer tools for a generic project-and-service hub.
+- Observation: Zab exposes distinct CLI, API and dashboard surfaces with documented health endpoints, making it straightforward to represent as one project with several launchable services.
+- Improvement: no Zab product change is required; the consuming hub should keep project location, service endpoints and launcher metadata separate instead of duplicating Zab state.
+- Evidence: read-only inspection of the public README, package metadata and existing local launcher conventions; the consuming FlowHub now exposes the project through its public-safe name, location, repository link, health route and launcher metadata.
+- Status: verified
+
+## 2026-08-02 - Reuse the public Zab mark in the local project hub
+
+- Trigger: code
+- Context: a generic local project hub needed one visible mark for every indexed developer tool.
+- Observation: the existing public documentation asset is suitable as-is and does not expose workspace data.
+- Improvement: no Zab change is required; the consuming hub copies the public mark at build time instead of creating a competing identity.
+- Evidence: asset copy, image-load validation and a desktop/mobile render of all project cards.
+- Status: verified
+
+## 2026-08-01 - Reuse role-aware conversations for local vocabulary
+
+- Trigger: CLI
+- Context: an agent derived a private, local speech-recognition vocabulary from the unified conversation index; no conversation content or derived vocabulary was written to the public repository.
+- Observation: `zab workpacket intake` worked, and the conversation store exposed provider-specific user roles suitable for privacy-safe downstream extraction; generic memory chunks were less appropriate because they also mixed in system and tool-harness text.
+- Improvement: prefer role-aware conversation projections for local personalization jobs, deduplicate user messages, and apply explicit secret, identifier and harness-noise filters before producing derived artifacts outside the repository.
+- Evidence: privacy-safe role/count queries, local vocabulary validation, and an exact-set downstream readback; no private rows, names or terms are stored here.
+- Status: verified
