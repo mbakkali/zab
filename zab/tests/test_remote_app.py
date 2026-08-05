@@ -115,17 +115,23 @@ def test_long_action_returns_immediately_and_rejects_a_second_one(monkeypatch, t
     assert after["job"]["ok"] is True
 
 
-def test_failing_action_is_reported_not_raised(monkeypatch, tmp_path: Path) -> None:
+def test_start_failure_is_reported_not_raised(monkeypatch, tmp_path: Path) -> None:
     client = _client(monkeypatch, tmp_path)
-    monkeypatch.setattr(remote_app.remote_vm, "stop_vm", lambda: {"ok": False, "error": "zone inconnue"})
+    monkeypatch.setattr(remote_app.remote_vm, "start_vm", lambda: {"ok": False, "error": "zone inconnue"})
 
-    assert client.post("/api/stop", headers=_auth()).status_code == 200
+    assert client.post("/api/start", headers=_auth()).status_code == 200
     for _ in range(50):
         job = client.get("/api/status", headers=_auth()).json()["job"]
         if job and job.get("state") != "running":
             break
     assert job["state"] == "failed"
     assert job["error"] == "zone inconnue"
+
+
+def test_stop_endpoint_is_not_exposed(monkeypatch, tmp_path: Path) -> None:
+    client = _client(monkeypatch, tmp_path)
+
+    assert client.post("/api/stop", headers=_auth()).status_code in {404, 405}
 
 
 def test_sync_action_allowlist(monkeypatch, tmp_path: Path) -> None:
@@ -161,3 +167,104 @@ def test_environment_token_wins_over_file(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv(remote_app.TOKEN_ENV, "depuis-environnement")
 
     assert remote_app.read_token() == "depuis-environnement"
+
+
+def test_agent_tab_is_absent_until_an_upstream_is_configured(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/agent", headers=_auth()).json()
+
+    assert body["enabled"] is False
+    assert body["label"] == "Agent"
+
+
+def test_agent_tab_reports_its_label_once_configured(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "http://agent.invalid:9119/")
+    monkeypatch.setenv("ZAB_AGENT_LABEL", "Hermès")
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/agent", headers=_auth()).json()
+
+    assert body == {"enabled": True, "path": "/agent/", "label": "Hermès"}
+
+
+def test_agent_upstream_drops_its_trailing_slash(monkeypatch) -> None:
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "http://agent.invalid:9119/")
+
+    assert remote_app.agent_upstream() == "http://agent.invalid:9119"
+
+
+def test_agent_proxy_says_so_when_no_upstream_is_configured(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    monkeypatch.delenv(remote_app.APPS_ENV, raising=False)
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get("/agent/")
+
+    # 503 et non 404 : la route existe, c'est le déploiement qui est incomplet.
+    assert response.status_code == 503
+    # Le message doit nommer la variable à renseigner ; depuis le passage à
+    # plusieurs applications, c'est ZAB_APPS et non plus l'ancienne variable.
+    assert remote_app.APPS_ENV in response.json()["error"]
+
+
+def test_apps_are_listed_in_order_with_the_legacy_variable_first(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "https://hermes.invalid/")
+    monkeypatch.setenv("ZAB_AGENT_LABEL", "Hermès")
+    monkeypatch.setenv(remote_app.APPS_ENV, "flowgo|Flowgo|https://flowgo.invalid/")
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/apps", headers=_auth()).json()
+
+    assert [a["slug"] for a in body["apps"]] == ["agent", "flowgo"]
+    assert [a["label"] for a in body["apps"]] == ["Hermès", "Flowgo"]
+    assert body["apps"][1]["path"] == "/app/flowgo/"
+    # L'amont ne sort pas : le téléphone n'en a pas besoin, et publier les noms
+    # d'hôtes internes n'ajouterait qu'une surface.
+    assert all("upstream" not in a for a in body["apps"])
+
+
+def test_malformed_app_records_are_ignored_rather_than_fatal(monkeypatch, tmp_path: Path) -> None:
+    # Une coquille dans une variable d'environnement ne doit pas priver la
+    # mini-app de son onglet VM, seul moyen de rallumer la machine.
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    monkeypatch.setenv(
+        remote_app.APPS_ENV,
+        "sans-url|Cassé ; ok|OK|https://ok.invalid ; MAJUSCULE X|X|https://x.invalid ; ok|Doublon|https://z.invalid",
+    )
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/apps", headers=_auth()).json()
+
+    assert [a["slug"] for a in body["apps"]] == ["ok"]
+
+
+def test_unknown_app_slug_is_a_404(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    monkeypatch.setenv(remote_app.APPS_ENV, "flowgo|Flowgo|https://flowgo.invalid")
+    client = _client(monkeypatch, tmp_path)
+
+    assert client.get("/app/inconnu/").status_code == 404
+
+
+def test_agent_proxy_surfaces_an_unreachable_agent(monkeypatch, tmp_path: Path) -> None:
+    # L'agent vit sur une machine qui peut être éteinte ; le proxy doit rendre
+    # un 502 lisible plutôt que de laisser filer l'exception.
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "http://127.0.0.1:1/")
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get("/agent/")
+
+    assert response.status_code == 502
+    assert "injoignable" in response.json()["error"]
+
+
+def test_hop_by_hop_headers_are_not_forwarded() -> None:
+    headers = {"Host": "vm.example.com", "Connection": "keep-alive", "Accept": "text/html"}
+
+    forwarded = remote_app._forwardable(headers)
+
+    assert forwarded == {"Accept": "text/html"}

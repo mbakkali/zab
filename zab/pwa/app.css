@@ -121,6 +121,39 @@ h1 {
   color: var(--danger);
 }
 
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+
+.tab {
+  flex: 1;
+  min-height: 2.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-on {
+  background: var(--card);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+/* Le lien de l'onglet agent réutilise .action : sans ces trois lignes, un <a>
+   ne centre pas son texte comme un <button>. */
+a.action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 /* Cible tactile large : le geste principal doit être atteignable au pouce. */
 .action {
   width: 100%;
@@ -137,11 +170,6 @@ h1 {
 .action:disabled {
   opacity: 0.55;
   cursor: default;
-}
-
-.action-stop {
-  background: color-mix(in srgb, var(--danger) 88%, black);
-  color: #fff;
 }
 
 .grid {

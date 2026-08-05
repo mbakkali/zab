@@ -106,7 +106,6 @@ function renderJobBanner(job, busy) {
   }
   const labels = {
     start: 'Démarrage de la VM et reprise de la synchronisation',
-    stop: 'Vidage de la synchronisation puis arrêt de la VM',
     'sync-flush': 'Convergence forcée de la synchronisation',
     'sync-resume': 'Reprise des sessions de synchronisation',
     'sync-pause': 'Mise en pause des sessions',
@@ -155,10 +154,9 @@ function renderStatus(data) {
   renderJobBanner(data.job, busy)
 
   const primary = el('primary')
-  primary.disabled = busy
-  primary.textContent = busy ? 'Action en cours…' : running ? 'Arrêter la VM' : 'Démarrer la VM'
-  primary.className = running ? 'action action-stop' : 'action'
-  primary.dataset.action = running ? 'stop' : 'start'
+  primary.disabled = busy || running
+  primary.textContent = busy ? 'Action en cours…' : running ? 'VM déjà allumée' : 'Démarrer la VM'
+  primary.className = 'action'
 
   el('flush').disabled = busy || !running
 
@@ -268,15 +266,59 @@ async function act(path, confirmMessage) {
   }
 }
 
-function wire() {
-  el('primary').addEventListener('click', () => {
-    const action = el('primary').dataset.action
-    if (action === 'stop') {
-      act('/api/stop', 'Arrêter la VM ? Toute session distante en cours sera coupée.')
-    } else {
-      act('/api/start')
+function showView(name) {
+  el('view-vm').hidden = name !== 'vm'
+  for (const section of document.querySelectorAll('#views-apps > section')) {
+    section.hidden = section.dataset.view !== name
+  }
+  for (const tab of document.querySelectorAll('#tabs .tab')) {
+    tab.classList.toggle('tab-on', tab.dataset.view === name)
+  }
+}
+
+async function loadAppTabs() {
+  // Les onglets n'apparaissent que si des applications sont effectivement
+  // configurées côté serveur : sur un déploiement qui n'en a pas, la barre
+  // reste invisible plutôt que d'offrir un bouton qui mène à une erreur.
+  try {
+    const info = await api('/api/apps')
+    const apps = (info && info.apps) || []
+    if (!apps.length) return
+    const tabs = el('tabs')
+    const views = el('views-apps')
+    for (const entry of apps) {
+      const tab = document.createElement('button')
+      tab.className = 'tab'
+      tab.type = 'button'
+      tab.dataset.view = entry.slug
+      tab.textContent = entry.label
+      tab.addEventListener('click', () => showView(entry.slug))
+      tabs.append(tab)
+
+      const section = document.createElement('section')
+      section.dataset.view = entry.slug
+      section.hidden = true
+      const note = document.createElement('p')
+      note.className = 'muted'
+      note.textContent =
+        'Cette application tourne sur la VM. Elle n’est joignable que lorsqu’elle ' +
+        'est allumée : démarre-la depuis l’onglet VM si la page reste vide.'
+      const link = document.createElement('a')
+      link.className = 'action'
+      link.href = entry.path
+      link.textContent = `Ouvrir ${entry.label}`
+      section.append(note, link)
+      views.append(section)
     }
-  })
+    tabs.hidden = false
+  } catch (error) {
+    if (error.message === 'unauthorized') throw error
+  }
+}
+
+function wire() {
+  el('tab-vm').addEventListener('click', () => showView('vm'))
+  el('primary').addEventListener('click', () => act('/api/start'))
   el('flush').addEventListener('click', () => act('/api/sync-action?action=sync-flush'))
   el('refresh').addEventListener('click', () => refresh())
   el('forget').addEventListener('click', () => {
@@ -314,6 +356,7 @@ function start() {
   }, 1000)
   refresh()
   refreshCost()
+  loadAppTabs().catch(() => {})
   window.setInterval(refreshCost, 5 * 60 * 1000)
 }
 
