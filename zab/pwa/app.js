@@ -13,6 +13,8 @@ let timer = null
 let sessionSeconds = null
 let clock = null
 let lastStatus = null
+// Derrière IAP, Google a déjà authentifié : pas d'écran de jeton à afficher.
+let ssoEnabled = false
 
 /** Le lien de liaison porte le jeton en fragment : jamais envoyé au serveur, et retiré aussitôt. */
 function captureTokenFromUrl() {
@@ -342,7 +344,7 @@ function wire() {
 }
 
 function start() {
-  if (!token) {
+  if (!token && !ssoEnabled) {
     showLogin()
     return
   }
@@ -364,7 +366,16 @@ const linked = captureTokenFromUrl()
 if (linked) storeToken(linked)
 else token = readToken()
 wire()
-start()
+
+// /ping est public : il dit comment on s'authentifie, jamais qui est connecté.
+// On l'interroge avant de décider entre l'écran de jeton et l'application.
+fetch('/ping')
+  .then((r) => r.json())
+  .then((info) => {
+    ssoEnabled = Boolean(info && info.sso)
+  })
+  .catch(() => {})
+  .finally(start)
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}))

@@ -2,7 +2,7 @@
 // l'écran s'affiche instantanément et hors connexion. Les réponses de l'API ne
 // sont jamais mises en cache — un état de VM périmé serait pire que pas d'état.
 
-const CACHE = 'vm-shell-v2'
+const CACHE = 'vm-shell-v3'
 const SHELL = ['/', '/app.css', '/app.js', '/manifest.webmanifest', '/icons/icon-192.png']
 
 self.addEventListener('install', (event) => {
