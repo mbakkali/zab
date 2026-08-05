@@ -268,32 +268,56 @@ async function act(path, confirmMessage) {
 
 function showView(name) {
   el('view-vm').hidden = name !== 'vm'
-  el('view-agent').hidden = name !== 'agent'
-  for (const id of ['tab-vm', 'tab-agent']) {
-    el(id).classList.toggle('tab-on', el(id).dataset.view === name)
+  for (const section of document.querySelectorAll('#views-apps > section')) {
+    section.hidden = section.dataset.view !== name
+  }
+  for (const tab of document.querySelectorAll('#tabs .tab')) {
+    tab.classList.toggle('tab-on', tab.dataset.view === name)
   }
 }
 
-async function loadAgentTab() {
-  // L'onglet n'apparaît que si un agent est effectivement configuré côté
-  // serveur : sur un déploiement qui n'en a pas, la barre reste invisible
-  // plutôt que d'offrir un bouton qui mène à une erreur.
+async function loadAppTabs() {
+  // Les onglets n'apparaissent que si des applications sont effectivement
+  // configurées côté serveur : sur un déploiement qui n'en a pas, la barre
+  // reste invisible plutôt que d'offrir un bouton qui mène à une erreur.
   try {
-    const info = await api('/api/agent')
-    if (!info || !info.enabled) return
-    el('agent-link').href = info.path || '/agent/'
-    el('tab-agent').textContent = info.label || 'Agent'
-    el('agent-link').textContent = `Ouvrir ${info.label || 'l’agent'}`
-    el('tabs').hidden = false
+    const info = await api('/api/apps')
+    const apps = (info && info.apps) || []
+    if (!apps.length) return
+    const tabs = el('tabs')
+    const views = el('views-apps')
+    for (const entry of apps) {
+      const tab = document.createElement('button')
+      tab.className = 'tab'
+      tab.type = 'button'
+      tab.dataset.view = entry.slug
+      tab.textContent = entry.label
+      tab.addEventListener('click', () => showView(entry.slug))
+      tabs.append(tab)
+
+      const section = document.createElement('section')
+      section.dataset.view = entry.slug
+      section.hidden = true
+      const note = document.createElement('p')
+      note.className = 'muted'
+      note.textContent =
+        'Cette application tourne sur la VM. Elle n’est joignable que lorsqu’elle ' +
+        'est allumée : démarre-la depuis l’onglet VM si la page reste vide.'
+      const link = document.createElement('a')
+      link.className = 'action'
+      link.href = entry.path
+      link.textContent = `Ouvrir ${entry.label}`
+      section.append(note, link)
+      views.append(section)
+    }
+    tabs.hidden = false
   } catch (error) {
     if (error.message === 'unauthorized') throw error
   }
 }
 
 function wire() {
-  for (const id of ['tab-vm', 'tab-agent']) {
-    el(id).addEventListener('click', () => showView(el(id).dataset.view))
-  }
+  el('tab-vm').addEventListener('click', () => showView('vm'))
   el('primary').addEventListener('click', () => act('/api/start'))
   el('flush').addEventListener('click', () => act('/api/sync-action?action=sync-flush'))
   el('refresh').addEventListener('click', () => refresh())
@@ -332,7 +356,7 @@ function start() {
   }, 1000)
   refresh()
   refreshCost()
-  loadAgentTab().catch(() => {})
+  loadAppTabs().catch(() => {})
   window.setInterval(refreshCost, 5 * 60 * 1000)
 }
 

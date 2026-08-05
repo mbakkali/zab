@@ -197,13 +197,57 @@ def test_agent_upstream_drops_its_trailing_slash(monkeypatch) -> None:
 
 def test_agent_proxy_says_so_when_no_upstream_is_configured(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    monkeypatch.delenv(remote_app.APPS_ENV, raising=False)
     client = _client(monkeypatch, tmp_path)
 
     response = client.get("/agent/")
 
     # 503 et non 404 : la route existe, c'est le déploiement qui est incomplet.
     assert response.status_code == 503
-    assert remote_app.AGENT_UPSTREAM_ENV in response.json()["error"]
+    # Le message doit nommer la variable à renseigner ; depuis le passage à
+    # plusieurs applications, c'est ZAB_APPS et non plus l'ancienne variable.
+    assert remote_app.APPS_ENV in response.json()["error"]
+
+
+def test_apps_are_listed_in_order_with_the_legacy_variable_first(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(remote_app.AGENT_UPSTREAM_ENV, "https://hermes.invalid/")
+    monkeypatch.setenv("ZAB_AGENT_LABEL", "Hermès")
+    monkeypatch.setenv(remote_app.APPS_ENV, "flowgo|Flowgo|https://flowgo.invalid/")
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/apps", headers=_auth()).json()
+
+    assert [a["slug"] for a in body["apps"]] == ["agent", "flowgo"]
+    assert [a["label"] for a in body["apps"]] == ["Hermès", "Flowgo"]
+    assert body["apps"][1]["path"] == "/app/flowgo/"
+    # L'amont ne sort pas : le téléphone n'en a pas besoin, et publier les noms
+    # d'hôtes internes n'ajouterait qu'une surface.
+    assert all("upstream" not in a for a in body["apps"])
+
+
+def test_malformed_app_records_are_ignored_rather_than_fatal(monkeypatch, tmp_path: Path) -> None:
+    # Une coquille dans une variable d'environnement ne doit pas priver la
+    # mini-app de son onglet VM, seul moyen de rallumer la machine.
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    monkeypatch.setenv(
+        remote_app.APPS_ENV,
+        "sans-url|Cassé ; ok|OK|https://ok.invalid ; MAJUSCULE X|X|https://x.invalid ; ok|Doublon|https://z.invalid",
+    )
+    client = _client(monkeypatch, tmp_path)
+
+    body = client.get("/api/apps", headers=_auth()).json()
+
+    assert [a["slug"] for a in body["apps"]] == ["ok"]
+
+
+def test_unknown_app_slug_is_a_404(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(remote_app.AGENT_UPSTREAM_ENV, raising=False)
+    monkeypatch.setenv(remote_app.APPS_ENV, "flowgo|Flowgo|https://flowgo.invalid")
+    client = _client(monkeypatch, tmp_path)
+
+    assert client.get("/app/inconnu/").status_code == 404
 
 
 def test_agent_proxy_surfaces_an_unreachable_agent(monkeypatch, tmp_path: Path) -> None:

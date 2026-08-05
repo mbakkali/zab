@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import secrets
 import threading
 from datetime import datetime, timezone
@@ -40,10 +41,21 @@ TOKEN_FILENAME = "remote-token"
 # répond 404 avant même que la requête n'atteigne le conteneur.
 PUBLIC_PATHS = {"/ping"}
 
-# Agent embarqué joignable derrière la même origine que la mini-app. Vide, la
-# fonctionnalité disparaît : ni route, ni onglet côté PWA.
+# Applications embarquées, joignables derrière la même origine que la mini-app.
+# Aucune configurée, la fonctionnalité disparaît : ni route, ni onglet côté PWA.
+#
+# `ZAB_APPS` porte la liste, un enregistrement par application :
+#     slug|Libellé|https://amont ; slug2|Libellé 2|https://amont2
+#
+# `ZAB_AGENT_UPSTREAM` reste compris et vaut une application de slug `agent`.
+# C'est ce qui permet de passer d'un amont unique à plusieurs sans redéployer
+# dans le désordre : l'ancienne variable continue de marcher seule.
+APPS_ENV = "ZAB_APPS"
 AGENT_UPSTREAM_ENV = "ZAB_AGENT_UPSTREAM"
+APP_PREFIX = "/app"
 AGENT_PREFIX = "/agent"
+AGENT_SLUG = "agent"
+SLUG_OK = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 # En-têtes propres à un saut de connexion : les recopier casserait le tunnel.
 HOP_BY_HOP = frozenset(
     {
@@ -63,9 +75,45 @@ HOP_BY_HOP = frozenset(
 PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 
 
+def configured_apps() -> list[dict[str, str]]:
+    """Applications à relayer, dans l'ordre d'affichage des onglets.
+
+    Un enregistrement mal formé est ignoré plutôt que fatal : une coquille dans
+    une variable d'environnement ne doit pas priver la mini-app de son onglet
+    VM, qui est le seul moyen de rallumer la machine.
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    legacy = os.environ.get(AGENT_UPSTREAM_ENV, "").strip().rstrip("/")
+    if legacy:
+        label = os.environ.get("ZAB_AGENT_LABEL", "Agent").strip() or "Agent"
+        out.append({"slug": AGENT_SLUG, "label": label, "upstream": legacy})
+        seen.add(AGENT_SLUG)
+
+    for record in os.environ.get(APPS_ENV, "").split(";"):
+        parts = [p.strip() for p in record.split("|")]
+        if len(parts) != 3:
+            continue
+        slug, label, upstream = parts[0].lower(), parts[1], parts[2].rstrip("/")
+        if not SLUG_OK.match(slug) or not label or not upstream or slug in seen:
+            continue
+        out.append({"slug": slug, "label": label, "upstream": upstream})
+        seen.add(slug)
+    return out
+
+
+def app_by_slug(slug: str) -> dict[str, str] | None:
+    return next((a for a in configured_apps() if a["slug"] == slug), None)
+
+
 def agent_upstream() -> str | None:
-    """Base HTTP de l'agent à relayer, sans barre oblique finale."""
-    return os.environ.get(AGENT_UPSTREAM_ENV, "").strip().rstrip("/") or None
+    """Base HTTP de la première application relayée, sans barre oblique finale.
+
+    Conservée pour l'ancien chemin `/agent/` et pour les tests qui l'utilisent.
+    """
+    apps = configured_apps()
+    return apps[0]["upstream"] if apps else None
 
 
 def _forwardable(headers: Any, *, drop_host: bool = True) -> dict[str, str]:
@@ -219,21 +267,39 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail={"error": f"action non autorisée: {action}"})
         return {"job": runner.submit(action, lambda: remote_vm.sync_action(action))}
 
-    @app.get("/api/agent")
-    def agent_info() -> dict[str, Any]:
-        """Dit à la PWA si l'onglet doit exister, et sous quel libellé."""
+    @app.get("/api/apps")
+    def apps_info() -> dict[str, Any]:
+        """Dit à la PWA quels onglets exister, dans quel ordre et sous quel nom.
+
+        L'amont n'est pas exposé : le téléphone n'a besoin que du chemin local,
+        et publier les noms d'hôtes internes n'apporterait qu'une surface.
+        """
         return {
-            "enabled": agent_upstream() is not None,
-            "path": AGENT_PREFIX + "/",
-            "label": os.environ.get("ZAB_AGENT_LABEL", "Agent").strip() or "Agent",
+            "apps": [
+                {"slug": a["slug"], "label": a["label"], "path": f"{APP_PREFIX}/{a['slug']}/"}
+                for a in configured_apps()
+            ]
         }
 
-    @app.websocket(AGENT_PREFIX + "/{path:path}")
-    async def agent_ws(client: WebSocket, path: str) -> None:
-        """Relaie le WebSocket de l'agent — sans lui, sa SPA reste muette."""
+    @app.get("/api/agent")
+    def agent_info() -> dict[str, Any]:
+        """Ancien contrat, gardé pour les PWA déjà installées sur un téléphone.
+
+        Un service worker déjà en cache continue d'appeler cette route après le
+        déploiement : la retirer afficherait une app sans onglet le temps que le
+        cache tourne.
+        """
+        first = next(iter(configured_apps()), None)
+        return {
+            "enabled": first is not None,
+            "path": AGENT_PREFIX + "/",
+            "label": first["label"] if first else "Agent",
+        }
+
+    async def _relay_ws(client: WebSocket, base: str | None, path: str) -> None:
+        """Relaie le WebSocket d'une application — sans lui, sa SPA reste muette."""
         import websockets
 
-        base = agent_upstream()
         if not base:
             await client.close(code=1011)
             return
@@ -278,20 +344,26 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
             except RuntimeError:
                 pass
 
-    @app.api_route(AGENT_PREFIX, methods=PROXY_METHODS)
-    @app.api_route(AGENT_PREFIX + "/{path:path}", methods=PROXY_METHODS)
-    async def agent_proxy(request: Request, path: str = "") -> Response:
-        """Relaie l'agent sous un sous-chemin de cette origine.
+    @app.websocket(APP_PREFIX + "/{slug}/{path:path}")
+    async def app_ws(client: WebSocket, slug: str, path: str) -> None:
+        entry = app_by_slug(slug)
+        await _relay_ws(client, entry["upstream"] if entry else None, path)
+
+    @app.websocket(AGENT_PREFIX + "/{path:path}")
+    async def agent_ws(client: WebSocket, path: str) -> None:
+        await _relay_ws(client, agent_upstream(), path)
+
+    async def _relay_http(request: Request, base: str | None, prefix: str, path: str) -> Response:
+        """Relaie une application sous un sous-chemin de cette origine.
 
         `X-Forwarded-Prefix` est la convention que suivent les SPA servies
         derrière un préfixe : elle leur permet de réécrire leurs URLs d'assets
         absolues sans rebuild. Sans cet en-tête, la page se charge mais
         réclame ses bundles à la racine, où vit la PWA — et reste blanche.
         """
-        base = agent_upstream()
         if not base:
             return JSONResponse(
-                {"error": f"aucun agent configuré ; renseigne {AGENT_UPSTREAM_ENV}"},
+                {"error": f"aucune application configurée ; renseigne {APPS_ENV}"},
                 status_code=503,
             )
         # Convention du préfixe : on le retire de l'URL amont et on l'annonce
@@ -299,7 +371,7 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
         # réclamer sous /agent renverrait sa page d'index à la place du bundle.
         url = f"{base}/{path}"
         headers = _forwardable(request.headers)
-        headers["X-Forwarded-Prefix"] = AGENT_PREFIX
+        headers["X-Forwarded-Prefix"] = prefix
         headers["X-Forwarded-Proto"] = request.url.scheme
         client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=300.0), follow_redirects=False)
         try:
@@ -315,7 +387,7 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
             )
         except httpx.RequestError as exc:
             await client.aclose()
-            # L'agent vit sur une machine qui peut être éteinte : le dire
+            # L'application vit sur une machine qui peut être éteinte : le dire
             # franchement vaut mieux qu'une page blanche.
             return JSONResponse(
                 {"error": f"agent injoignable: {type(exc).__name__}"}, status_code=502
@@ -335,6 +407,20 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
             headers=_forwardable(upstream.headers, drop_host=False),
             media_type=upstream.headers.get("content-type"),
         )
+
+    @app.api_route(APP_PREFIX + "/{slug}", methods=PROXY_METHODS)
+    @app.api_route(APP_PREFIX + "/{slug}/{path:path}", methods=PROXY_METHODS)
+    async def app_proxy(request: Request, slug: str, path: str = "") -> Response:
+        entry = app_by_slug(slug)
+        if not entry:
+            return JSONResponse({"error": f"application inconnue: {slug}"}, status_code=404)
+        return await _relay_http(request, entry["upstream"], f"{APP_PREFIX}/{slug}", path)
+
+    @app.api_route(AGENT_PREFIX, methods=PROXY_METHODS)
+    @app.api_route(AGENT_PREFIX + "/{path:path}", methods=PROXY_METHODS)
+    async def agent_proxy(request: Request, path: str = "") -> Response:
+        """Ancien chemin, conservé le temps que les PWA installées se mettent à jour."""
+        return await _relay_http(request, agent_upstream(), AGENT_PREFIX, path)
 
     root = pwa_dir()
     if root.is_dir():

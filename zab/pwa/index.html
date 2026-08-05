@@ -29,9 +29,11 @@
 
       <div id="banner" class="banner" hidden></div>
 
+      <!-- Un seul onglet en dur : celui de la VM, qui doit rester joignable même
+           si aucune application n'est configurée — c'est le seul moyen de
+           rallumer la machine. Les autres sont ajoutés depuis /api/apps. -->
       <nav id="tabs" class="tabs" hidden>
         <button id="tab-vm" class="tab tab-on" type="button" data-view="vm">VM</button>
-        <button id="tab-agent" class="tab" type="button" data-view="agent">Agent</button>
       </nav>
 
       <div id="view-vm">
@@ -66,13 +68,8 @@
       </div>
       </div>
 
-      <section id="view-agent" hidden>
-        <p class="muted">
-          L’agent tourne sur la VM. Il n’est joignable que lorsqu’elle est
-          allumée : démarre-la depuis l’onglet VM si la page reste vide.
-        </p>
-        <a id="agent-link" class="action" href="/agent/">Ouvrir l’agent</a>
-      </section>
+      <!-- Une section par application, générée depuis /api/apps. -->
+      <div id="views-apps"></div>
 
       <footer class="muted small">
         <span id="updated">—</span>
