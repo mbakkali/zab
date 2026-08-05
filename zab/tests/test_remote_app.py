@@ -32,7 +32,37 @@ def test_ping_is_public_and_reveals_nothing(monkeypatch, tmp_path: Path) -> None
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"status": "ok", "service": "zab-remote"}
+    # `sso` dit *comment* on s'authentifie, jamais qui est connecté ni dans quel
+    # état est la VM : c'est ce dont la PWA a besoin pour ne pas afficher un
+    # écran de jeton là où Google a déjà fait le travail.
+    assert body == {"status": "ok", "service": "zab-remote", "sso": False}
+
+
+def test_iap_replaces_the_bearer_token_when_the_deployment_says_so(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(remote_app.IAP_ENV, "1")
+    client = _client(monkeypatch, tmp_path)
+
+    assert client.get("/ping").json()["sso"] is True
+    # Aucun en-tête Authorization : c'est IAP qui porte l'identité.
+    response = client.get(
+        "/api/me", headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:mehdi@flowmetrik.com"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"email": "mehdi@flowmetrik.com"}
+
+
+def test_the_iap_header_alone_opens_nothing(monkeypatch, tmp_path: Path) -> None:
+    # Un en-tête ne prouve rien tout seul : sans ZAB_IAP, un déploiement public
+    # qui l'accepterait serait grand ouvert. Le raccourci doit rester inerte.
+    monkeypatch.delenv(remote_app.IAP_ENV, raising=False)
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/api/me", headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:intrus@ailleurs.com"}
+    )
+    assert response.status_code == 401
 
 
 def test_api_requires_a_valid_token(monkeypatch, tmp_path: Path) -> None:

@@ -52,6 +52,11 @@ PUBLIC_PATHS = {"/ping"}
 # dans le désordre : l'ancienne variable continue de marcher seule.
 APPS_ENV = "ZAB_APPS"
 AGENT_UPSTREAM_ENV = "ZAB_AGENT_UPSTREAM"
+
+# Mis à 1 quand le service tourne derrière IAP : l'identité vient alors du SSO
+# Google et la PWA cesse de réclamer un jeton collé à la main.
+IAP_ENV = "ZAB_IAP"
+
 APP_PREFIX = "/app"
 AGENT_PREFIX = "/agent"
 AGENT_SLUG = "agent"
@@ -73,6 +78,27 @@ HOP_BY_HOP = frozenset(
     }
 )
 PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+
+def iap_identity(request: Request) -> str | None:
+    """Adresse de l'utilisateur authentifié par IAP, ou None.
+
+    IAP pose `X-Goog-Authenticated-User-Email` **après** avoir vérifié le compte
+    Google, et Cloud Run avec IAP n'accepte que le proxy comme appelant : un
+    client direct ne peut pas fabriquer cet en-tête, il n'a pas d'entrée.
+
+    Ce raccourci n'est donc valable que si le déploiement est réellement
+    derrière IAP. On l'exige explicitement via `ZAB_IAP=1` plutôt que de le
+    déduire de la présence d'un en-tête : un en-tête ne prouve rien tout seul,
+    et un déploiement public qui l'accepterait serait grand ouvert.
+    """
+    if os.environ.get(IAP_ENV, "").strip() not in {"1", "true", "yes"}:
+        return None
+    raw = request.headers.get("x-goog-authenticated-user-email", "").strip()
+    if not raw:
+        return None
+    # Format : `accounts.google.com:mehdi@flowmetrik.com`
+    return raw.split(":", 1)[-1] or None
 
 
 def configured_apps() -> list[dict[str, str]]:
@@ -221,6 +247,13 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
         path = request.url.path
         if request.method == "OPTIONS" or path in PUBLIC_PATHS or not path.startswith("/api/"):
             return await call_next(request)
+        # Derrière IAP, l'identité est déjà établie par Google avant que la
+        # requête n'atteigne le conteneur, et le service n'est joignable que par
+        # le proxy : redemander un jeton collé à la main n'ajoute rien et
+        # supprime tout l'intérêt du SSO.
+        if (identity := iap_identity(request)) is not None:
+            request.state.iap_user = identity
+            return await call_next(request)
         expected = read_token()
         if not expected:
             return JSONResponse(
@@ -236,7 +269,19 @@ def create_remote_app(*, jobs: JobRunner | None = None) -> FastAPI:
     @app.get("/ping")
     def ping() -> dict[str, Any]:
         # Sonde du tunnel : ne révèle ni l'état de la VM ni la configuration.
-        return {"status": "ok", "service": "zab-remote"}
+        # `sso` dit seulement *comment* on s'authentifie, pas *qui* est connecté :
+        # c'est ce dont la PWA a besoin pour ne pas afficher un écran de jeton
+        # là où Google a déjà fait le travail.
+        return {
+            "status": "ok",
+            "service": "zab-remote",
+            "sso": os.environ.get(IAP_ENV, "").strip() in {"1", "true", "yes"},
+        }
+
+    @app.get("/api/me")
+    def me(request: Request) -> dict[str, Any]:
+        """Qui est connecté, quand l'identité vient d'IAP."""
+        return {"email": getattr(request.state, "iap_user", None)}
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
