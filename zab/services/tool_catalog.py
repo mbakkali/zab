@@ -8,6 +8,7 @@ ses références de skills et sa posture de sécurité.
 from __future__ import annotations
 
 import math
+import os
 import re
 import shutil
 from collections import Counter
