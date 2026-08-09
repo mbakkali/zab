@@ -26,10 +26,9 @@ from zab.services import (
     state_index,
     workstation,
 )
-from zab.services.hermes_config import discover_hermes_external_dirs
 from zab.services.secrets_scan import scan_secret_presence
 from zab.services.skills_sync_status import skills_sync_status_payload
-from zab.user_config import load_user_config, skills_sync_settings, tracked_env_names_for_security, user_config_path
+from zab.user_config import load_user_config, tracked_env_names_for_security, user_config_path
 
 Status = str
 

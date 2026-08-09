@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import cast
 from zab.services import postgres_store
 from zab.services.brain_contracts import BrainStatusContract, BrainSchemaContract
 from zab.services.postgres_store import utc_now

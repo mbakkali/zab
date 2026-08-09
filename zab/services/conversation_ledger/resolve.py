@@ -9,7 +9,6 @@ from zab.services.conversation_ledger.clustering import cluster_events
 from zab.services.conversation_ledger.entity_resolver import (
     DEFAULT_ORGANIZATIONS,
     WORKSTREAM_SEEDS,
-    build_entity_links,
     resolve_organization,
     resolve_workstream,
 )

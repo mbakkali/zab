@@ -1,6 +1,5 @@
-import pytest
 from unittest.mock import patch
-from zab.services.brain import status, schema
+from zab.services.brain import status
 
 @patch("zab.services.brain.postgres_store.status")
 def test_brain_status(mock_status):

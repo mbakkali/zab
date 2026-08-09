@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from zab.services import skill_env_vars as sev
 

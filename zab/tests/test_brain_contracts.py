@@ -1,4 +1,3 @@
-import pytest
 from typing import get_type_hints
 from zab.services.brain_contracts import BrainStatusContract, BrainSchemaContract
 

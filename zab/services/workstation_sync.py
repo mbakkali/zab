@@ -25,9 +25,8 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-import yaml
 
 from zab.paths import config_dir, data_dir
 from zab.user_config import load_user_config
@@ -379,7 +378,6 @@ def _decrypt(src: Path, dst: Path) -> None:
 
 def _make_archive(profile: str, dest: Path) -> dict[str, Any]:
     manifest = local_manifest(profile)
-    home = _home()
     with tarfile.open(dest, "w:gz") as tf:
         for path, rel in _iter_profile_files(profile):
             tf.add(path, arcname=rel, recursive=False)
@@ -493,7 +491,6 @@ def pull(profile: str, *, force: bool = False) -> dict[str, Any]:
     st = _state_load()
     sp = (st.get("profiles") or {}).get(profile) or {}
     current = local_manifest(profile)
-    local_changed = _changed_local(profile, current, sp)
     with tempfile.TemporaryDirectory() as td:
         td_path = Path(td)
         downloaded = td_path / ("latest.tar.gz.enc" if profile == "secrets-cli" else "latest.tar.gz")

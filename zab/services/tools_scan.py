@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any
 
 from zab.paths import scripts_dir, zab_package_dir

@@ -19,12 +19,10 @@ from zab.paths import (
     config_dir,
     configs_dir,
     data_dir,
-    mehdi_context_root,
     resolve_skills_root,
     scripts_dir,
     skills_root,
     skills_root_from_config_file_only,
-    dashboard_local_tools_config_path,
     zab_package_dir,
     zab_repo_root,
     zab_ui_dist_dir,
@@ -721,7 +719,6 @@ def ledger_preflight_cmd(
 def tasks_sync() -> None:
     """Synchronise la boîte de réception des tâches et met en cache local."""
     from zab.services.tasks_inbox import sync_tasks_inbox
-    import typer
     from rich.console import Console
 
     console = Console()
@@ -3353,7 +3350,7 @@ def composio_hint_cmd(
     typer.echo(f"      'https://backend.composio.dev/api/v3/toolkits?slugs={toolkit}'")
     typer.echo("  zab :")
     typer.echo(f"    zab composio connections --toolkit {toolkit} --active")
-    typer.echo(f"    zab composio execute <TOOL_SLUG> -d '{{...}}'")
+    typer.echo("    zab composio execute <TOOL_SLUG> -d '{...}'")
 
 
 # ── Cloud Workstation sync helpers ───────────────────────────────────────────
