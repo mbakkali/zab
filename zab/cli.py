@@ -3512,6 +3512,36 @@ def ws_secrets_help_cmd() -> None:
     typer.echo("Fichiers couverts : .claude, .gemini, .codex, .config/gh, .config/firebase, .config/supabase, .config/composio, .config/scw, .aws, .ssh/config et clés SSH explicitement listées.")
 
 
+@ws_app.command("status")
+def ws_status_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """État de la workstation Cloud (lecture seule : gcloud describe/list, aucune action)."""
+    from zab.services import workstation
+
+    payload = workstation.get_workstation_status()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    status = payload.get("status") or "unknown"
+    if status == "not_configured":
+        typer.echo(typer.style("Workstation non configurée", fg=typer.colors.YELLOW))
+        typer.echo(f"  {payload.get('error', '')}")
+        return
+    if status == "error":
+        typer.echo(typer.style("Workstation : erreur", fg=typer.colors.RED))
+        typer.echo(f"  {payload.get('error', '')}")
+        return
+    typer.echo(typer.style("Workstation", bold=True))
+    typer.echo(f"  statut : {status}")
+    if payload.get("zone"):
+        typer.echo(f"  zone   : {payload['zone']}")
+    if payload.get("ssh_command"):
+        typer.echo(f"  ssh    : {payload['ssh_command']}")
+    if payload.get("console_url"):
+        typer.echo(f"  console: {payload['console_url']}")
+
+
 @ws_app.command("cli-status")
 def ws_cli_status_cmd(
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
