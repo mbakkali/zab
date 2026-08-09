@@ -47,10 +47,10 @@ def test_iap_replaces_the_bearer_token_when_the_deployment_says_so(
     assert client.get("/ping").json()["sso"] is True
     # Aucun en-tête Authorization : c'est IAP qui porte l'identité.
     response = client.get(
-        "/api/me", headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:mehdi@flowmetrik.com"}
+        "/api/me", headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:user@example.com"}
     )
     assert response.status_code == 200
-    assert response.json() == {"email": "mehdi@flowmetrik.com"}
+    assert response.json() == {"email": "user@example.com"}
 
 
 def test_the_iap_header_alone_opens_nothing(monkeypatch, tmp_path: Path) -> None:
