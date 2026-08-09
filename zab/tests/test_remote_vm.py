@@ -118,6 +118,11 @@ def test_vm_state_reports_running_session(monkeypatch, tmp_path: Path) -> None:
             return 0, json.dumps({"guestCpus": 4, "memoryMb": 16384}), ""
         raise AssertionError(args)
 
+    # Force le chemin gcloud plutôt que le repli REST : sans ce mock, une
+    # machine sans binaire gcloud sur le PATH bascule silencieusement vers
+    # l'API REST et échoue sur des identifiants absents au lieu d'exercer
+    # `fake_gcloud` ci-dessus (voir les tests voisins qui font de même).
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(remote_vm, "_gcloud", fake_gcloud)
 
     out = remote_vm.vm_state()
