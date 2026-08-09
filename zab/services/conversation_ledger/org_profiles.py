@@ -13,7 +13,21 @@ from zab.paths import config_dir
 # Comptes Mehdi — ne pas inférer un client depuis le domaine seul.
 _BUILTIN_INTERNAL_DOMAINS = frozenset({"flowmetrik.com", "upfundpro.com", "gmail.com"})
 
+# gmail.com est exclu ici : c'est un domaine public partagé par tout le monde,
+# pas un domaine appartenant à l'opérateur, donc il ne doit jamais faire
+# résoudre un échange vers l'organisation interne (voir résolution 4/4
+# ci-dessous dans entity_resolver.resolve_organization).
+_BUILTIN_INTERNAL_ORG_DOMAINS = frozenset({"flowmetrik.com", "upfundpro.com"})
+
 _BUILTIN_ORG_PROFILES: dict[str, dict[str, Any]] = {
+    "org_upfund": {
+        "organization_id": "org_upfund",
+        "label": "Interne",
+        "domains": sorted(_BUILTIN_INTERNAL_ORG_DOMAINS),
+        "internal": True,
+        "subject_hints": (),
+        "workstreams": {},
+    },
     "org_arp_astrance": {
         "organization_id": "org_arp_astrance",
         "label": "ARP Astrance",
@@ -253,17 +267,18 @@ INTERNAL_DOMAINS = frozenset(
 )
 
 
-def _internal_org_domains(document: dict[str, Any]) -> dict[str, str]:
+def _internal_org_domains(profiles: dict[str, dict[str, Any]]) -> dict[str, str]:
     """domaine -> organisation interne, pour les profils marqués `internal: true`.
 
     Le travail qui n'est pas pour un client est du travail quand même. Sans
     organisation interne, il n'a nulle part où aller et disparaît du système.
+
+    Lit le jeu de profils fusionné (builtin + document local) plutôt que le
+    document local seul : l'organisation interne par défaut doit résoudre sans
+    configuration locale, sur un checkout neuf comme en CI.
     """
     mapping: dict[str, str] = {}
-    organizations = document.get("organizations")
-    if not isinstance(organizations, dict):
-        return mapping
-    for org_id, profile in organizations.items():
+    for org_id, profile in profiles.items():
         if not isinstance(profile, dict) or not profile.get("internal"):
             continue
         for domain in _string_list(profile.get("domains") or []):
@@ -271,11 +286,11 @@ def _internal_org_domains(document: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
-INTERNAL_ORG_DOMAINS: dict[str, str] = _internal_org_domains(_LOCAL_DOCUMENT)
-INTERNAL_ORG_IDS: frozenset[str] = frozenset(INTERNAL_ORG_DOMAINS.values())
 ORG_PROFILES: dict[str, dict[str, Any]] = _merge_profiles(
     _BUILTIN_ORG_PROFILES, _LOCAL_DOCUMENT
 )
+INTERNAL_ORG_DOMAINS: dict[str, str] = _internal_org_domains(ORG_PROFILES)
+INTERNAL_ORG_IDS: frozenset[str] = frozenset(INTERNAL_ORG_DOMAINS.values())
 
 
 def profile_for_org(org_id: str) -> dict[str, Any] | None:
