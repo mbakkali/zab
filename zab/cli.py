@@ -793,6 +793,41 @@ def tasks_list(
     console.print(table)
 
 
+@tasks_app.command(name="sources")
+def tasks_sources_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Liste les sources de tâches configurées avec statut de cache et présence de jeton (masquée)."""
+    from zab.services import agent_context
+
+    payload = agent_context.task_sources_status()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    table = Table(title="Sources de tâches", header_style="bold blue")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Label")
+    table.add_column("Backend", style="magenta")
+    table.add_column("Jeton", style="yellow")
+    table.add_column("Cache", style="dim")
+
+    for row in payload.get("sources", []):
+        table.add_row(
+            row.get("id", ""),
+            row.get("label", ""),
+            row.get("backend", ""),
+            "✔" if row.get("token_present") else "✘",
+            str(row.get("cache_status") or "—"),
+        )
+
+    console.print(table)
+
+
 @db_app.command("status")
 def db_status_cmd(
     *,
@@ -892,13 +927,19 @@ def channels_sync() -> None:
     console.print(f"👉 Mails non lus : [bold cyan]{unread_emails}[/bold cyan] | Actions prioritaires détectées : [bold magenta]{actions_count}[/bold magenta]")
 
 @channels_app.command(name="list")
-def channels_list() -> None:
+def channels_list(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
     """Liste les canaux de communication et leur état actuel de synchronisation."""
     from zab.services.communication_channels import fetch_channels_cache
     from rich.console import Console
     from rich.table import Table
 
     data = fetch_channels_cache()
+    if json_out:
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+        return
     console = Console()
 
     table = Table(title="Canaux de Communication", header_style="bold green")

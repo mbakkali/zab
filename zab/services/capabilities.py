@@ -364,7 +364,7 @@ def get_capabilities() -> dict[str, Any]:
             summary="List configured task sources with cache status and masked token presence.",
             risk="read",
             core="zab.services.agent_context.task_sources_status",
-            cli="zab config --json",
+            cli="zab tasks sources --json",
             mcp="task_sources_status",
             api="GET /api/tasks/secret-locations",
             ui="Tasks Inbox",

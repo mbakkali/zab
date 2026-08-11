@@ -134,6 +134,47 @@ def test_digest_cleans_redacts_claude_loop_and_ignores_subagents(tmp_path: Path,
     assert item["project"] == "alpha"
 
 
+def test_digest_skips_provider_boilerplate_turn_when_deriving_intent(tmp_path: Path, monkeypatch) -> None:
+    """Certains CLIs injectent un tour "user" de bruit (plugins recommandés) avant
+    la vraie demande. Sans ce filtre, `intent` prenait le bruit et était identique
+    sur toutes les conversations de ce provider."""
+    monkeypatch.setattr(
+        "zab.services.conversation_digest.organization_slug_set_from_user_config",
+        lambda: {"example-client"},
+    )
+    doc = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-alpha",
+        room="conversation",
+        path=tmp_path / "boilerplate.jsonl",
+        content="alpha",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {
+                "role": "user",
+                "timestamp": "2026-06-24T17:00:00Z",
+                "content": "Here is a list of plugins that are available but not installed. - Airtable - Notion",
+            },
+            {
+                "role": "user",
+                "timestamp": "2026-06-24T17:00:05Z",
+                "content": "Corrige le deploiement UAT pour alpha",
+            },
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[doc],
+        projects=[_project("alpha", "example-client", "/workspace/projects/client/alpha")],
+    )
+
+    assert payload["shown_conversations"] == 1
+    item = payload["items"][0]
+    assert item["intent"] == "Corrige le deploiement UAT pour alpha"
+
+
 def test_digest_markdown_empty_window() -> None:
     payload = build_conversation_digest(
         days=1,

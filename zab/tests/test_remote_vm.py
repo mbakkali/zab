@@ -118,6 +118,10 @@ def test_vm_state_reports_running_session(monkeypatch, tmp_path: Path) -> None:
             return 0, json.dumps({"guestCpus": 4, "memoryMb": 16384}), ""
         raise AssertionError(args)
 
+    # Force la sélection du transport gcloud plutôt que le fallback REST :
+    # sans cela le test passe par accident sur une machine qui a gcloud sur
+    # PATH et échoue ailleurs (ADC absents) en croyant tester le mock ci-dessus.
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(remote_vm, "_gcloud", fake_gcloud)
 
     out = remote_vm.vm_state()
