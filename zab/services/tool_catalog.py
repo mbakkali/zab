@@ -8,6 +8,7 @@ ses références de skills et sa posture de sécurité.
 from __future__ import annotations
 
 import math
+import os
 import re
 import shutil
 from collections import Counter
@@ -19,9 +20,8 @@ import yaml
 
 from zab.paths import config_dir, tools_catalog_config_path
 from zab.services import communication_channels, connectors_aggregate, memory_db, obsidian_vault, tools_scan
-from zab.services import connectors_check
 from zab.services.composio_connectors import composio_cli_path
-from zab.user_config import cli_watchlist_from_user_config, load_user_config
+from zab.user_config import cli_watchlist_from_user_config
 
 TOOLS_CATALOG_CONTRACT = "tools-catalog"
 TOOLS_CATALOG_CONTRACT_VERSION = "1.0"

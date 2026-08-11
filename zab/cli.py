@@ -19,12 +19,10 @@ from zab.paths import (
     config_dir,
     configs_dir,
     data_dir,
-    mehdi_context_root,
     resolve_skills_root,
     scripts_dir,
     skills_root,
     skills_root_from_config_file_only,
-    dashboard_local_tools_config_path,
     zab_package_dir,
     zab_repo_root,
     zab_ui_dist_dir,
@@ -721,7 +719,6 @@ def ledger_preflight_cmd(
 def tasks_sync() -> None:
     """Synchronise la boîte de réception des tâches et met en cache local."""
     from zab.services.tasks_inbox import sync_tasks_inbox
-    import typer
     from rich.console import Console
 
     console = Console()
@@ -798,7 +795,7 @@ def tasks_sources_cmd(
     *,
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
 ) -> None:
-    """Liste les sources de tâches configurées avec statut de cache et présence de jeton (masquée)."""
+    """Liste les sources de tâches configurées, leur cache et la présence de jeton (masqué)."""
     from zab.services import agent_context
 
     payload = agent_context.task_sources_status()
@@ -809,23 +806,30 @@ def tasks_sources_cmd(
     from rich.table import Table
 
     console = Console()
-    table = Table(title="Sources de tâches", header_style="bold blue")
+
+    table = Table(title="Sources de tâches configurées", header_style="bold blue")
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Label")
     table.add_column("Backend", style="magenta")
     table.add_column("Jeton", style="yellow")
-    table.add_column("Cache", style="dim")
+    table.add_column("Cache", style="green")
+    table.add_column("Éléments en cache", style="dim")
 
     for row in payload.get("sources", []):
         table.add_row(
             row.get("id", ""),
-            row.get("label", ""),
-            row.get("backend", ""),
+            row.get("label", "") or "",
+            row.get("backend", "") or "",
             "✔" if row.get("token_present") else "✘",
             str(row.get("cache_status") or "—"),
+            str(row.get("cached_items_count", 0)),
         )
 
     console.print(table)
+    # Une source mal déclarée doit se voir : la taire ferait lire « aucune
+    # source » comme « rien à configurer ».
+    for err in payload.get("parse_errors") or []:
+        console.print(f"[red]⚠ {err}[/red]")
 
 
 @db_app.command("status")
@@ -3394,7 +3398,7 @@ def composio_hint_cmd(
     typer.echo(f"      'https://backend.composio.dev/api/v3/toolkits?slugs={toolkit}'")
     typer.echo("  zab :")
     typer.echo(f"    zab composio connections --toolkit {toolkit} --active")
-    typer.echo(f"    zab composio execute <TOOL_SLUG> -d '{{...}}'")
+    typer.echo("    zab composio execute <TOOL_SLUG> -d '{...}'")
 
 
 # ── Cloud Workstation sync helpers ───────────────────────────────────────────
@@ -3510,6 +3514,36 @@ def ws_secrets_help_cmd() -> None:
     typer.echo("   zab ws sync pull --profile secrets-cli")
     typer.echo("")
     typer.echo("Fichiers couverts : .claude, .gemini, .codex, .config/gh, .config/firebase, .config/supabase, .config/composio, .config/scw, .aws, .ssh/config et clés SSH explicitement listées.")
+
+
+@ws_app.command("status")
+def ws_status_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """État de la workstation Cloud (lecture seule : gcloud describe/list, aucune action)."""
+    from zab.services import workstation
+
+    payload = workstation.get_workstation_status()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    status = payload.get("status") or "unknown"
+    if status == "not_configured":
+        typer.echo(typer.style("Workstation non configurée", fg=typer.colors.YELLOW))
+        typer.echo(f"  {payload.get('error', '')}")
+        return
+    if status == "error":
+        typer.echo(typer.style("Workstation : erreur", fg=typer.colors.RED))
+        typer.echo(f"  {payload.get('error', '')}")
+        return
+    typer.echo(typer.style("Workstation", bold=True))
+    typer.echo(f"  statut : {status}")
+    if payload.get("zone"):
+        typer.echo(f"  zone   : {payload['zone']}")
+    if payload.get("ssh_command"):
+        typer.echo(f"  ssh    : {payload['ssh_command']}")
+    if payload.get("console_url"):
+        typer.echo(f"  console: {payload['console_url']}")
 
 
 @ws_app.command("cli-status")

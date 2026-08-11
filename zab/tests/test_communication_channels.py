@@ -3,9 +3,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 from zab.services import communication_channels as cc
 

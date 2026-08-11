@@ -15,7 +15,6 @@ import csv
 import importlib.util
 import io
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -143,7 +142,6 @@ def run_docs_only_mine(
     import mempalace.miner as miner_mod
 
     palace = (palace_path or "").strip() or MempalaceConfig().palace_path
-    project_path = Path(project_dir).expanduser().resolve()
 
     orig_ext = frozenset(READABLE_EXTENSIONS)
     try:

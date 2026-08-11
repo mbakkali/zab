@@ -321,7 +321,7 @@ def _connector_agent_hints(slug: str, forms: list[Any]) -> dict[str, Any]:
         commands["resolve_identity"] = f"zab composio whoami --toolkit {slug}"
         if len(accounts) > 1:
             commands["try_all_accounts"] = f"zab composio execute <TOOL_SLUG> --toolkit {slug} --all-accounts -d '{{...}}'"
-            commands["gmail_search_all"] = f"zab composio gmail search --query '<query>' --limit 5"
+            commands["gmail_search_all"] = "zab composio gmail search --query '<query>' --limit 5"
     warnings: list[str] = []
     if len(accounts) > 1:
         known_emails = [a.get("email") for a in accounts if a.get("email")]

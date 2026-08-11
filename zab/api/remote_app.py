@@ -97,7 +97,7 @@ def iap_identity(request: Request) -> str | None:
     raw = request.headers.get("x-goog-authenticated-user-email", "").strip()
     if not raw:
         return None
-    # Format : `accounts.google.com:mehdi@flowmetrik.com`
+    # Format : `accounts.google.com:user@example.com`
     return raw.split(":", 1)[-1] or None
 
 

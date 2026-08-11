@@ -6,7 +6,7 @@ from hashlib import sha256
 from typing import Any
 
 from zab.services import local_db
-from zab.services.conversation_ledger.store import get_workpacket, list_events, upsert_projection
+from zab.services.conversation_ledger.store import get_workpacket, upsert_projection
 
 
 def projection_hash(body: str) -> str:

@@ -13,7 +13,7 @@ from typing import Any
 from dotenv import dotenv_values
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typer.testing import CliRunner
 
@@ -73,7 +73,6 @@ from zab.user_config import (
     save_user_config,
     security_env_paths_resolved,
     skills_sync_settings,
-    tracked_env_names_for_security,
     user_config_path,
 )
 

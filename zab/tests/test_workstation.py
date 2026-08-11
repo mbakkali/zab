@@ -6,9 +6,13 @@ from typing import Any
 
 import yaml
 from fastapi.testclient import TestClient
+from typer.testing import CliRunner
 
 from zab.api.app import create_app
+from zab.cli import app as cli_app
 from zab.services import workstation
+
+runner = CliRunner()
 
 TEST_PROJECT = "my-gcp-project"
 TEST_INSTANCE = "my-workstation"
@@ -246,3 +250,51 @@ def test_workstation_routes(monkeypatch, tmp_path: Path) -> None:
     assert client.post("/api/workstation/start").json()["action"] == "start"
     assert client.post("/api/workstation/stop").json()["action"] == "stop"
     assert client.get("/api/workstation/ssh-command").json()["command"].startswith("gcloud")
+
+
+def test_ws_status_cli_json_reports_not_configured(monkeypatch, tmp_path: Path) -> None:
+    """`zab ws status --json` était absent (`No such command 'status'`, cf. AGENT_IMPROVEMENTS)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(yaml.safe_dump({}), encoding="utf-8")
+
+    result = runner.invoke(cli_app, ["ws", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "not_configured"
+
+
+def test_ws_status_cli_json_reports_running(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        workstation,
+        "get_workstation_status",
+        lambda: {"found": True, "status": "RUNNING", "zone": TEST_ZONE, "name": TEST_INSTANCE},
+    )
+
+    result = runner.invoke(cli_app, ["ws", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "RUNNING"
+    assert payload["zone"] == TEST_ZONE
+
+
+def test_ws_status_cli_text_mode_is_side_effect_free(monkeypatch, tmp_path: Path) -> None:
+    """La commande ne fait que lire l'état — jamais de start/stop implicite."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls: list[str] = []
+    monkeypatch.setattr(
+        workstation,
+        "get_workstation_status",
+        lambda: calls.append("status") or {"found": True, "status": "RUNNING"},
+    )
+    monkeypatch.setattr(workstation, "start_workstation", lambda: calls.append("start"))
+    monkeypatch.setattr(workstation, "stop_workstation", lambda: calls.append("stop"))
+
+    result = runner.invoke(cli_app, ["ws", "status"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["status"]

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from zab.services import local_db
 from zab.services.conversation_ledger.entity_resolver import DEFAULT_ORGANIZATIONS, WORKSTREAM_SEEDS
 from zab.services.conversation_ledger.store import utc_now
 

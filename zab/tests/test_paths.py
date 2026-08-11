@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pytest
 
 from zab.paths import orgs_dir, resolve_skills_root, skills_root
 
