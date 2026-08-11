@@ -791,16 +791,16 @@ def tasks_list(
 
 
 @tasks_app.command(name="sources")
-def tasks_sources(
+def tasks_sources_cmd(
     *,
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
 ) -> None:
     """Liste les sources de tâches configurées, leur cache et la présence de jeton (masqué)."""
-    from zab.services.agent_context import task_sources_status
+    from zab.services import agent_context
 
-    data = task_sources_status()
+    payload = agent_context.task_sources_status()
     if json_out:
-        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     from rich.console import Console
     from rich.table import Table
@@ -809,22 +809,26 @@ def tasks_sources(
 
     table = Table(title="Sources de tâches configurées", header_style="bold blue")
     table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Label")
     table.add_column("Backend", style="magenta")
     table.add_column("Jeton", style="yellow")
     table.add_column("Cache", style="green")
     table.add_column("Éléments en cache", style="dim")
 
-    for src in data.get("sources", []):
+    for row in payload.get("sources", []):
         table.add_row(
-            src.get("id", ""),
-            src.get("backend", ""),
-            "✔" if src.get("token_present") else "✘",
-            src.get("cache_status") or "—",
-            str(src.get("cached_items_count", 0)),
+            row.get("id", ""),
+            row.get("label", "") or "",
+            row.get("backend", "") or "",
+            "✔" if row.get("token_present") else "✘",
+            str(row.get("cache_status") or "—"),
+            str(row.get("cached_items_count", 0)),
         )
 
     console.print(table)
-    for err in data.get("parse_errors") or []:
+    # Une source mal déclarée doit se voir : la taire ferait lire « aucune
+    # source » comme « rien à configurer ».
+    for err in payload.get("parse_errors") or []:
         console.print(f"[red]⚠ {err}[/red]")
 
 

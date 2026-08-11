@@ -6,7 +6,7 @@ import pytest
 
 from zab.services.conversation_ledger.clustering import classify_workstream, cluster_events
 from zab.services.conversation_ledger.entity_resolver import build_entity_links, resolve_organization
-from zab.services.conversation_ledger.org_profiles import ORG_PROFILES
+from zab.services.conversation_ledger.org_profiles import INTERNAL_ORG_IDS, ORG_PROFILES
 
 
 REAL_CASES = [
@@ -94,6 +94,13 @@ REAL_CASES = [
 
 @pytest.mark.parametrize("case", REAL_CASES, ids=[c["name"] for c in REAL_CASES])
 def test_real_case_org_and_workstream(case: dict) -> None:
+    org_id_expected = case["org_id"]
+    if org_id_expected is not None and org_id_expected not in ORG_PROFILES and org_id_expected not in INTERNAL_ORG_IDS:
+        pytest.skip(
+            f"{case['name']} expects '{org_id_expected}', which is only defined in the "
+            "operator's private local organization profile — not present, by design, "
+            "outside their own machine."
+        )
     text = f"{case['subject']} {case['actor']}"
     org_id, org_label, org_conf, _ = resolve_organization(text=text, email=case["actor"])
     if case["org_id"] is None:
