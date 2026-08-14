@@ -364,7 +364,7 @@ def mirror_to_provider(
             entree.update(status="error", reason="projet_non_configure")
             resultats.append(entree)
             continue
-        amont, motif = provider.read_secret(f"sm://{project}/{secret_id}")
+        amont, _motif = provider.read_secret(f"sm://{project}/{secret_id}")
         if amont is not None and amont.strip() == valeur:
             entree.update(status="deja_a_jour")
             resultats.append(entree)
@@ -498,6 +498,7 @@ def mirror_projects_to_provider(
     *,
     apply: bool = False,
     include_hub_keys: bool = False,
+    sensitive_only: bool = True,
 ) -> dict[str, Any]:
     """Sauvegarde chaque ``.env`` projet, sous un identifiant nommé par projet.
 
@@ -517,6 +518,7 @@ def mirror_projects_to_provider(
         if v is not None and str(v).strip()
     }
     resultats: list[dict[str, Any]] = []
+    ecartes: list[dict[str, Any]] = []
     horodatage = _maintenant()
 
     for fichier in _env_files():
@@ -533,9 +535,14 @@ def mirror_projects_to_provider(
                 continue
             if nom in cles_hub and not include_hub_keys:
                 continue
-            secret_id = provider.sanitize_label(
-                "-".join(x for x in (marques["org"], marques["project"], nom) if x),
-                limite=255,
+            if sensitive_only and not ressemble_a_un_secret(nom):
+                ecartes.append({"name": nom, "org": marques["org"], "project": marques["project"]})
+                continue
+            # Même normalisation que pour un secret du collecteur — préfixe
+            # compris — sinon deux conventions de nommage cohabitent dans le
+            # même projet GCP et on ne sait plus laquelle chercher.
+            secret_id = provider.secret_id_for_name(
+                "-".join(x for x in (marques["org"], marques["project"], nom) if x)
             )
             entree = {
                 "name": nom, "secret_id": secret_id,
@@ -549,13 +556,13 @@ def mirror_projects_to_provider(
                 entree.update(status="error", reason="projet_non_configure")
                 resultats.append(entree)
                 continue
-            amont, _ = provider.read_secret(f"sm://{project}/{secret_id}")
+            amont, _motif = provider.read_secret(f"sm://{project}/{secret_id}")
             if amont is not None and amont.strip() == valeur:
                 entree.update(status="deja_a_jour")
                 resultats.append(entree)
                 continue
             cree = provider.create_secret(
-                {"name": nom}, value=valeur, project=project,
+                {"name": nom}, value=valeur, project=project, secret_id=secret_id,
                 labels={
                     "zab-org": marques["org"], "zab-project": marques["project"],
                     "zab-collected": horodatage[:10], "zab-kind": "project-env",
@@ -571,4 +578,47 @@ def mirror_projects_to_provider(
             )
             resultats.append(entree)
 
-    return {"project": project, "applied": apply, "results": resultats}
+    return {
+        "project": project, "applied": apply,
+        "results": resultats, "skipped": ecartes,
+        "sensitive_only": sensitive_only,
+    }
+
+
+#: Fragments de nom qui trahissent une valeur sensible. Volontairement large :
+#: rater un secret coûte plus cher que sauvegarder une variable anodine.
+_MOTIF_SENSIBLE_DEFAUT = (
+    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CREDENTIALS|DSN|DATABASE_URL|"
+    r"PRIVATE|SALT|SIGNATURE|AUTH|APIKEY|BEARER|COOKIE|SESSION|CERT|PASSPHRASE)"
+)
+
+
+def _motif_sensible():
+    """Motif de reconnaissance d'un nom de secret, surchargeable en configuration."""
+    import re
+
+    brut = _MOTIF_SENSIBLE_DEFAUT
+    try:
+        from zab.user_config import load_user_config
+
+        bloc = load_user_config().get("secret_manager")
+        if isinstance(bloc, dict):
+            perso = bloc.get("sensitive_name_pattern")
+            if isinstance(perso, str) and perso.strip():
+                brut = perso.strip()
+    except Exception:  # noqa: BLE001, S110 — config illisible : on garde le motif par défaut
+        pass
+    try:
+        return re.compile(brut, re.IGNORECASE)
+    except re.error:
+        return re.compile(_MOTIF_SENSIBLE_DEFAUT, re.IGNORECASE)
+
+
+def ressemble_a_un_secret(nom: str) -> bool:
+    """Vrai si le nom de la variable annonce une valeur sensible.
+
+    Heuristique assumée : elle lit le nom, pas la valeur. Un secret nommé
+    ``ARCHIVE_PATH`` lui échappera. C'est pourquoi ce qu'elle écarte est compté
+    et affiché — un filtre silencieux ferait croire à une couverture complète.
+    """
+    return bool(_motif_sensible().search(nom))

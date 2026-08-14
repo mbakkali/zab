@@ -60,6 +60,27 @@ the only record of where a key came from or how to rotate it.
 version first and skips anything already identical, so running it repeatedly
 costs nothing and creates no version churn.
 
+### Backing up project `.env` files
+
+```bash
+zab secrets mirror --projects --apply    # secret-shaped names only
+zab secrets mirror --projects --all --apply
+```
+
+The hub is flat, so it cannot hold two different `SECRET_KEY` values — on a
+real workstation 12 names carry different values in different projects, and
+collecting them would keep one and lose the rest. `--projects` sidesteps that
+by naming each one `zab-<org>-<project>-<key>`.
+
+By default it keeps only names that announce a secret — `KEY`, `TOKEN`,
+`SECRET`, `PASSWORD`, `DSN`, `AUTH` and friends — because a port number costs
+the same to store as a password. Override the pattern with
+`secret_manager.sensitive_name_pattern`, or take everything with `--all`.
+
+The filter reads the name, not the value, so a secret called `ARCHIVE_PATH`
+escapes it. What it skips is therefore counted and listed rather than dropped
+in silence: a quiet filter reads as full coverage when it is not.
+
 ## What the Security dashboard does
 
 The Security tab lists every tracked variable and lets you mirror one. The

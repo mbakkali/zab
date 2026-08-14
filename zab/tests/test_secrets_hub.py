@@ -299,7 +299,7 @@ def test_le_miroir_etiquette_avec_la_provenance(monkeypatch, tmp_path):
     from zab.services import secrets_hub, security_secret_sync
 
     names = ["UNE_CLE"]
-    root, cfg_dir = _setup(monkeypatch, tmp_path, tracked=names)
+    root, _cfg = _setup(monkeypatch, tmp_path, tracked=names)
     _tracked_only(monkeypatch, names)
     projet = root / "acme-cowork" / "portail"
     projet.mkdir(parents=True)
@@ -333,3 +333,76 @@ def test_les_etiquettes_respectent_le_jeu_de_caracteres_gcp():
     assert sanitize_label("suivi réglementaire") == "suivi-r-glementaire"
     assert sanitize_label("--bords--") == "bords"
     assert len(sanitize_label("x" * 200)) == 63
+
+
+def test_le_filtre_retient_les_noms_de_secrets_et_annonce_le_reste(monkeypatch, tmp_path):
+    from zab.services import secrets_hub
+
+    root, _ = _setup(monkeypatch, tmp_path, tracked=[])
+    _tracked_only(monkeypatch, [])
+    projet = root / "acme-cowork" / "api"
+    projet.mkdir(parents=True)
+    (projet / ".env").write_text(
+        "DB_PASSWORD=p\nSTRIPE_API_KEY=k\nDB_HOST=localhost\nDB_PORT=5432\n", encoding="utf-8"
+    )
+
+    resume = secrets_hub.mirror_projects_to_provider(apply=False)
+    retenus = sorted(r["name"] for r in resume["results"])
+    ecartes = sorted(e["name"] for e in resume["skipped"])
+    assert retenus == ["DB_PASSWORD", "STRIPE_API_KEY"]
+    # Ce qui est écarté doit être visible, pas silencieusement absent.
+    assert ecartes == ["DB_HOST", "DB_PORT"]
+
+    tout = secrets_hub.mirror_projects_to_provider(apply=False, sensitive_only=False)
+    assert len(tout["results"]) == 4
+    assert tout["skipped"] == []
+
+
+def test_le_motif_sensible_est_surchargeable(monkeypatch, tmp_path):
+    from zab.services import secrets_hub
+
+    _setup(monkeypatch, tmp_path, tracked=[])
+    assert secrets_hub.ressemble_a_un_secret("STRIPE_API_KEY") is True
+    assert secrets_hub.ressemble_a_un_secret("DB_HOST") is False
+
+    cfg = tmp_path / ".config" / "zab" / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump({"secret_manager": {"sensitive_name_pattern": "HOST"}}), encoding="utf-8"
+    )
+    assert secrets_hub.ressemble_a_un_secret("DB_HOST") is True
+    assert secrets_hub.ressemble_a_un_secret("STRIPE_API_KEY") is False
+
+    # Un motif invalide ne doit pas faire tomber la commande.
+    cfg.write_text(
+        yaml.safe_dump({"secret_manager": {"sensitive_name_pattern": "(unclosed"}}), encoding="utf-8"
+    )
+    assert secrets_hub.ressemble_a_un_secret("STRIPE_API_KEY") is True
+
+
+def test_le_miroir_projet_nomme_par_projet_et_ne_confond_pas_deux_memes_cles(monkeypatch, tmp_path):
+    from zab.services import secrets_hub, security_secret_sync
+
+    root, _cfg = _setup(monkeypatch, tmp_path, tracked=[])
+    _tracked_only(monkeypatch, [])
+    for projet in ("api", "portail"):
+        d = root / "acme-cowork" / projet
+        d.mkdir(parents=True)
+        (d / ".env").write_text(f"SECRET_KEY=valeur-{projet}\n", encoding="utf-8")
+
+    recus: list[tuple[str, str]] = []
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
+    monkeypatch.setattr(
+        security_secret_sync, "create_secret",
+        lambda variable, *, value, project=None, secret_id=None, labels=None, annotations=None: (
+            recus.append((secret_id, value)),
+            {"ok": True, "status": "created", "secret_id": secret_id},
+        )[1],
+    )
+    secrets_hub.mirror_projects_to_provider(apply=True)
+
+    # Deux SECRET_KEY de valeurs différentes doivent aboutir à deux secrets
+    # distincts : c'est toute la raison d'être du miroir par projet.
+    assert sorted(recus) == [
+        ("zab-acme-api-secret-key", "valeur-api"),
+        ("zab-acme-portail-secret-key", "valeur-portail"),
+    ]

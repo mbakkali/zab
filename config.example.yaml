@@ -41,6 +41,9 @@ tracked_env_extra: []
 #   prefix: zab-
 #   map:
 #     QONTO_API_KEY: qonto-prod-key
+#   # Which project .env names `mirror --projects` keeps. Defaults to a
+#   # broad set of secret-ish words; it reads the name, not the value.
+#   sensitive_name_pattern: (KEY|TOKEN|SECRET|PASSWORD|DSN|AUTH)
 
 # Optional: Postgres memory / conversations archive
 # Set ZAB_MEMORY_DATABASE_URL in ~/.config/zab/.env or your skills/.env

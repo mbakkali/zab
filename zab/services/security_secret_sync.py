@@ -313,6 +313,7 @@ def create_secret(
     *,
     value: str,
     project: str | None = None,
+    secret_id: str | None = None,
     labels: dict[str, str] | None = None,
     annotations: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -335,7 +336,10 @@ def create_secret(
     if not gcloud:
         return {"ok": False, "status": "failed", "reason": "gcloud_absent"}
 
-    secret_id = secret_id_for_name(name)
+    # L'identifiant peut être imposé par l'appelant : le miroir par projet
+    # nomme `zab-<org>-<projet>-<cle>` pour distinguer deux `SECRET_KEY` que le
+    # nom seul confondrait. Le recalculer ici les ferait se recouvrir.
+    secret_id = (secret_id or "").strip() or secret_id_for_name(name)
     reference = f"{REFERENCE_SCHEME}{proj}/{secret_id}"
 
     exists, _, _ = _run_gcloud(["secrets", "describe", secret_id, "--project", proj])

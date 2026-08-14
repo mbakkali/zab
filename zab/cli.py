@@ -3024,13 +3024,19 @@ def secrets_mirror_cmd(
         False, "--projects",
         help="Sauvegarder aussi chaque .env projet, sous un identifiant nommé par projet",
     ),
+    all_vars: bool = typer.Option(
+        False, "--all",
+        help="Avec --projects : ne pas filtrer sur le nom, tout sauvegarder",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Écrit réellement dans Secret Manager"),
 ) -> None:
     """Recopie le collecteur vers Secret Manager. Ne touche à aucun fichier local."""
     from zab.services import secrets_hub
 
     if projects:
-        par_projet = secrets_hub.mirror_projects_to_provider(apply=apply)
+        par_projet = secrets_hub.mirror_projects_to_provider(
+            apply=apply, sensitive_only=not all_vars
+        )
         typer.echo(typer.style("Sauvegarde des .env projets", bold=True))
         compte: dict[str, int] = {}
         for row in par_projet["results"]:
@@ -3041,6 +3047,17 @@ def secrets_mirror_cmd(
         for cle, n in sorted(compte.items()):
             typer.echo(f"  {cle:<48} {n:3d}")
         typer.echo(f"  total : {len(par_projet['results'])} secret(s)")
+        ecartes = par_projet.get("skipped") or []
+        if ecartes:
+            # Un filtre qui se tait laisse croire à une couverture complète. Il
+            # lit le nom, pas la valeur : un secret nommé ARCHIVE_PATH lui
+            # échappe, et c'est à l'humain de le voir.
+            noms = sorted({e["name"] for e in ecartes})
+            typer.echo(typer.style(
+                f"  {len(ecartes)} écartée(s), nom non évocateur d'un secret — --all pour les inclure",
+                dim=True))
+            typer.echo(typer.style("    " + ", ".join(noms[:12])
+                                   + (" …" if len(noms) > 12 else ""), dim=True))
         if not apply:
             typer.echo(typer.style("  Simulation — ajouter --apply pour écrire.", dim=True))
         typer.echo("")

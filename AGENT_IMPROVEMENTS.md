@@ -3,6 +3,16 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-08-14 - Scan every project through symlinks, tag what is mirrored, and namespace per project
+
+- Trigger: mention
+- Context: the operator asked that every project be scanned, including those reachable only through symlinks, and that a mirrored secret carry its project, organisation, path and date.
+- Observation: the scan stopped at three levels and followed no symlink — on a real workstation it saw 10 `.env` files out of 16, and said nothing about the six it could not reach. Widening it then exposed a problem the narrow scan had hidden: 160 keys live in project files and not in the hub, and 12 names carry *different values in different projects* (`SECRET_KEY`, `DATABASE_URL`, `GITHUB_TOKEN`, `VITE_SUPABASE_ANON_KEY`…). A flat `KEY=value` hub cannot hold those; collecting them would have kept one and lost the rest, which is the exact failure the whole exercise exists to prevent.
+- Improvement: the walk now covers the declared roots in full with links followed, deduplicating on the real path — 27 raw paths resolve to 16 real files, one file being reachable by several routes — and remembering visited directories, without which a link pointing at an ancestor loops forever. Secrets are tagged at creation: labels `zab-org`, `zab-project`, `zab-collected`, `zab-kind`; annotations `zab-source`, `zab-var`, `zab-mirrored-at`. Labels take a restricted charset so a path cannot be one; annotations accept slashes and 512 bytes. Provenance is captured at collect time into `~/.config/zab/secrets-provenance.json`, since a value in the flat hub no longer says where it came from. Added `mirror --projects`, naming each secret `zab-<org>-<project>-<key>` so the mirror distinguishes what the hub conflates, with a name-based filter (`--all` to bypass, `secret_manager.sensitive_name_pattern` to redefine) because 140 of 197 project keys are ports, hosts and flags that cost the same to store as a password.
+- Evidence: 539 → 545 passing. Verified against a raw `find -L`: zero files missed. Caught mid-run, from the first secret the real command created: `create_secret` recomputed the id from `variable["name"]` and silently discarded the namespaced id the caller passed, so `zab-agileimmo-projet-agile-secret-key` was being written as `zab-secret-key` — collapsing precisely the collisions the feature exists to separate. Fixed with a `secret_id` parameter and pinned by a test that mirrors two different `SECRET_KEY` values from two projects and asserts two distinct ids. The 14 mis-named secrets already created were deleted after verifying each value still existed in its source `.env`, and the hub's 27 were re-verified byte-identical afterwards.
+- Status: verified
+- Lesson worth keeping: the bug was invisible to the dry run, which printed the correct id — it only appeared once a secret existed in the provider and could be read back. A dry run that reports intent rather than replaying the write path will not catch a value discarded downstream; the first real object is worth inspecting before letting the loop finish.
+
 ## 2026-08-14 - Correct the direction: the local hub is the source of truth, the provider is a mirror
 
 - Trigger: mention
