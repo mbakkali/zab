@@ -1,13 +1,21 @@
-# Secrets: Google Secret Manager
+# Secrets: a local hub, mirrored to Google Secret Manager
 
-Zab tracks a catalogue of environment variables (see `zab/secrets_catalog.py`)
-and can move them between three places:
+Zab tracks a catalogue of environment variables (`zab/secrets_catalog.py`) and
+keeps them in one place, with a remote copy in case that place is lost.
 
-| Where | What lives there |
+| Where | Role |
 |---|---|
-| project `.env` files | what an application actually reads at startup |
-| `~/.config/zab/.env` | the local hub, merged from the above |
-| Google Secret Manager | the reference — what survives losing a machine |
+| project `.env` files | where a value is first written, by whoever set it up |
+| `~/.config/zab/.env` | **the hub — the source of truth.** Always plaintext. This is what scripts read. |
+| Google Secret Manager | **a mirror.** A backup image, nothing reads from it at runtime. |
+
+The direction of authority matters: the hub wins. The mirror exists so that
+losing a machine does not lose a credential — it is never the thing an
+application resolves against.
+
+**Nothing is ever removed from disk.** An earlier design replaced the local
+value with an `sm://` reference. That broke every consumer of the file and
+inverted the two roles; it has been removed.
 
 ## Configure
 
@@ -16,61 +24,56 @@ and can move them between three places:
 secret_manager:
   project: my-gcp-project
   prefix: zab-
+  # Only needed for secrets that already exist under a different name.
+  # Without it, the id is derived: QONTO_API_KEY -> zab-qonto-api-key,
+  # which would not find a secret someone created as `qonto-prod-key`.
+  map:
+    QONTO_API_KEY: qonto-prod-key
 ```
 
 Declare `project` explicitly. Without it, zab falls back to
-`gcloud config get-value project`, which is rarely the project that holds your
+`gcloud config get-value project`, which is rarely the project holding your
 secrets — and if the Secret Manager API is disabled there, every call fails
-with an error about a project you never meant to use.
+naming a project you never chose.
 
 Authentication is whatever `gcloud` already uses: `gcloud auth login` on a
-workstation, or the attached service account on a VM. Zab never handles a
-credential file of its own.
-
-## The reference scheme
-
-A synced variable no longer holds its value on disk. It holds a reference:
-
-```dotenv
-QONTO_API_KEY=sm://my-gcp-project/zab-qonto-api-key
-```
-
-The project part is optional — `sm://zab-qonto-api-key` resolves against the
-configured project, which keeps a `.env` portable between environments that
-don't point at the same one.
-
-Nothing resolves these references implicitly. An application that receives
-`sm://...` as an API key will fail, and that is deliberate: `zab secrets pull`
-is the step that turns references back into values, and it has to be asked for.
-The Evolution preflight check rejects unresolved references for this reason.
+workstation, the attached service account on a VM. Zab holds no credential
+file of its own.
 
 ## Commands
 
 ```bash
-zab secrets status              # where each variable lives, and in what form
-zab secrets collect --apply     # project .env files -> ~/.config/zab/.env
-zab secrets push --apply        # plaintext -> Secret Manager, leaves sm:// behind
-zab secrets pull --to path/.env --apply   # sm:// -> real values, in a target file
+zab secrets status                # where each variable lives, and in what form
+zab secrets collect --apply       # project .env files -> the hub
+zab secrets mirror --apply        # the hub -> Secret Manager (touches no file)
+zab secrets restore --apply       # Secret Manager -> the hub, for what is missing
 ```
 
-All four default to a dry run. `push` and `pull` do nothing without `--apply`.
+All four default to a dry run.
 
-`pull` writes plaintext secrets to disk. That is its purpose — a freshly cloned
-repository has no `.env`, and something has to reconstitute it — but it means
-the command belongs on a trusted machine only.
+`collect` and `restore` never overwrite a value already in the hub — `collect`
+takes `--force` if you mean to. Both update keys in place and append new ones,
+so comments, ordering and trailing notes survive; a `.env` line often carries
+the only record of where a key came from or how to rotate it.
 
-## What the Security dashboard shows
+`mirror` reads the hub and writes to the provider. It reads the current remote
+version first and skips anything already identical, so running it repeatedly
+costs nothing and creates no version churn.
 
-The Security tab lists every tracked variable with one of three states:
+## What the Security dashboard does
 
-- **synced** — the value is a `sm://` reference;
-- **pending** — a plaintext value sits in a `.env`;
-- **missing** — nothing declares it.
+The Security tab lists every tracked variable and lets you mirror one. The
+action creates the secret if it is missing and reports what happened. It does
+not modify any `.env`, and values are never returned by the API, never logged,
+and never written to a response.
 
-Selecting a pending variable creates the secret if needed, then rewrites the
-local `.env` in place. Values are never returned by the API, never logged, and
-never written back to disk once referenced. The rewrite is atomic: a temporary
-file, then a rename, so an interrupted write cannot leave a truncated `.env`.
+## Shapes that do not belong in a `.env`
+
+Secret Manager will happily hold a service-account JSON or an OAuth token
+document. Those are files, consumed as files — a 2 KB JSON blob on a single
+`.env` line is fragile and usually breaks the consumer that expected a path.
+`restore` will fetch whatever the provider returns, so point it at scalar
+secrets and keep document-shaped ones out of the tracked catalogue.
 
 ## Migrating from Dashlane
 
@@ -79,7 +82,6 @@ drove Chrome to create missing secrets. It required a signed-in graphical
 session, so it did not work on a headless machine, and its vault sat outside
 the rest of the infrastructure.
 
-References changed scheme from `dl://` to `sm://`. Existing `dl://` entries are
-not migrated automatically — they are plaintext-free but point at a vault zab
-no longer reads. To move one over, put the value back in the `.env` by hand and
-run `zab secrets push --apply`.
+If a `.env` still holds a `dl://` entry, it is a reference to a vault zab no
+longer reads, and the value behind it is not in the hub. Put the real value
+back in the file by hand, then `zab secrets collect --apply`.

@@ -105,119 +105,110 @@ def test_collect_en_simulation_n_ecrit_rien(monkeypatch, tmp_path):
     assert not (cfg_dir / ".env").exists()
 
 
-def test_push_remplace_la_valeur_par_sa_reference(monkeypatch, tmp_path):
+def test_mirror_ne_touche_jamais_au_fichier_local(monkeypatch, tmp_path):
     from zab.services import secrets_hub, security_secret_sync
 
     names = ["QONTO_API_KEY"]
-    root, _ = _setup(monkeypatch, tmp_path, tracked=names)
+    root, cfg_dir = _setup(monkeypatch, tmp_path, tracked=names)
     _tracked_only(monkeypatch, names)
     projet = root / "app"
     projet.mkdir()
-    env_path = projet / ".env"
-    env_path.write_text("AUTRE=intact\nQONTO_API_KEY=valeur-sensible\n", encoding="utf-8")
+    env_projet = projet / ".env"
+    env_projet.write_text("AUTRE=intact\nQONTO_API_KEY=valeur-sensible\n", encoding="utf-8")
+    (cfg_dir / ".env").write_text(
+        "# collecteur\nQONTO_API_KEY=valeur-sensible   # commentaire\n", encoding="utf-8"
+    )
+    avant_projet = env_projet.read_text(encoding="utf-8")
+    avant_hub = (cfg_dir / ".env").read_text(encoding="utf-8")
 
-    pousse: dict[str, str] = {}
+    envoye: dict[str, str] = {}
 
     def _fake_create(variable, *, value, project=None):
-        pousse["name"] = variable["name"]
-        pousse["value"] = value
-        return {
-            "ok": True,
-            "status": "created",
-            "secret_id": "zab-qonto-api-key",
-            "secret_reference": "sm://demo-projet/zab-qonto-api-key",
-        }
+        envoye["name"] = variable["name"]
+        envoye["value"] = value
+        return {"ok": True, "status": "created", "secret_id": "zab-qonto-api-key"}
 
     monkeypatch.setattr(security_secret_sync, "create_secret", _fake_create)
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
 
-    resume = secrets_hub.push_to_provider(apply=True)
-    assert [r["status"] for r in resume["results"]] == ["pushed"]
-    assert pousse == {"name": "QONTO_API_KEY", "value": "valeur-sensible"}
-
-    ecrit = env_path.read_text(encoding="utf-8")
-    assert "QONTO_API_KEY=sm://demo-projet/zab-qonto-api-key" in ecrit
-    assert "valeur-sensible" not in ecrit
-    # Le reste du fichier n'est pas touché, et rien ne traîne à côté.
-    assert "AUTRE=intact" in ecrit
-    assert not list(projet.glob(".env.zab-secret-tmp*"))
+    resume = secrets_hub.mirror_to_provider(apply=True)
+    assert [r["status"] for r in resume["results"]] == ["mirrored"]
+    assert envoye == {"name": "QONTO_API_KEY", "value": "valeur-sensible"}
+    # Le point central du modèle : rien ne quitte le disque, rien n'est réécrit.
+    assert env_projet.read_text(encoding="utf-8") == avant_projet
+    assert (cfg_dir / ".env").read_text(encoding="utf-8") == avant_hub
 
 
-def test_push_en_simulation_ne_touche_pas_au_fichier(monkeypatch, tmp_path):
-    from zab.services import secrets_hub
+def test_mirror_ne_repousse_pas_une_valeur_deja_a_jour(monkeypatch, tmp_path):
+    from zab.services import secrets_hub, security_secret_sync
 
     names = ["QONTO_API_KEY"]
-    root, _ = _setup(monkeypatch, tmp_path, tracked=names)
+    _, cfg_dir = _setup(monkeypatch, tmp_path, tracked=names)
     _tracked_only(monkeypatch, names)
-    projet = root / "app"
-    projet.mkdir()
-    env_path = projet / ".env"
-    env_path.write_text("QONTO_API_KEY=valeur-sensible\n", encoding="utf-8")
+    (cfg_dir / ".env").write_text("QONTO_API_KEY=identique\n", encoding="utf-8")
 
-    resume = secrets_hub.push_to_provider(apply=False)
-    assert [r["status"] for r in resume["results"]] == ["would_push"]
-    assert env_path.read_text(encoding="utf-8") == "QONTO_API_KEY=valeur-sensible\n"
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: ("identique", ""))
+
+    def _refuse(*_a, **_k):
+        raise AssertionError("create_secret ne doit pas être appelé")
+
+    monkeypatch.setattr(security_secret_sync, "create_secret", _refuse)
+    resume = secrets_hub.mirror_to_provider(apply=True)
+    assert [r["status"] for r in resume["results"]] == ["deja_a_jour"]
 
 
-def test_pull_resout_les_references_dans_la_cible(monkeypatch, tmp_path):
+def test_restore_comble_un_trou_sans_ecraser_l_existant(monkeypatch, tmp_path):
     from zab.services import secrets_hub, security_secret_sync
 
-    names = ["REF_KEY"]
-    root, _ = _setup(monkeypatch, tmp_path, tracked=names)
+    names = ["PRESENTE", "MANQUANTE"]
+    _, cfg_dir = _setup(monkeypatch, tmp_path, tracked=names)
     _tracked_only(monkeypatch, names)
-    projet = root / "app"
-    projet.mkdir()
-    (projet / ".env").write_text("REF_KEY=sm://demo-projet/le-secret\n", encoding="utf-8")
-
+    (cfg_dir / ".env").write_text(
+        "# en-tête\nPRESENTE=valeur-locale   # gardée\n", encoding="utf-8"
+    )
     monkeypatch.setattr(
-        security_secret_sync,
-        "read_secret",
-        lambda reference, **_: ("valeur-restituee", "") if "le-secret" in reference else (None, "inconnue"),
+        security_secret_sync, "read_secret",
+        lambda ref, **_: ("depuis-le-miroir", "") if "manquante" in ref else ("autre", ""),
     )
 
-    cible = tmp_path / "neuf" / ".env"
-    resume = secrets_hub.pull_from_provider(cible, apply=True)
-    assert [r["status"] for r in resume["results"]] == ["pulled"]
-    assert cible.read_text(encoding="utf-8") == "REF_KEY=valeur-restituee\n"
-    # Le fichier reçoit des secrets : il ne doit pas être lisible par tous.
-    assert (cible.stat().st_mode & 0o077) == 0
+    resume = secrets_hub.restore_from_provider(apply=True)
+    par_nom = {r["name"]: r for r in resume["results"]}
+    assert par_nom["PRESENTE"]["status"] == "skipped"
+    assert par_nom["MANQUANTE"]["status"] == "restored"
+
+    contenu = (cfg_dir / ".env").read_text(encoding="utf-8")
+    assert "PRESENTE=valeur-locale   # gardée" in contenu   # ni la valeur ni le commentaire
+    assert "# en-tête" in contenu                            # ni la structure
+    assert "MANQUANTE=depuis-le-miroir" in contenu
 
 
-def test_pull_ne_recouvre_pas_une_valeur_deja_en_clair(monkeypatch, tmp_path):
-    from zab.services import secrets_hub, security_secret_sync
+def test_collect_preserve_commentaires_et_ordre(monkeypatch, tmp_path):
+    from zab.services import secrets_hub
 
-    names = ["REF_KEY"]
-    root, _ = _setup(monkeypatch, tmp_path, tracked=names)
+    names = ["DEJA_LA", "NOUVELLE"]
+    root, cfg_dir = _setup(monkeypatch, tmp_path, tracked=names)
     _tracked_only(monkeypatch, names)
-    projet = root / "app"
-    projet.mkdir()
-    (projet / ".env").write_text("REF_KEY=sm://demo-projet/le-secret\n", encoding="utf-8")
-    monkeypatch.setattr(security_secret_sync, "read_secret", lambda reference, **_: ("nouvelle", ""))
+    (root / "app").mkdir()
+    (root / "app" / ".env").write_text(
+        "DEJA_LA=version-projet\nNOUVELLE=valeur-neuve\n", encoding="utf-8"
+    )
+    (cfg_dir / ".env").write_text(
+        "# bloc du haut\nZZZ_AUTRE=intact\nDEJA_LA=version-collecteur   # ne pas perdre\n",
+        encoding="utf-8",
+    )
 
-    cible = tmp_path / "cible.env"
-    cible.write_text("REF_KEY=valeur-locale-choisie\n", encoding="utf-8")
+    secrets_hub.collect_to_user_dotenv(apply=True)
+    contenu = (cfg_dir / ".env").read_text(encoding="utf-8")
+    lignes = contenu.splitlines()
+    assert lignes[0] == "# bloc du haut"
+    assert lignes[1] == "ZZZ_AUTRE=intact"                      # l'ordre d'origine tient
+    assert "DEJA_LA=version-collecteur   # ne pas perdre" in contenu
+    assert "NOUVELLE=valeur-neuve" in contenu
 
-    resume = secrets_hub.pull_from_provider(cible, apply=True)
-    assert resume["results"][0]["status"] == "skipped"
-    assert resume["results"][0]["reason"] == "deja_en_clair"
-    assert cible.read_text(encoding="utf-8") == "REF_KEY=valeur-locale-choisie\n"
-
-
-def test_pull_remonte_l_erreur_sans_ecrire(monkeypatch, tmp_path):
-    from zab.services import secrets_hub, security_secret_sync
-
-    names = ["REF_KEY"]
-    root, _ = _setup(monkeypatch, tmp_path, tracked=names)
-    _tracked_only(monkeypatch, names)
-    projet = root / "app"
-    projet.mkdir()
-    (projet / ".env").write_text("REF_KEY=sm://demo-projet/le-secret\n", encoding="utf-8")
-    monkeypatch.setattr(security_secret_sync, "read_secret", lambda reference, **_: (None, "acces_refuse"))
-
-    cible = tmp_path / "cible.env"
-    resume = secrets_hub.pull_from_provider(cible, apply=True)
-    assert resume["results"][0]["status"] == "error"
-    assert resume["results"][0]["reason"] == "acces_refuse"
-    assert not cible.exists()
+    # Avec --force, la valeur est mise à jour mais le commentaire reste.
+    secrets_hub.collect_to_user_dotenv(force=True, apply=True)
+    contenu = (cfg_dir / ".env").read_text(encoding="utf-8")
+    assert "DEJA_LA=version-projet   # ne pas perdre" in contenu
 
 
 def test_reference_invalide_n_est_pas_prise_pour_une_reference():
@@ -262,3 +253,25 @@ def test_le_commentaire_de_fin_de_ligne_survit_au_remplacement():
         obtenu, change = _replace_dotenv_key(origine, "K", "sm://p/s")
         assert change is True, origine
         assert obtenu == attendu, f"{origine!r} -> {obtenu!r} au lieu de {attendu!r}"
+
+
+def test_mirror_couvre_tout_le_collecteur_pas_seulement_le_catalogue(monkeypatch, tmp_path):
+    from zab.services import secrets_hub, security_secret_sync
+
+    # Le catalogue suivi ne connaît qu'une des deux clés.
+    _, cfg_dir = _setup(monkeypatch, tmp_path, tracked=["SUIVIE"])
+    _tracked_only(monkeypatch, ["SUIVIE"])
+    (cfg_dir / ".env").write_text("SUIVIE=a\nHORS_CATALOGUE=b\n", encoding="utf-8")
+
+    vus: list[str] = []
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
+    monkeypatch.setattr(
+        security_secret_sync, "create_secret",
+        lambda variable, *, value, project=None: (
+            vus.append(variable["name"]),
+            {"ok": True, "status": "created", "secret_id": "x"},
+        )[1],
+    )
+
+    secrets_hub.mirror_to_provider(apply=True)
+    assert sorted(vus) == ["HORS_CATALOGUE", "SUIVIE"]

@@ -3017,66 +3017,56 @@ def secrets_collect_cmd(
         typer.echo(typer.style("  Simulation — ajouter --apply pour écrire.", dim=True))
 
 
-@secrets_app.command("push")
-def secrets_push_cmd(
+@secrets_app.command("mirror")
+def secrets_mirror_cmd(
     name: list[str] = typer.Option(None, "--name", "-n", help="Limiter à ces variables"),
-    apply: bool = typer.Option(False, "--apply", help="Crée les secrets et réécrit les .env"),
+    apply: bool = typer.Option(False, "--apply", help="Écrit réellement dans Secret Manager"),
 ) -> None:
-    """Pousse les valeurs en clair vers Secret Manager et les remplace par leur référence."""
+    """Recopie le collecteur vers Secret Manager. Ne touche à aucun fichier local."""
     from zab.services import secrets_hub
 
-    names = tuple(name) if name else None
-    summary = secrets_hub.push_to_provider(names, apply=apply)
-    typer.echo(typer.style("Push vers Secret Manager", bold=True))
-    typer.echo(f"  Projet : {summary['project'] or typer.style('non configuré', fg=typer.colors.RED)}")
-    if not summary["results"]:
-        typer.echo(typer.style("  Aucune valeur en clair à pousser.", dim=True))
+    resume = secrets_hub.mirror_to_provider(tuple(name) if name else None, apply=apply)
+    typer.echo(typer.style("Miroir du collecteur vers Secret Manager", bold=True))
+    typer.echo(f"  Source : {resume['source']}")
+    typer.echo(f"  Projet : {resume['project'] or typer.style('non configuré', fg=typer.colors.RED)}")
+    if not resume["results"]:
+        typer.echo(typer.style("  Rien à recopier — le collecteur est vide.", dim=True))
         return
-    for row in summary["results"]:
-        status = row["status"]
-        colour = typer.colors.GREEN if status == "pushed" else (typer.colors.RED if status == "error" else None)
-        line = f"  {row['name']:<34} {status}"
+    for row in resume["results"]:
+        couleur = {"mirrored": typer.colors.GREEN, "error": typer.colors.RED}.get(row["status"])
+        ligne = f"  {row['name']:<34} {row['status']}"
         if row.get("reason"):
-            line += f" — {row['reason']}"
-        typer.echo(typer.style(line, fg=colour) if colour else line)
-        if row.get("rewritten"):
-            for path in row["rewritten"]:
-                typer.echo(typer.style(f"      référence posée dans {path}", dim=True))
+            ligne += f" — {row['reason']}"
+        typer.echo(typer.style(ligne, fg=couleur) if couleur else ligne)
     if not apply:
-        typer.echo(typer.style("  Simulation — ajouter --apply pour créer les secrets.", dim=True))
+        typer.echo(typer.style("  Simulation — ajouter --apply pour écrire dans Secret Manager.", dim=True))
 
 
-@secrets_app.command("pull")
-def secrets_pull_cmd(
-    to: Path = typer.Option(..., "--to", help="Fichier .env cible à alimenter"),
+@secrets_app.command("restore")
+def secrets_restore_cmd(
     name: list[str] = typer.Option(None, "--name", "-n", help="Limiter à ces variables"),
+    to: Optional[Path] = typer.Option(None, "--to", help="Fichier cible (défaut : le collecteur)"),
     apply: bool = typer.Option(False, "--apply", help="Écrit réellement les valeurs"),
 ) -> None:
-    """Résout les références sm:// et écrit les valeurs dans un .env cible.
-
-    Écrit des secrets en clair : à réserver à une machine de confiance.
-    """
+    """Ramène du miroir ce qui manque au collecteur. N'écrase jamais une valeur présente."""
     from zab.services import secrets_hub
 
-    names = tuple(name) if name else None
-    summary = secrets_hub.pull_from_provider(to, names, apply=apply)
-    typer.echo(typer.style("Pull depuis Secret Manager", bold=True))
-    typer.echo(f"  Cible  : {summary['target']}")
-    typer.echo(f"  Projet : {summary['project'] or typer.style('non configuré', fg=typer.colors.RED)}")
-    actionable = [r for r in summary["results"] if r["status"] not in ("skipped",)]
-    if not actionable:
-        typer.echo(typer.style("  Rien à résoudre.", dim=True))
+    resume = secrets_hub.restore_from_provider(
+        tuple(name) if name else None, target=to, apply=apply
+    )
+    typer.echo(typer.style("Restauration depuis Secret Manager", bold=True))
+    typer.echo(f"  Cible  : {resume['target']}")
+    typer.echo(f"  Projet : {resume['project'] or typer.style('non configuré', fg=typer.colors.RED)}")
+    interessants = [r for r in resume["results"] if r["status"] != "skipped"]
+    if not interessants:
+        typer.echo(typer.style("  Le collecteur a déjà tout ce que le miroir contient.", dim=True))
         return
-    for row in actionable:
-        colour = typer.colors.GREEN if row["status"] == "pulled" else (
-            typer.colors.RED if row["status"] == "error" else None
-        )
-        line = f"  {row['name']:<34} {row['status']}"
-        if row.get("reason"):
-            line += f" — {row['reason']}"
-        typer.echo(typer.style(line, fg=colour) if colour else line)
+    for row in interessants:
+        couleur = {"restored": typer.colors.GREEN, "absent_du_miroir": None}.get(row["status"])
+        typer.echo(typer.style(f"  {row['name']:<34} {row['status']}", fg=couleur) if couleur
+                   else f"  {row['name']:<34} {row['status']}")
     if not apply:
-        typer.echo(typer.style("  Simulation — ajouter --apply pour écrire les valeurs en clair.", dim=True))
+        typer.echo(typer.style("  Simulation — ajouter --apply pour écrire.", dim=True))
 
 
 @projects_app.command("list")

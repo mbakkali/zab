@@ -2255,17 +2255,20 @@ def security_secret_sync_apply(body: SecretSyncApplyBody) -> dict[str, Any]:
                 "secret_sync": sync_payload,
             }
         reference = str(created_secret.get("secret_reference") or reference)
-    result = security_secret_sync.apply_secret_reference(
-        overview.get("variables") or [],
-        name=body.name,
-        reference=reference,
-        allowed_paths=_allowed_security_env_paths(),
-    )
-    if created_secret and result.get("status") == "synced":
+    # Le miroir ne retire rien du disque : la valeur reste dans le .env, qui est
+    # ce que lisent les applications. Une version précédente y écrivait une
+    # référence sm:// à la place — cela cassait tout consommateur du fichier et
+    # inversait les rôles du collecteur et de sa sauvegarde.
+    result = {
+        "name": body.name,
+        "status": "mirrored" if created_secret and created_secret.get("ok") else "skipped",
+        "reason": None if created_secret else "deja_dans_le_miroir",
+        "secret_id": (created_secret or {}).get("secret_id") or sync_row.get("secret_id"),
+        "console_url": (created_secret or {}).get("console_url") or sync_row.get("console_url"),
+        "local_file_untouched": True,
+    }
+    if created_secret:
         result["secret_status"] = created_secret.get("status")
-        result["secret_id"] = created_secret.get("secret_id")
-        result["secret_reference"] = created_secret.get("secret_reference")
-        result["console_url"] = created_secret.get("console_url")
     refreshed = _security_env_overview_payload()
     return {
         "provider": security_secret_sync.PROVIDER_ID,
@@ -2308,7 +2311,6 @@ def _raw_security_value_for_row(row: dict[str, Any]) -> str | None:
 class SecretCopyValueBody(BaseModel):
     name: str = Field(..., min_length=1)
     confirm_clipboard: bool = False
-
 
 @router.post("/security/secret-sync/copy-value")
 def security_secret_sync_copy_value(body: SecretCopyValueBody) -> dict[str, Any]:

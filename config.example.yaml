@@ -30,9 +30,17 @@ tracked_env_extra: []
 # `prefix` names the secrets zab creates: QONTO_API_KEY -> zab-qonto-api-key.
 # Set it to "" to create them unprefixed. An existing secret can always be
 # referenced by hand, whatever its name: the reference in the .env is explicit.
+# `map` is only needed for secrets that already exist under another name:
+# without it the id is derived (QONTO_API_KEY -> zab-qonto-api-key), which
+# would not find a secret someone created as `qonto-prod-key`.
+#
+# ~/.config/zab/.env is the source of truth and stays plaintext; Secret Manager
+# is a mirror. Nothing is ever removed from a .env.
 # secret_manager:
 #   project: my-gcp-project
 #   prefix: zab-
+#   map:
+#     QONTO_API_KEY: qonto-prod-key
 
 # Optional: Postgres memory / conversations archive
 # Set ZAB_MEMORY_DATABASE_URL in ~/.config/zab/.env or your skills/.env

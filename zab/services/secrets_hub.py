@@ -149,206 +149,213 @@ def scan_tracked_values(
     }
 
 
+def _upsert_dotenv(path: Path, valeurs: dict[str, str], *, entete: str = "") -> list[str]:
+    """Met à jour les clés en place et ajoute les nouvelles à la fin.
+
+    Ne réécrit jamais le fichier de zéro. La version précédente le reconstruisait
+    en lignes triées ``K=V`` : elle effaçait au passage tous les commentaires et
+    l'ordre voulu, c'est-à-dire la seule chose qui rendait le fichier lisible.
+    """
+    texte = path.read_text(encoding="utf-8") if path.is_file() else ""
+    lignes = texte.splitlines(keepends=True)
+    restantes = dict(valeurs)
+    touchees: list[str] = []
+
+    for index, brute in enumerate(lignes):
+        nu = brute.strip()
+        if not nu or nu.startswith("#") or "=" not in nu:
+            continue
+        cle, reste = nu.split("=", 1)
+        cle = cle.strip()
+        prefixe = ""
+        if cle.startswith("export "):
+            prefixe, cle = "export ", cle[len("export "):].strip()
+        if cle not in restantes:
+            continue
+        fin = brute[len(brute.rstrip("\n")):]
+        commentaire = provider._trailing_comment(reste)
+        lignes[index] = f"{prefixe}{cle}={_quote_dotenv_value(restantes.pop(cle))}{commentaire}{fin}"
+        touchees.append(cle)
+
+    if restantes:
+        bloc = ("\n" + entete + "\n") if entete else "\n"
+        bloc += "\n".join(f"{k}={_quote_dotenv_value(v)}" for k, v in sorted(restantes.items())) + "\n"
+        lignes.append(("" if texte.endswith("\n") or not texte else "\n") + bloc)
+        touchees.extend(sorted(restantes))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(lignes), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return touchees
+
+
 def collect_to_user_dotenv(*, force: bool = False, apply: bool = True) -> dict[str, Any]:
-    """Fusionne les valeurs trouvées dans les projets vers ``~/.config/zab/.env``."""
+    """Fusionne les valeurs des ``.env`` projets vers le collecteur."""
     tracked = tracked_env_names_for_security()
-    found: dict[str, str] = {}
-    for path in _env_files():
+    trouvees: dict[str, str] = {}
+    fichiers = _env_files()
+    for path in fichiers:
         try:
             values = dotenv_values(path)
         except OSError:
             continue
         for name in tracked:
-            if name in found:
+            if name in trouvees:
                 continue
             raw = values.get(name)
             if raw is not None and str(raw).strip():
-                found[name] = str(raw).strip()
+                trouvees[name] = str(raw).strip()
 
-    target = user_dotenv_path()
-    existing = dotenv_values(target) if target.is_file() else {}
-    merged: dict[str, str] = {
-        str(k): str(v).strip() for k, v in existing.items() if v is not None and str(v).strip()
-    }
+    cible = user_dotenv_path()
+    existantes = dotenv_values(cible) if cible.is_file() else {}
+    presentes = {k for k, v in existantes.items() if v is not None and str(v).strip()}
 
-    updated: list[str] = []
-    skipped: list[str] = []
+    a_ecrire: dict[str, str] = {}
+    ignorees: list[str] = []
     for name in tracked:
-        value = found.get(name)
-        if not value:
+        valeur = trouvees.get(name)
+        if not valeur:
             continue
-        if merged.get(name) and not force:
-            skipped.append(name)
+        if name in presentes and not force:
+            ignorees.append(name)
             continue
-        if merged.get(name) != value:
-            merged[name] = value
-            updated.append(name)
+        if str(existantes.get(name) or "") != valeur:
+            a_ecrire[name] = valeur
 
-    if apply and updated:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        lines = [f"{k}={_quote_dotenv_value(v)}" for k, v in sorted(merged.items())]
-        target.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-        try:
-            target.chmod(0o600)
-        except OSError:
-            pass
+    ecrites: list[str] = []
+    if apply and a_ecrire:
+        ecrites = _upsert_dotenv(
+            cible, a_ecrire, entete="# Collectées depuis les .env projets (zab secrets collect)."
+        )
 
     return {
-        "path": str(target),
-        "applied": bool(apply and updated),
-        "scanned_files": len(_env_files()),
-        "keys_updated": updated,
-        "keys_skipped_already_present": skipped,
-        "keys_found": sorted(found),
-        "keys_missing": [n for n in tracked if n not in found],
+        "path": str(cible),
+        "applied": bool(apply and a_ecrire),
+        "scanned_files": len(fichiers),
+        "keys_updated": ecrites if apply else sorted(a_ecrire),
+        "keys_skipped_already_present": ignorees,
+        "keys_found": sorted(trouvees),
+        "keys_missing": [n for n in tracked if n not in trouvees],
     }
 
 
-def push_to_provider(
+def mirror_to_provider(
     names: tuple[str, ...] | None = None,
     *,
     apply: bool = False,
 ) -> dict[str, Any]:
-    """Pousse chaque valeur en clair vers Secret Manager et pose la référence."""
-    scan = scan_tracked_values(names, include_user_dotenv=False)
-    project = provider.secret_manager_project()
-    results: list[dict[str, Any]] = []
+    """Recopie le collecteur vers Secret Manager. **Ne touche à aucun fichier local.**
 
-    for row in scan["variables"]:
-        if row["state"] != "plain":
+    C'est une image de secours, pas un déplacement : la valeur reste en clair
+    dans le collecteur, qui est ce que lisent les scripts. Une version précédente
+    remplaçait la valeur locale par une référence ``sm://`` — cela retirait le
+    secret du disque, donc cassait tout ce qui le lisait, et inversait le rôle
+    des deux dépôts.
+    """
+    cible = user_dotenv_path()
+    valeurs = dotenv_values(cible) if cible.is_file() else {}
+    # Par défaut, **tout** ce que contient le collecteur, pas seulement le
+    # catalogue suivi. Une sauvegarde qui ne couvre qu'une partie du fichier
+    # laisse le reste sans copie sans jamais le dire — et « suivi » sert à
+    # décider ce que le tableau de bord affiche, pas ce qui mérite d'exister
+    # ailleurs.
+    tracked = names or tuple(
+        k for k, v in valeurs.items() if v is not None and str(v).strip()
+    )
+    project = provider.secret_manager_project()
+    resultats: list[dict[str, Any]] = []
+
+    for name in tracked:
+        brute = valeurs.get(name)
+        valeur = str(brute).strip() if brute is not None else ""
+        if not valeur:
             continue
-        name = row["name"]
-        secret_id = provider.secret_id_for_name(name)
-        reference = provider.secret_reference_for_name(name, project=project)
-        entry = {
-            "name": name, "secret_id": secret_id, "reference": reference,
-            "files": row["files"], "status": "would_push",
-        }
+        secret_id = _secret_id_for(name)
+        entree = {"name": name, "secret_id": secret_id, "status": "would_mirror"}
         if not apply:
-            results.append(entry)
+            resultats.append(entree)
             continue
         if not project:
-            entry.update(status="error", reason="projet_non_configure")
-            results.append(entry)
+            entree.update(status="error", reason="projet_non_configure")
+            resultats.append(entree)
             continue
-
-        value = _first_plain_value(name, row["files"])
-        if not value:
-            entry.update(status="error", reason="valeur_introuvable")
-            results.append(entry)
+        amont, motif = provider.read_secret(f"sm://{project}/{secret_id}")
+        if amont is not None and amont.strip() == valeur:
+            entree.update(status="deja_a_jour")
+            resultats.append(entree)
             continue
-        created = provider.create_secret({"name": name}, value=value, project=project)
-        if not created.get("ok"):
-            entry.update(status="error", reason=created.get("reason"))
-            results.append(entry)
-            continue
-        entry["reference"] = created.get("secret_reference") or reference
-        rewritten = [
-            path for path in row["files"]
-            if _rewrite_dotenv_key(Path(path), name, entry["reference"])
-        ]
-        entry.update(status="pushed", secret_status=created.get("status"), rewritten=rewritten)
-        results.append(entry)
+        cree = provider.create_secret({"name": name}, value=valeur, project=project)
+        if not cree.get("ok"):
+            entree.update(status="error", reason=cree.get("reason"))
+        else:
+            entree.update(status="mirrored", secret_status=cree.get("status"))
+        resultats.append(entree)
 
-    return {"project": project, "applied": apply, "results": results}
+    return {"project": project, "applied": apply, "source": str(cible), "results": resultats}
 
 
-def pull_from_provider(
-    target: Path,
+def restore_from_provider(
     names: tuple[str, ...] | None = None,
     *,
+    target: Path | None = None,
     apply: bool = False,
 ) -> dict[str, Any]:
-    """Résout les références connues et écrit les valeurs dans un ``.env`` cible.
+    """Ramène dans le collecteur ce qui existe dans Secret Manager et lui manque.
 
-    Écrit des secrets en clair, délibérément : c'est ce qui permet à un dépôt
-    fraîchement cloné de démarrer. À n'utiliser que sur une machine de confiance.
+    Ne recouvre jamais une valeur déjà présente : le collecteur fait foi, le
+    miroir ne sert qu'à combler un trou.
     """
-    scan = scan_tracked_values(names)
+    cible = Path(target).expanduser() if target is not None else user_dotenv_path()
+    valeurs = dotenv_values(cible) if cible.is_file() else {}
+    presentes = {k for k, v in valeurs.items() if v is not None and str(v).strip()}
     tracked = names or tracked_env_names_for_security()
     project = provider.secret_manager_project()
-    target = Path(target).expanduser()
 
-    existing = dotenv_values(target) if target.is_file() else {}
-    merged: dict[str, str] = {
-        str(k): str(v).strip() for k, v in existing.items() if v is not None and str(v).strip()
-    }
-
-    by_name = {row["name"]: row for row in scan["variables"]}
-    results: list[dict[str, Any]] = []
+    resultats: list[dict[str, Any]] = []
+    a_ecrire: dict[str, str] = {}
     for name in tracked:
-        row = by_name.get(name) or {}
-        reference = row.get("reference") or (
-            provider.secret_reference_for_name(name, project=project) if project else ""
-        )
-        current = merged.get(name, "")
-        if current and not provider.is_secret_reference(current):
-            results.append({"name": name, "status": "skipped", "reason": "deja_en_clair"})
+        if name in presentes:
+            resultats.append({"name": name, "status": "skipped", "reason": "deja_dans_le_collecteur"})
             continue
-        if not reference:
-            results.append({"name": name, "status": "skipped", "reason": "aucune_reference"})
+        if not project:
+            resultats.append({"name": name, "status": "skipped", "reason": "projet_non_configure"})
             continue
+        secret_id = _secret_id_for(name)
         if not apply:
-            results.append({"name": name, "status": "would_pull", "reference": reference})
+            resultats.append({"name": name, "status": "would_restore", "secret_id": secret_id})
             continue
-        value, reason = provider.read_secret(reference)
-        if value is None:
-            results.append({"name": name, "status": "error", "reason": reason, "reference": reference})
+        valeur, motif = provider.read_secret(f"sm://{project}/{secret_id}")
+        if valeur is None:
+            resultats.append({"name": name, "status": "absent_du_miroir", "secret_id": secret_id})
             continue
-        merged[name] = value.strip()
-        results.append({"name": name, "status": "pulled", "reference": reference})
+        a_ecrire[name] = valeur.strip()
+        resultats.append({"name": name, "status": "restored", "secret_id": secret_id})
 
-    if apply and any(r["status"] == "pulled" for r in results):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        lines = [f"{k}={_quote_dotenv_value(v)}" for k, v in sorted(merged.items())]
-        target.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-        try:
-            target.chmod(0o600)
-        except OSError:
-            pass
+    if apply and a_ecrire:
+        _upsert_dotenv(cible, a_ecrire, entete="# Ramenées de Secret Manager (zab secrets restore).")
 
-    return {"target": str(target), "project": project, "applied": apply, "results": results}
+    return {"target": str(cible), "project": project, "applied": apply, "results": resultats}
 
 
-def _first_plain_value(name: str, files: list[str]) -> str:
-    for path in files:
-        try:
-            values = dotenv_values(Path(path))
-        except OSError:
-            continue
-        raw = values.get(name)
-        if raw is None:
-            continue
-        value = str(raw).strip()
-        if value and not provider.is_secret_reference(value):
-            return value
-    return str(os.environ.get(name, "")).strip()
+def _secret_id_for(name: str) -> str:
+    """Identifiant du secret : la correspondance déclarée, sinon celle dérivée du nom.
 
-
-def _rewrite_dotenv_key(path: Path, key: str, reference: str) -> bool:
-    """Remplace la valeur d'une clé par sa référence, sans toucher au reste du fichier."""
+    Sans cette table, un secret créé hors de zab — donc sans le préfixe — était
+    invisible : l'identifiant dérivé ne pointait sur rien.
+    """
     try:
-        original = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    updated, changed = provider._replace_dotenv_key(original, key, reference)
-    if not changed or updated == original:
-        return False
-    # Même écriture atomique que le tableau de bord : un .env tronqué est une
-    # application qui ne démarre plus.
-    tmp = path.with_name(f"{path.name}.zab-secret-tmp")
-    try:
-        mode = path.stat().st_mode
-        tmp.write_text(updated, encoding="utf-8")
-        try:
-            tmp.chmod(mode)
-        except OSError:
-            pass
-        tmp.replace(path)
-    except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        return False
-    return True
+        from zab.user_config import load_user_config
+
+        bloc = load_user_config().get("secret_manager")
+        if isinstance(bloc, dict):
+            table = bloc.get("map")
+            if isinstance(table, dict):
+                declare = table.get(name)
+                if isinstance(declare, str) and declare.strip():
+                    return declare.strip()
+    except Exception:  # noqa: BLE001, S110 — config illisible : on dérive du nom
+        pass
+    return provider.secret_id_for_name(name)

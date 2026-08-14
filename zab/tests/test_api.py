@@ -566,7 +566,7 @@ def test_security_env_overview_uses_alias_value_for_secret_sync(monkeypatch, tmp
     assert rows["ALIASED_KEY"]["sync"]["secret_id"] == "alias-cible"
 
 
-def test_security_secret_apply_writes_reference_without_raw_values(monkeypatch, tmp_path):
+def test_security_secret_apply_mirrors_without_touching_the_file(monkeypatch, tmp_path):
     from zab.services import security_secret_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -605,13 +605,10 @@ def test_security_secret_apply_writes_reference_without_raw_values(monkeypatch, 
     assert r.status_code == 200
     assert "super-secret-local-value" not in r.text
     payload = r.json()
-    assert payload["result"]["status"] == "synced"
-    written = env_path.read_text(encoding="utf-8")
-    assert "PLAIN_LOCAL_KEY=sm://demo-projet/zab-plain-local-key" in written
-    assert "super-secret-local-value" not in written
-    # L'écriture atomique ne doit laisser aucun résidu à côté du .env.
-    assert not list(repo.glob(".env.zab-secret-tmp-*"))
-    assert payload["secret_sync"]["counts"]["synced"] == 1
+    # Le secret existe déjà dans le miroir : rien à recopier, et surtout rien à
+    # réécrire. La valeur reste en clair là où les applications la lisent.
+    assert payload["result"]["local_file_untouched"] is True
+    assert env_path.read_text(encoding="utf-8") == "PLAIN_LOCAL_KEY=super-secret-local-value\n"
 
 
 def test_security_secret_apply_creates_missing_secret(monkeypatch, tmp_path):
@@ -655,12 +652,13 @@ def test_security_secret_apply_creates_missing_secret(monkeypatch, tmp_path):
     assert r.status_code == 200
     assert "qonto-secret-value" not in r.text
     payload = r.json()
-    assert payload["result"]["status"] == "synced"
+    assert payload["result"]["status"] == "mirrored"
     assert payload["result"]["secret_status"] == "created"
     assert payload["result"]["secret_id"] == "zab-qonto-secret-key"
-    # La valeur locale est bien celle qui a été poussée, et elle a disparu du .env.
+    # La valeur est bien celle recopiée, et le fichier local n'a pas bougé.
     assert created == {"name": "QONTO_SECRET_KEY", "value": "qonto-secret-value"}
-    assert env_path.read_text(encoding="utf-8") == "QONTO_SECRET_KEY=sm://demo-projet/zab-qonto-secret-key\n"
+    assert payload["result"]["local_file_untouched"] is True
+    assert env_path.read_text(encoding="utf-8") == "QONTO_SECRET_KEY=qonto-secret-value\n"
 
 
 def test_security_secret_apply_errors_when_creation_fails(monkeypatch, tmp_path):
