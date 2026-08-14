@@ -518,6 +518,21 @@ def _dotenv_line_parts(raw_line: str) -> tuple[str, str]:
     return stripped, newline
 
 
+#: Valeur d'un ``.env`` suivie d'un commentaire de fin de ligne. Le commentaire
+#: ne commence qu'après une espace, et jamais à l'intérieur de guillemets —
+#: c'est la règle de python-dotenv, on la suit pour lire la ligne comme elle
+#: sera lue à l'exécution.
+_DOTENV_VALUE_RE = re.compile(
+    r"""^(?P<valeur>\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s#]*))(?P<commentaire>\s+#.*)?$"""
+)
+
+
+def _trailing_comment(rhs: str) -> str:
+    """Commentaire de fin de ligne, s'il y en a un. Chaîne vide sinon."""
+    m = _DOTENV_VALUE_RE.match(rhs)
+    return (m.group("commentaire") or "") if m else ""
+
+
 def _replace_dotenv_key(text: str, key: str, reference: str) -> tuple[str, bool]:
     lines = text.splitlines(keepends=True)
     changed = False
@@ -526,13 +541,18 @@ def _replace_dotenv_key(text: str, key: str, reference: str) -> tuple[str, bool]
         bare = stripped.strip()
         if bare.startswith("#") or "=" not in bare:
             continue
-        candidate = bare.split("=", 1)[0].strip()
+        candidate, rhs = bare.split("=", 1)
+        candidate = candidate.strip()
         if candidate.startswith("export "):
             candidate = candidate[len("export "):].strip()
         if candidate != key:
             continue
         prefix = "export " if bare.startswith("export ") else ""
-        lines[index] = f"{prefix}{key}={reference}{newline or ''}"
+        # Le commentaire de fin de ligne survit au remplacement. Il porte
+        # souvent la seule trace de l'origine de la clé ou de la procédure pour
+        # la faire tourner ; l'écraser en même temps que la valeur revient à
+        # perdre l'information au moment précis où elle redevient utile.
+        lines[index] = f"{prefix}{key}={reference}{_trailing_comment(rhs)}{newline or ''}"
         changed = True
     return "".join(lines), changed
 

@@ -242,3 +242,23 @@ def test_identifiant_de_secret_est_valide_pour_gcp(monkeypatch):
     assert s.secret_id_for_name("zab-deja-prefixe") == "zab-deja-prefixe"
     monkeypatch.setenv("ZAB_SECRET_MANAGER_PREFIX", "")
     assert s.secret_id_for_name("QONTO_API_KEY") == "qonto-api-key"
+
+
+def test_le_commentaire_de_fin_de_ligne_survit_au_remplacement():
+    from zab.services.security_secret_sync import _replace_dotenv_key
+
+    cas = [
+        # (ligne d'origine, ligne attendue)
+        ("K=valeur   # rotation: scripts/rotate.py\n",
+         "K=sm://p/s   # rotation: scripts/rotate.py\n"),
+        ("export K=valeur # note\n", "export K=sm://p/s # note\n"),
+        ("K=valeur\n", "K=sm://p/s\n"),
+        # Un « # » collé à la valeur en fait partie : ce n'est pas un commentaire.
+        ("K=valeur#pas-un-commentaire\n", "K=sm://p/s\n"),
+        # Ni à l'intérieur de guillemets.
+        ('K="valeur # dedans" # dehors\n', 'K=sm://p/s # dehors\n'),
+    ]
+    for origine, attendu in cas:
+        obtenu, change = _replace_dotenv_key(origine, "K", "sm://p/s")
+        assert change is True, origine
+        assert obtenu == attendu, f"{origine!r} -> {obtenu!r} au lieu de {attendu!r}"
