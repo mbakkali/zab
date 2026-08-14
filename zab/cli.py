@@ -82,6 +82,11 @@ security_app = typer.Typer(help="Statut sécurité local sans secrets bruts.")
 app.add_typer(security_app, name="security")
 mcp_app = typer.Typer(help="Serveur MCP stdio read-only pour exposer zab aux agents.")
 app.add_typer(mcp_app, name="mcp")
+secrets_app = typer.Typer(
+    help="Variables suivies : recenser, pousser vers Secret Manager, redistribuer.",
+    no_args_is_help=True,
+)
+app.add_typer(secrets_app, name="secrets")
 composio_app = typer.Typer(
     help="Composio : lister les connections et exécuter des tools via la CLI / API Composio.",
     no_args_is_help=True,
@@ -2923,7 +2928,14 @@ def pm_env_sync_cmd(
         help="Remplace les jetons dans ~/.config/zab/.env même s’ils sont déjà renseignés",
     ),
 ) -> None:
-    """Scanne projects_roots (+ skills/.env) et écrit GITLAB_TOKEN / LINEAR_API_KEY / NOTION_TOKEN dans ~/.config/zab/.env."""
+    """Alias historique de `zab secrets collect`, limité aux jetons de gestion de projet."""
+    typer.echo(
+        typer.style(
+            "`zab pm-env sync` ne couvre que les jetons GitLab / Linear / Notion / GitHub. "
+            "`zab secrets collect` fait la même chose sur tout le catalogue suivi.",
+            dim=True,
+        )
+    )
     summary = sync_pm_tokens_to_user_dotenv(force=force)
     typer.echo(typer.style("Fusion ~/.config/zab/.env", bold=True))
     typer.echo(f"  Fichier : {summary['path']}")
@@ -2938,6 +2950,133 @@ def pm_env_sync_cmd(
             )
         )
     typer.echo(typer.style("  Redémarrez le dashboard pour recharger le fichier si besoin.", dim=True))
+
+
+_SECRET_STATE_LABEL = {
+    "referenced": ("référencée", typer.colors.GREEN),
+    "plain": ("en clair", typer.colors.YELLOW),
+    "process": ("environnement", typer.colors.CYAN),
+    "missing": ("absente", None),
+}
+
+
+@secrets_app.command("status")
+def secrets_status_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Où vit chaque variable suivie, et sous quelle forme. Ne lit aucune valeur."""
+    from zab.services import secrets_hub, security_secret_sync
+
+    scan = secrets_hub.scan_tracked_values()
+    if json_out:
+        typer.echo(json.dumps(scan, ensure_ascii=False, indent=2))
+        return
+
+    project = security_secret_sync.secret_manager_project()
+    typer.echo(typer.style("Variables suivies", bold=True))
+    typer.echo(f"  Projet Secret Manager : {project or typer.style('non configuré', fg=typer.colors.RED)}")
+    typer.echo(f"  Fichiers .env lus     : {len(scan['scanned_files'])}")
+    counts = scan["counts"]
+    typer.echo(
+        f"  {counts['referenced']} référencée(s) · {counts['plain']} en clair · "
+        f"{counts['process']} d'environnement · {counts['missing']} absente(s)"
+    )
+    typer.echo("")
+    for row in scan["variables"]:
+        label, colour = _SECRET_STATE_LABEL[row["state"]]
+        shown = typer.style(label, fg=colour) if colour else typer.style(label, dim=True)
+        typer.echo(f"  {row['name']:<34} {shown}")
+        for path in row["files"][:3]:
+            typer.echo(typer.style(f"      {path}", dim=True))
+    if counts["plain"]:
+        typer.echo("")
+        typer.echo(typer.style(f"  {counts['plain']} valeur(s) en clair sur disque : zab secrets push", dim=True))
+
+
+@secrets_app.command("collect")
+def secrets_collect_cmd(
+    force: bool = typer.Option(False, "--force", "-f", help="Écrase une clé déjà renseignée"),
+    apply: bool = typer.Option(False, "--apply", help="Écrit réellement le fichier"),
+) -> None:
+    """Fusionne les valeurs des .env projets dans ~/.config/zab/.env."""
+    from zab.services import secrets_hub
+
+    summary = secrets_hub.collect_to_user_dotenv(force=force, apply=apply)
+    typer.echo(typer.style("Collecte vers ~/.config/zab/.env", bold=True))
+    typer.echo(f"  Fichier            : {summary['path']}")
+    typer.echo(f"  Fichiers .env lus  : {summary['scanned_files']}")
+    typer.echo(f"  Clés à écrire      : {', '.join(summary['keys_updated']) or '(aucune)'}")
+    if summary["keys_skipped_already_present"]:
+        typer.echo(
+            typer.style(
+                f"  Déjà présentes     : {', '.join(summary['keys_skipped_already_present'])} (--force pour écraser)",
+                dim=True,
+            )
+        )
+    if not apply:
+        typer.echo(typer.style("  Simulation — ajouter --apply pour écrire.", dim=True))
+
+
+@secrets_app.command("push")
+def secrets_push_cmd(
+    name: list[str] = typer.Option(None, "--name", "-n", help="Limiter à ces variables"),
+    apply: bool = typer.Option(False, "--apply", help="Crée les secrets et réécrit les .env"),
+) -> None:
+    """Pousse les valeurs en clair vers Secret Manager et les remplace par leur référence."""
+    from zab.services import secrets_hub
+
+    names = tuple(name) if name else None
+    summary = secrets_hub.push_to_provider(names, apply=apply)
+    typer.echo(typer.style("Push vers Secret Manager", bold=True))
+    typer.echo(f"  Projet : {summary['project'] or typer.style('non configuré', fg=typer.colors.RED)}")
+    if not summary["results"]:
+        typer.echo(typer.style("  Aucune valeur en clair à pousser.", dim=True))
+        return
+    for row in summary["results"]:
+        status = row["status"]
+        colour = typer.colors.GREEN if status == "pushed" else (typer.colors.RED if status == "error" else None)
+        line = f"  {row['name']:<34} {status}"
+        if row.get("reason"):
+            line += f" — {row['reason']}"
+        typer.echo(typer.style(line, fg=colour) if colour else line)
+        if row.get("rewritten"):
+            for path in row["rewritten"]:
+                typer.echo(typer.style(f"      référence posée dans {path}", dim=True))
+    if not apply:
+        typer.echo(typer.style("  Simulation — ajouter --apply pour créer les secrets.", dim=True))
+
+
+@secrets_app.command("pull")
+def secrets_pull_cmd(
+    to: Path = typer.Option(..., "--to", help="Fichier .env cible à alimenter"),
+    name: list[str] = typer.Option(None, "--name", "-n", help="Limiter à ces variables"),
+    apply: bool = typer.Option(False, "--apply", help="Écrit réellement les valeurs"),
+) -> None:
+    """Résout les références sm:// et écrit les valeurs dans un .env cible.
+
+    Écrit des secrets en clair : à réserver à une machine de confiance.
+    """
+    from zab.services import secrets_hub
+
+    names = tuple(name) if name else None
+    summary = secrets_hub.pull_from_provider(to, names, apply=apply)
+    typer.echo(typer.style("Pull depuis Secret Manager", bold=True))
+    typer.echo(f"  Cible  : {summary['target']}")
+    typer.echo(f"  Projet : {summary['project'] or typer.style('non configuré', fg=typer.colors.RED)}")
+    actionable = [r for r in summary["results"] if r["status"] not in ("skipped",)]
+    if not actionable:
+        typer.echo(typer.style("  Rien à résoudre.", dim=True))
+        return
+    for row in actionable:
+        colour = typer.colors.GREEN if row["status"] == "pulled" else (
+            typer.colors.RED if row["status"] == "error" else None
+        )
+        line = f"  {row['name']:<34} {row['status']}"
+        if row.get("reason"):
+            line += f" — {row['reason']}"
+        typer.echo(typer.style(line, fg=colour) if colour else line)
+    if not apply:
+        typer.echo(typer.style("  Simulation — ajouter --apply pour écrire les valeurs en clair.", dim=True))
 
 
 @projects_app.command("list")

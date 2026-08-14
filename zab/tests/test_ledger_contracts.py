@@ -807,19 +807,20 @@ def test_whatsapp_history_enumerates_chats_and_applies_date_bounds(
     assert rows[0]["pushName"] == "Alice"
 
 
-def test_evolution_preflight_rejects_unresolved_dashlane_references(
+def test_evolution_preflight_rejects_unresolved_secret_references(
     monkeypatch,
 ) -> None:
     from zab.services.conversation_ledger.preflight import check_evolution
 
-    monkeypatch.setenv("EVOLUTION_API_URL", "dl://missing-url")
-    monkeypatch.setenv("EVOLUTION_API_KEY", "dl://missing-key")
-    monkeypatch.setenv("EVOLUTION_INSTANCE", "dl://missing-instance")
+    monkeypatch.setenv("EVOLUTION_API_URL", "sm://demo-projet/missing-url")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "sm://demo-projet/missing-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE", "sm://demo-projet/missing-instance")
 
     payload = check_evolution()
 
     assert payload["status"] == "error"
-    assert "unresolved Dashlane references" in payload["detail"]
+    assert "unresolved secret references" in payload["detail"]
+    assert "EVOLUTION_API_KEY" in payload["detail"]
 
 
 def test_fireflies_normalizer_uses_structured_summary_and_sentences() -> None:

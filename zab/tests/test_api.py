@@ -439,48 +439,66 @@ def test_security_env_merges_dotenv_file(monkeypatch, tmp_path):
     assert "COMMAND" in payload["text"].upper() or "doctor" in payload["text"].lower()
 
 
-def test_security_env_overview_includes_secret_sync_without_raw_values(monkeypatch, tmp_path):
+def _secret_inventory_stub(items, *, project="demo-projet", available=True):
+    """Remplace l'appel gcloud par un inventaire figé, sans réseau ni identité."""
+
+    def _stub(*_args, **_kwargs):
+        return {
+            "available": available,
+            "status": "ready" if available else "unavailable",
+            "count": len(items),
+            "project": project,
+            "items": list(items),
+            "status_detail": None,
+        }
+
+    return _stub
+
+
+def _write_security_config(tmp_path, env_path, tracked):
     import yaml
+
+    cfg_dir = tmp_path / ".config" / "zab"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "security_env_paths": [str(env_path.resolve())],
+                "cli_watchlist": [],
+                "tracked_env_extra": list(tracked),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_security_env_overview_includes_secret_sync_without_raw_values(monkeypatch, tmp_path):
     from zab.services import security_secret_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     monkeypatch.setattr(
         security_secret_sync,
-        "dashlane_secret_inventory",
-        lambda: {
-            "available": True,
-            "status": "ok",
-            "count": 1,
-            "items": [
+        "secret_inventory",
+        _secret_inventory_stub(
+            [
                 {
-                    "id": "{TEST-PLAIN-LOCAL-KEY}",
-                    "title": "Z_PLAIN_LOCAL_KEY",
-                    "reference": "dl://{TEST-PLAIN-LOCAL-KEY}",
+                    "secret_id": "zab-plain-local-key",
+                    "reference": "sm://demo-projet/zab-plain-local-key",
+                    "console_url": "https://console.cloud.google.com/security/secret-manager/secret/zab-plain-local-key/versions?project=demo-projet",
                 }
-            ],
-        },
+            ]
+        ),
     )
     repo = tmp_path / "sr"
     repo.mkdir()
-    cfg_dir = tmp_path / ".config" / "zab"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
     env_path = repo / ".env"
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "security_env_paths": [str(env_path.resolve())],
-                "cli_watchlist": [],
-                "tracked_env_extra": ["PLAIN_LOCAL_KEY", "DASHLANE_REF_KEY"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_security_config(tmp_path, env_path, ["PLAIN_LOCAL_KEY", "SM_REF_KEY"])
     monkeypatch.delenv("PLAIN_LOCAL_KEY", raising=False)
-    monkeypatch.delenv("DASHLANE_REF_KEY", raising=False)
+    monkeypatch.delenv("SM_REF_KEY", raising=False)
     client = TestClient(create_app())
     env_path.write_text(
-        "PLAIN_LOCAL_KEY=super-secret-local-value\nDASHLANE_REF_KEY=dl://dashlane-secret-id\n",
+        "PLAIN_LOCAL_KEY=super-secret-local-value\nSM_REF_KEY=sm://demo-projet/deja-reference\n",
         encoding="utf-8",
     )
 
@@ -489,30 +507,37 @@ def test_security_env_overview_includes_secret_sync_without_raw_values(monkeypat
     assert "super-secret-local-value" not in r.text
     payload = r.json()
     rows = {row["name"]: row for row in payload["variables"]}
-    assert rows["PLAIN_LOCAL_KEY"]["sync"]["status"] == "pending"
-    assert rows["PLAIN_LOCAL_KEY"]["sync"]["recommended_provider"] == "dashlane"
-    assert rows["PLAIN_LOCAL_KEY"]["sync"]["dashlane_match_status"] == "matched"
-    assert rows["PLAIN_LOCAL_KEY"]["sync"]["dashlane_reference_value"] == "dl://{TEST-PLAIN-LOCAL-KEY}"
-    assert rows["PLAIN_LOCAL_KEY"]["sync"]["dashlane_web_url"].endswith("/#/credentials/TEST-PLAIN-LOCAL-KEY")
-    assert rows["PLAIN_LOCAL_KEY"]["sync"]["dashlane_matches"][0]["web_url"].endswith(
-        "/#/credentials/TEST-PLAIN-LOCAL-KEY"
-    )
-    assert payload["secret_sync"]["dashlane_inventory"]["count"] == 1
-    assert payload["secret_sync"]["dashlane_inventory"]["items"][0]["title"] == "Z_PLAIN_LOCAL_KEY"
-    assert payload["secret_sync"]["dashlane_inventory"]["items"][0]["web_url"].endswith(
-        "/#/credentials/TEST-PLAIN-LOCAL-KEY"
-    )
-    note = rows["PLAIN_LOCAL_KEY"]["sync"]["note_template"]
+
+    # Valeur en clair : à synchroniser, et le secret existe déjà côté fournisseur.
+    plain = rows["PLAIN_LOCAL_KEY"]["sync"]
+    assert plain["status"] == "pending"
+    assert plain["recommended_provider"] == "gcp-secret-manager"
+    assert plain["match_status"] == "matched"
+    assert plain["secret_id"] == "zab-plain-local-key"
+    assert plain["secret_reference"] == "sm://demo-projet/zab-plain-local-key"
+    assert "project=demo-projet" in plain["console_url"]
+
+    assert payload["secret_sync"]["inventory"]["count"] == 1
+    assert payload["secret_sync"]["inventory"]["items"][0]["secret_id"] == "zab-plain-local-key"
+    assert payload["secret_sync"]["project"] == "demo-projet"
+
+    note = plain["note_template"]
     assert "PLAIN_LOCAL_KEY" in note
-    assert "dl://{TEST-PLAIN-LOCAL-KEY}" in note
-    assert "~/" in note or str(env_path) in note
+    assert "sm://demo-projet/zab-plain-local-key" in note
     assert "super-secret-local-value" not in note
-    assert rows["DASHLANE_REF_KEY"]["sync"]["status"] == "synced"
-    assert rows["DASHLANE_REF_KEY"]["sync"]["provider"] == "dashlane"
-    assert rows["DASHLANE_REF_KEY"]["sync"]["dashlane_web_url"] == "https://app.dashlane.com/#/credentials"
+
+    # Valeur déjà remplacée par une référence : plus rien à faire.
+    ref_row = rows["SM_REF_KEY"]["sync"]
+    assert ref_row["status"] == "synced"
+    assert ref_row["provider"] == "gcp-secret-manager"
+    assert ref_row["reference_hint"] == "demo-projet/deja-reference"
     assert payload["secret_sync"]["counts"]["pending"] >= 1
 
-    r_check = client.post("/api/security/secret-sync/check", json={"provider": "dashlane", "apply": True})
+    # Sans gcloud sur le PATH, l'écriture est impossible et le check le dit.
+    r_check = client.post(
+        "/api/security/secret-sync/check",
+        json={"provider": "gcp-secret-manager", "apply": True},
+    )
     assert r_check.status_code == 200
     check = r_check.json()
     assert check["write_supported"] is False
@@ -521,91 +546,56 @@ def test_security_env_overview_includes_secret_sync_without_raw_values(monkeypat
 
 
 def test_security_env_overview_uses_alias_value_for_secret_sync(monkeypatch, tmp_path):
-    import yaml
     from zab.services import security_secret_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
-    monkeypatch.setattr(
-        security_secret_sync,
-        "dashlane_secret_inventory",
-        lambda: {"available": True, "status": "ok", "count": 0, "items": []},
-    )
+    monkeypatch.setattr(security_secret_sync, "secret_inventory", _secret_inventory_stub([]))
     repo = tmp_path / "sr"
     repo.mkdir()
-    cfg_dir = tmp_path / ".config" / "zab"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
     env_path = repo / ".env"
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "security_env_paths": [str(env_path.resolve())],
-                "cli_watchlist": [],
-                "tracked_env_extra": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.delenv("COMPOSIO_API_KEY", raising=False)
-    monkeypatch.delenv("COMPOSIO_X_CONSUMER_API_KEY", raising=False)
-    env_path.write_text("COMPOSIO_X_CONSUMER_API_KEY=dl://Z_COMPOSIO_API_KEY\n", encoding="utf-8")
+    _write_security_config(tmp_path, env_path, ["ALIASED_KEY"])
+    monkeypatch.delenv("ALIASED_KEY", raising=False)
+    env_path.write_text("ALIASED_KEY=sm://demo-projet/alias-cible\n", encoding="utf-8")
     client = TestClient(create_app())
 
     r = client.get("/api/security/env-overview")
-
     assert r.status_code == 200
-    payload = r.json()
-    rows = {row["name"]: row for row in payload["variables"]}
-    assert rows["COMPOSIO_API_KEY"]["sync"]["status"] == "synced"
-    assert rows["COMPOSIO_API_KEY"]["sync"]["provider"] == "dashlane"
-    assert rows["COMPOSIO_API_KEY"]["masked"].endswith("_KEY")
+    rows = {row["name"]: row for row in r.json()["variables"]}
+    assert rows["ALIASED_KEY"]["sync"]["status"] == "synced"
+    assert rows["ALIASED_KEY"]["sync"]["secret_id"] == "alias-cible"
 
 
-def test_security_dashlane_apply_writes_reference_without_raw_values(monkeypatch, tmp_path):
-    import yaml
+def test_security_secret_apply_writes_reference_without_raw_values(monkeypatch, tmp_path):
     from zab.services import security_secret_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     monkeypatch.setattr(
         security_secret_sync,
-        "dashlane_secret_inventory",
-        lambda: {
-            "available": True,
-            "status": "ok",
-            "count": 1,
-            "items": [
+        "secret_inventory",
+        _secret_inventory_stub(
+            [
                 {
-                    "id": "{TEST-PLAIN-LOCAL-KEY}",
-                    "title": "Z_PLAIN_LOCAL_KEY",
-                    "reference": "dl://{TEST-PLAIN-LOCAL-KEY}",
+                    "secret_id": "zab-plain-local-key",
+                    "reference": "sm://demo-projet/zab-plain-local-key",
+                    "console_url": "https://example.invalid",
                 }
-            ],
-        },
+            ]
+        ),
     )
     repo = tmp_path / "sr"
     repo.mkdir()
-    cfg_dir = tmp_path / ".config" / "zab"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
     env_path = repo / ".env"
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "security_env_paths": [str(env_path.resolve())],
-                "cli_watchlist": [],
-                "tracked_env_extra": ["PLAIN_LOCAL_KEY"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_security_config(tmp_path, env_path, ["PLAIN_LOCAL_KEY"])
     monkeypatch.delenv("PLAIN_LOCAL_KEY", raising=False)
     env_path.write_text("PLAIN_LOCAL_KEY=super-secret-local-value\n", encoding="utf-8")
     client = TestClient(create_app())
 
     r = client.post(
-        "/api/security/secret-sync/dashlane/apply",
+        "/api/security/secret-sync/apply",
         json={
-            "provider": "dashlane",
+            "provider": "gcp-secret-manager",
             "name": "PLAIN_LOCAL_KEY",
             "selected_count": 1,
             "confirm_all": True,
@@ -616,64 +606,46 @@ def test_security_dashlane_apply_writes_reference_without_raw_values(monkeypatch
     assert "super-secret-local-value" not in r.text
     payload = r.json()
     assert payload["result"]["status"] == "synced"
-    assert "PLAIN_LOCAL_KEY=dl://{TEST-PLAIN-LOCAL-KEY}" in env_path.read_text(encoding="utf-8")
-    assert "super-secret-local-value" not in env_path.read_text(encoding="utf-8")
-    assert not list(repo.glob(".env.zab-dashlane-backup-*"))
-    assert not list(repo.glob(".env.zab-dashlane-tmp-*"))
+    written = env_path.read_text(encoding="utf-8")
+    assert "PLAIN_LOCAL_KEY=sm://demo-projet/zab-plain-local-key" in written
+    assert "super-secret-local-value" not in written
+    # L'écriture atomique ne doit laisser aucun résidu à côté du .env.
+    assert not list(repo.glob(".env.zab-secret-tmp-*"))
     assert payload["secret_sync"]["counts"]["synced"] == 1
 
 
-def test_security_dashlane_apply_missing_secret_requires_creation(monkeypatch, tmp_path):
-    import yaml
+def test_security_secret_apply_creates_missing_secret(monkeypatch, tmp_path):
     from zab.services import security_secret_sync
 
     created: dict[str, str] = {}
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
-    monkeypatch.setattr(
-        security_secret_sync,
-        "dashlane_secret_inventory",
-        lambda: {"available": True, "status": "ok", "count": 0, "items": []},
-    )
-    monkeypatch.setattr(
-        security_secret_sync,
-        "create_dashlane_secret",
-        lambda variable, *, value: (
-            created.setdefault("name", variable["name"]),
-            created.setdefault("value", value),
-            {
-                "ok": True,
-                "status": "created",
-                "provider": "dashlane",
-                "dashlane_title": "Z_QONTO_SECRET_KEY",
-                "dashlane_reference_value": "dl://{CREATED-QONTO-SECRET}",
-                "dashlane_web_url": "https://app.dashlane.com/#/credentials/CREATED-QONTO-SECRET",
-            },
-        )[2],
-    )
+    monkeypatch.setattr(security_secret_sync, "secret_inventory", _secret_inventory_stub([]))
+
+    def _fake_create(variable, *, value, project=None):
+        created["name"] = variable["name"]
+        created["value"] = value
+        return {
+            "ok": True,
+            "status": "created",
+            "secret_id": "zab-qonto-secret-key",
+            "secret_reference": "sm://demo-projet/zab-qonto-secret-key",
+            "console_url": "https://example.invalid",
+        }
+
+    monkeypatch.setattr(security_secret_sync, "create_secret", _fake_create)
     repo = tmp_path / "sr"
     repo.mkdir()
-    cfg_dir = tmp_path / ".config" / "zab"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
     env_path = repo / ".env"
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "security_env_paths": [str(env_path.resolve())],
-                "cli_watchlist": [],
-                "tracked_env_extra": ["QONTO_SECRET_KEY"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_security_config(tmp_path, env_path, ["QONTO_SECRET_KEY"])
     monkeypatch.delenv("QONTO_SECRET_KEY", raising=False)
     env_path.write_text("QONTO_SECRET_KEY=qonto-secret-value\n", encoding="utf-8")
     client = TestClient(create_app())
 
     r = client.post(
-        "/api/security/secret-sync/dashlane/apply",
+        "/api/security/secret-sync/apply",
         json={
-            "provider": "dashlane",
+            "provider": "gcp-secret-manager",
             "name": "QONTO_SECRET_KEY",
             "selected_count": 1,
             "confirm_all": True,
@@ -684,47 +656,33 @@ def test_security_dashlane_apply_missing_secret_requires_creation(monkeypatch, t
     assert "qonto-secret-value" not in r.text
     payload = r.json()
     assert payload["result"]["status"] == "synced"
-    assert payload["result"]["dashlane_secret_status"] == "created"
-    assert payload["result"]["dashlane_title"] == "Z_QONTO_SECRET_KEY"
+    assert payload["result"]["secret_status"] == "created"
+    assert payload["result"]["secret_id"] == "zab-qonto-secret-key"
+    # La valeur locale est bien celle qui a été poussée, et elle a disparu du .env.
     assert created == {"name": "QONTO_SECRET_KEY", "value": "qonto-secret-value"}
-    assert env_path.read_text(encoding="utf-8") == "QONTO_SECRET_KEY=dl://{CREATED-QONTO-SECRET}\n"
+    assert env_path.read_text(encoding="utf-8") == "QONTO_SECRET_KEY=sm://demo-projet/zab-qonto-secret-key\n"
 
 
-def test_security_dashlane_apply_missing_secret_errors_without_writer(monkeypatch, tmp_path):
-    import yaml
+def test_security_secret_apply_errors_when_creation_fails(monkeypatch, tmp_path):
     from zab.services import security_secret_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
-    monkeypatch.delenv("ZAB_DASHLANE_SECRET_CREATE_COMMAND", raising=False)
-    monkeypatch.setattr(
-        security_secret_sync,
-        "dashlane_secret_inventory",
-        lambda: {"available": True, "status": "ok", "count": 0, "items": []},
-    )
+    monkeypatch.setenv("ZAB_SECRET_MANAGER_PROJECT", "demo-projet")
+    monkeypatch.setattr(security_secret_sync, "secret_inventory", _secret_inventory_stub([]))
     repo = tmp_path / "sr"
     repo.mkdir()
-    cfg_dir = tmp_path / ".config" / "zab"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
     env_path = repo / ".env"
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "security_env_paths": [str(env_path.resolve())],
-                "cli_watchlist": [],
-                "tracked_env_extra": ["QONTO_SECRET_KEY"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_security_config(tmp_path, env_path, ["QONTO_SECRET_KEY"])
     monkeypatch.delenv("QONTO_SECRET_KEY", raising=False)
     env_path.write_text("QONTO_SECRET_KEY=qonto-secret-value\n", encoding="utf-8")
     client = TestClient(create_app())
 
+    # gcloud est absent du PATH : la création échoue et le .env reste intact.
     r = client.post(
-        "/api/security/secret-sync/dashlane/apply",
+        "/api/security/secret-sync/apply",
         json={
-            "provider": "dashlane",
+            "provider": "gcp-secret-manager",
             "name": "QONTO_SECRET_KEY",
             "selected_count": 1,
             "confirm_all": True,
@@ -735,89 +693,61 @@ def test_security_dashlane_apply_missing_secret_errors_without_writer(monkeypatc
     assert "qonto-secret-value" not in r.text
     payload = r.json()
     assert payload["result"]["status"] == "error"
-    assert payload["result"]["reason"] == "dashlane_secret_write_unavailable"
-    assert payload["result"]["dashlane_title"] == "Z_QONTO_SECRET_KEY"
+    assert payload["result"]["reason"] == "gcloud_absent"
     assert env_path.read_text(encoding="utf-8") == "QONTO_SECRET_KEY=qonto-secret-value\n"
 
 
-def test_security_dashlane_copy_value_does_not_return_secret(monkeypatch, tmp_path):
-    import yaml
+def test_security_copy_value_does_not_return_secret(monkeypatch, tmp_path):
     from zab.services import security_secret_sync
 
-    copied: dict[str, str] = {}
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
-    monkeypatch.setattr(
-        security_secret_sync,
-        "dashlane_secret_inventory",
-        lambda: {"available": True, "status": "ok", "count": 0, "items": []},
-    )
-    monkeypatch.setattr(
-        security_secret_sync,
-        "copy_to_clipboard",
-        lambda value: (copied.setdefault("value", value) is not None, None),
-    )
+    monkeypatch.setattr(security_secret_sync, "secret_inventory", _secret_inventory_stub([]))
+    monkeypatch.setattr(security_secret_sync, "copy_to_clipboard", lambda value: (True, None))
     repo = tmp_path / "sr"
     repo.mkdir()
-    cfg_dir = tmp_path / ".config" / "zab"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
     env_path = repo / ".env"
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "security_env_paths": [str(env_path.resolve())],
-                "cli_watchlist": [],
-                "tracked_env_extra": ["QONTO_SECRET_KEY"],
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.delenv("QONTO_SECRET_KEY", raising=False)
-    env_path.write_text("QONTO_SECRET_KEY=qonto-secret-value\n", encoding="utf-8")
+    _write_security_config(tmp_path, env_path, ["PLAIN_LOCAL_KEY"])
+    monkeypatch.delenv("PLAIN_LOCAL_KEY", raising=False)
+    env_path.write_text("PLAIN_LOCAL_KEY=super-secret-local-value\n", encoding="utf-8")
     client = TestClient(create_app())
 
+    # Sans confirmation explicite, rien ne part dans le presse-papiers.
+    r_refus = client.post("/api/security/secret-sync/copy-value", json={"name": "PLAIN_LOCAL_KEY"})
+    assert r_refus.status_code == 400
+
     r = client.post(
-        "/api/security/secret-sync/dashlane/copy-value",
-        json={"name": "QONTO_SECRET_KEY", "confirm_clipboard": True},
+        "/api/security/secret-sync/copy-value",
+        json={"name": "PLAIN_LOCAL_KEY", "confirm_clipboard": True},
     )
-
     assert r.status_code == 200
-    assert copied["value"] == "qonto-secret-value"
-    assert "qonto-secret-value" not in r.text
-    assert r.json()["dashlane_title"] == "Z_QONTO_SECRET_KEY"
+    assert "super-secret-local-value" not in r.text
+    assert r.json()["copied"] is True
+    assert r.json()["secret_id"] == "zab-plain-local-key"
 
 
-def test_security_dashlane_apply_requires_all_selection_confirmation(monkeypatch, tmp_path):
-    import yaml
+def test_security_secret_apply_requires_all_selection_confirmation(monkeypatch, tmp_path):
+    from zab.services import security_secret_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    monkeypatch.setattr(security_secret_sync, "secret_inventory", _secret_inventory_stub([]))
     repo = tmp_path / "sr"
     repo.mkdir()
-    cfg_dir = tmp_path / ".config" / "zab"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
     env_path = repo / ".env"
-    (cfg_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "security_env_paths": [str(env_path.resolve())],
-                "cli_watchlist": [],
-                "tracked_env_extra": ["FIRST_SECRET", "SECOND_SECRET"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_security_config(tmp_path, env_path, ["FIRST_SECRET", "SECOND_SECRET"])
     monkeypatch.delenv("FIRST_SECRET", raising=False)
     monkeypatch.delenv("SECOND_SECRET", raising=False)
     env_path.write_text("FIRST_SECRET=one-secret\nSECOND_SECRET=two-secret\n", encoding="utf-8")
     client = TestClient(create_app())
 
+    # Sélectionner tout d'un coup est le geste qui coûte cher : il faut le confirmer.
     r = client.post(
-        "/api/security/secret-sync/dashlane/apply",
+        "/api/security/secret-sync/apply",
         json={
-            "provider": "dashlane",
+            "provider": "gcp-secret-manager",
             "name": "FIRST_SECRET",
-            "reference": "dl://zab-env-FIRST_SECRET",
+            "reference": "sm://demo-projet/zab-first-secret",
             "selected_count": 2,
             "total_selectable": 2,
             "confirm_all": False,
@@ -827,6 +757,7 @@ def test_security_dashlane_apply_requires_all_selection_confirmation(monkeypatch
     assert r.status_code == 409
     assert "one-secret" not in r.text
     assert "FIRST_SECRET=one-secret" in env_path.read_text(encoding="utf-8")
+
 
 
 def test_security_reports_api(monkeypatch, tmp_path):

@@ -20,6 +20,20 @@ cli_watchlist:
 
 tracked_env_extra: []
 
+# Secret provider used by the Security tab and by `zab secrets`.
+#
+# Declare the project explicitly. Without it zab falls back to whatever
+# `gcloud config get-value project` returns, which is rarely the project that
+# actually holds your secrets — and Secret Manager may not even be enabled
+# there, so every call fails with a message about the wrong project.
+#
+# `prefix` names the secrets zab creates: QONTO_API_KEY -> zab-qonto-api-key.
+# Set it to "" to create them unprefixed. An existing secret can always be
+# referenced by hand, whatever its name: the reference in the .env is explicit.
+# secret_manager:
+#   project: my-gcp-project
+#   prefix: zab-
+
 # Optional: Postgres memory / conversations archive
 # Set ZAB_MEMORY_DATABASE_URL in ~/.config/zab/.env or your skills/.env
 

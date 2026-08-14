@@ -1625,7 +1625,7 @@ type SecurityEnvProcessSource = {
   keys: string[]
 }
 
-type SecurityDashlaneMatch = {
+type SecuritySecretMatch = {
   id: string
   title: string
   reference: string
@@ -1639,12 +1639,12 @@ type SecurityEnvSyncRow = {
   status: 'synced' | 'pending' | 'missing' | string
   provider: string | null
   recommended_provider: string | null
-  dashlane_title: string
-  dashlane_reference_value: string
-  dashlane_reference_template: string
-  dashlane_web_url?: string
-  dashlane_match_status: 'matched' | 'not_found' | string
-  dashlane_matches: SecurityDashlaneMatch[]
+  secret_id: string
+  secret_reference: string
+  secret_reference_template: string
+  console_url?: string
+  match_status: 'matched' | 'not_found' | string
+  matches: SecuritySecretMatch[]
   reference_hint: string
   note_template: string
   source_count: number
@@ -1671,7 +1671,7 @@ type SecuritySecretSyncPayload = {
     missing: number
     total: number
   }
-  dashlane_inventory?: {
+  inventory?: {
     available: boolean
     status: string
     count: number
@@ -1707,16 +1707,16 @@ type SecuritySecretProvider = {
   local_reference_write_supported?: boolean
 }
 
-type SecurityDashlaneApplyResult = {
+type SecuritySecretApplyResult = {
   name: string
   status: 'synced' | 'skipped' | 'error' | 'create_required' | string
   provider?: string
   reason?: string
   reference_hint?: string
-  dashlane_title?: string
-  dashlane_reference_value?: string
-  dashlane_web_url?: string
-  dashlane_secret_status?: string
+  secret_id?: string
+  secret_reference?: string
+  console_url?: string
+  secret_status?: string
   hint?: string
   changed_files?: {
     path: string
@@ -1726,16 +1726,16 @@ type SecurityDashlaneApplyResult = {
   }[]
 }
 
-type SecurityDashlaneApplyResponse = {
-  provider: 'dashlane'
-  result: SecurityDashlaneApplyResult
+type SecuritySecretApplyResponse = {
+  provider: 'gcp-secret-manager'
+  result: SecuritySecretApplyResult
   secret_sync?: SecuritySecretSyncPayload
 }
 
-type SecurityDashlaneCopyValueResponse = {
+type SecuritySecretCopyValueResponse = {
   copied: boolean
   name: string
-  dashlane_title: string
+  secret_id: string
 }
 
 type SecurityEnvOverviewPayload = {
@@ -1746,20 +1746,21 @@ type SecurityEnvOverviewPayload = {
 
 type SecuritySubmenuId = 'env_files' | 'local_scans' | 'sync_secrets'
 
-function DashlaneLogo({ className }: { className?: string }) {
+function SecretManagerLogo({ className }: { className?: string }) {
+  // Tracé local plutôt qu'une image distante : la pastille s'affiche même hors
+  // ligne, et le tableau de bord n'annonce à aucun tiers qu'il est ouvert.
   return (
     <span
       className={cn(
-        'relative inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-[#0b6670] text-[9px] font-bold text-white',
+        'inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-[#1a73e8] text-white',
         className,
       )}
+      aria-hidden="true"
     >
-      D
-      <img
-        src="https://play-lh.googleusercontent.com/82k9b2kIf3AGhg7Owb4JwM07V4dxazgqubplyo2vDuLJOOBtzjD4XQ5rGLMUye93kw"
-        alt=""
-        className="absolute inset-0 size-full rounded-sm object-cover"
-      />
+      <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <rect x="3.2" y="7" width="9.6" height="6.2" rx="1.4" fill="currentColor" stroke="none" />
+        <path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7" strokeLinecap="round" />
+      </svg>
     </span>
   )
 }
@@ -1771,15 +1772,15 @@ function SecuritySyncPill({ sync }: { sync?: SecurityEnvSyncRow | null }) {
   if (sync.status === 'synced') {
     return (
       <span className="inline-flex max-w-[180px] items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 ring-1 ring-emerald-200">
-        <DashlaneLogo />
-        <span>Dashlane</span>
+        <SecretManagerLogo />
+        <span>Secret Manager</span>
         {sync.reference_hint ? <span className="truncate font-mono opacity-70">{sync.reference_hint}</span> : null}
       </span>
     )
   }
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 ring-1 ring-amber-200">
-      <DashlaneLogo />
+      <SecretManagerLogo />
       <span>À créer</span>
     </span>
   )
@@ -1807,14 +1808,14 @@ function SecuritySection({
   const [securitySubmenu, setSecuritySubmenu] = useState<SecuritySubmenuId>('env_files')
   const [openingKey, setOpeningKey] = useState<string | null>(null)
   const [reports, setReports] = useState<SecurityReportRow[]>([])
-  const [dashlaneModalOpen, setDashlaneModalOpen] = useState(false)
-  const [dashlaneSelectedNames, setDashlaneSelectedNames] = useState<Set<string>>(() => new Set())
-  const [dashlaneConfirmAll, setDashlaneConfirmAll] = useState(false)
-  const [dashlaneSyncRunning, setDashlaneSyncRunning] = useState(false)
-  const [dashlaneActiveName, setDashlaneActiveName] = useState<string | null>(null)
-  const [dashlaneCopyingName, setDashlaneCopyingName] = useState<string | null>(null)
-  const [dashlaneReferenceByName, setDashlaneReferenceByName] = useState<Record<string, string>>({})
-  const [dashlaneResults, setDashlaneResults] = useState<Record<string, SecurityDashlaneApplyResult>>({})
+  const [secretModalOpen, setSecretModalOpen] = useState(false)
+  const [secretSelectedNames, setSecretSelectedNames] = useState<Set<string>>(() => new Set())
+  const [secretConfirmAll, setSecretConfirmAll] = useState(false)
+  const [secretSyncRunning, setSecretSyncRunning] = useState(false)
+  const [secretActiveName, setSecretActiveName] = useState<string | null>(null)
+  const [secretCopyingName, setSecretCopyingName] = useState<string | null>(null)
+  const [secretReferenceByName, setSecretReferenceByName] = useState<Record<string, string>>({})
+  const [secretResults, setSecretResults] = useState<Record<string, SecuritySecretApplyResult>>({})
 
   const loadReports = useCallback(async () => {
     try {
@@ -1881,7 +1882,7 @@ function SecuritySection({
     )
   }
 
-  const runDashlaneCheck = async () => {
+  const runSecretCheck = async () => {
     setSyncChecking(true)
     try {
       const data = await apiJson<SecuritySecretSyncPayload & { providers?: SecuritySecretProvider[] }>(
@@ -1889,11 +1890,11 @@ function SecuritySection({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: 'dashlane', apply: false }),
+          body: JSON.stringify({ provider: 'gcp-secret-manager', apply: false }),
         },
       )
       applySecretSyncPayload(data)
-      toast.success(data.message ?? 'Check Dashlane terminé')
+      toast.success(data.message ?? 'Check Secret Manager terminé')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1929,8 +1930,8 @@ function SecuritySection({
       ? secretProviders
       : [
           {
-            id: 'dashlane',
-            label: 'Dashlane',
+            id: 'gcp-secret-manager',
+            label: 'Google Secret Manager',
             available: false,
             implemented: true,
             enabled: true,
@@ -1971,118 +1972,118 @@ function SecuritySection({
             write_supported: false,
           },
         ]
-  const dashlaneProvider = providersForDisplay.find((p) => p.id === 'dashlane') ?? null
-  const pendingDashlaneRows = (secretSync?.variables ?? []).filter((row) => row.status === 'pending')
+  const secretProvider = providersForDisplay.find((p) => p.id === 'gcp-secret-manager') ?? null
+  const pendingSecretRows = (secretSync?.variables ?? []).filter((row) => row.status === 'pending')
   const fileBackedNames = new Set(envVars.filter((row) => row.sources.some((source) => source.kind === 'file')).map((row) => row.name))
-  const selectableDashlaneRows = pendingDashlaneRows.filter((row) => fileBackedNames.has(row.name))
-  const selectedDashlaneRows = selectableDashlaneRows.filter((row) => dashlaneSelectedNames.has(row.name))
-  const dashlaneAllSelected =
-    selectableDashlaneRows.length > 0 && selectedDashlaneRows.length === selectableDashlaneRows.length
+  const selectableSecretRows = pendingSecretRows.filter((row) => fileBackedNames.has(row.name))
+  const selectedSecretRows = selectableSecretRows.filter((row) => secretSelectedNames.has(row.name))
+  const secretAllSelected =
+    selectableSecretRows.length > 0 && selectedSecretRows.length === selectableSecretRows.length
 
-  const defaultDashlaneReferenceForRow = (row: SecurityEnvSyncRow) =>
-    row.dashlane_match_status === 'matched' ? row.dashlane_reference_value : ''
+  const defaultSecretReferenceForRow = (row: SecurityEnvSyncRow) =>
+    row.match_status === 'matched' ? row.secret_reference : ''
 
-  const openDashlaneModal = (mode: 'first' | 'all' = 'first') => {
+  const openSecretModal = (mode: 'first' | 'all' = 'first') => {
     const next = new Set<string>()
     const nextRefs: Record<string, string> = {}
     if (mode === 'all') {
-      selectableDashlaneRows.forEach((row) => {
+      selectableSecretRows.forEach((row) => {
         next.add(row.name)
-        nextRefs[row.name] = defaultDashlaneReferenceForRow(row)
+        nextRefs[row.name] = defaultSecretReferenceForRow(row)
       })
-    } else if (selectableDashlaneRows[0]) {
-      next.add(selectableDashlaneRows[0].name)
-      nextRefs[selectableDashlaneRows[0].name] = defaultDashlaneReferenceForRow(selectableDashlaneRows[0])
+    } else if (selectableSecretRows[0]) {
+      next.add(selectableSecretRows[0].name)
+      nextRefs[selectableSecretRows[0].name] = defaultSecretReferenceForRow(selectableSecretRows[0])
     }
-    setDashlaneSelectedNames(next)
-    setDashlaneReferenceByName(nextRefs)
-    setDashlaneConfirmAll(false)
-    setDashlaneResults({})
-    setDashlaneActiveName(null)
-    setDashlaneModalOpen(true)
+    setSecretSelectedNames(next)
+    setSecretReferenceByName(nextRefs)
+    setSecretConfirmAll(false)
+    setSecretResults({})
+    setSecretActiveName(null)
+    setSecretModalOpen(true)
   }
 
-  const toggleDashlaneSelection = (name: string, checked: boolean) => {
-    const row = selectableDashlaneRows.find((item) => item.name === name)
-    setDashlaneSelectedNames((current) => {
+  const toggleSecretSelection = (name: string, checked: boolean) => {
+    const row = selectableSecretRows.find((item) => item.name === name)
+    setSecretSelectedNames((current) => {
       const next = new Set(current)
       if (checked) next.add(name)
       else next.delete(name)
       return next
     })
     if (checked && row) {
-      setDashlaneReferenceByName((current) => ({
+      setSecretReferenceByName((current) => ({
         ...current,
-        [name]: current[name] || defaultDashlaneReferenceForRow(row),
+        [name]: current[name] || defaultSecretReferenceForRow(row),
       }))
     }
-    setDashlaneConfirmAll(false)
+    setSecretConfirmAll(false)
   }
 
-  const setDashlaneSelectionAll = (checked: boolean) => {
-    setDashlaneSelectedNames(checked ? new Set(selectableDashlaneRows.map((row) => row.name)) : new Set())
-    setDashlaneReferenceByName(
+  const setSecretSelectionAll = (checked: boolean) => {
+    setSecretSelectedNames(checked ? new Set(selectableSecretRows.map((row) => row.name)) : new Set())
+    setSecretReferenceByName(
       checked
-        ? Object.fromEntries(selectableDashlaneRows.map((row) => [row.name, dashlaneReferenceByName[row.name] || defaultDashlaneReferenceForRow(row)]))
+        ? Object.fromEntries(selectableSecretRows.map((row) => [row.name, secretReferenceByName[row.name] || defaultSecretReferenceForRow(row)]))
         : {},
     )
-    setDashlaneConfirmAll(false)
+    setSecretConfirmAll(false)
   }
 
-  const runDashlaneModalSync = async () => {
-    if (selectedDashlaneRows.length === 0) {
+  const runSecretModalSync = async () => {
+    if (selectedSecretRows.length === 0) {
       toast.warning('Sélection vide')
       return
     }
-    if (dashlaneAllSelected && !dashlaneConfirmAll) {
+    if (secretAllSelected && !secretConfirmAll) {
       toast.warning('Confirme la sélection totale avant de lancer la sync.')
       return
     }
-    setDashlaneSyncRunning(true)
-    setDashlaneResults({})
+    setSecretSyncRunning(true)
+    setSecretResults({})
     try {
-      for (const row of selectedDashlaneRows) {
-        setDashlaneActiveName(row.name)
-        const data = await apiJson<SecurityDashlaneApplyResponse>('/api/security/secret-sync/dashlane/apply', {
+      for (const row of selectedSecretRows) {
+        setSecretActiveName(row.name)
+        const data = await apiJson<SecuritySecretApplyResponse>('/api/security/secret-sync/apply', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            provider: 'dashlane',
+            provider: 'gcp-secret-manager',
             name: row.name,
-            reference: dashlaneReferenceByName[row.name],
-            selected_count: selectedDashlaneRows.length,
-            total_selectable: selectableDashlaneRows.length,
-            confirm_all: dashlaneConfirmAll,
+            reference: secretReferenceByName[row.name],
+            selected_count: selectedSecretRows.length,
+            total_selectable: selectableSecretRows.length,
+            confirm_all: secretConfirmAll,
           }),
         })
-        setDashlaneResults((current) => ({ ...current, [row.name]: data.result }))
+        setSecretResults((current) => ({ ...current, [row.name]: data.result }))
         if (data.secret_sync) applySecretSyncPayload(data.secret_sync)
         if (data.result.status === 'error') break
       }
       await loadOverview()
       await loadProviders()
-      toast.success('Sync Dashlane terminée')
+      toast.success('Sync Secret Manager terminée')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
-      setDashlaneActiveName(null)
-      setDashlaneSyncRunning(false)
+      setSecretActiveName(null)
+      setSecretSyncRunning(false)
     }
   }
 
-  const copyDashlaneValue = async (row: SecurityEnvSyncRow) => {
-    setDashlaneCopyingName(row.name)
+  const copySecretValue = async (row: SecurityEnvSyncRow) => {
+    setSecretCopyingName(row.name)
     try {
-      const data = await apiJson<SecurityDashlaneCopyValueResponse>('/api/security/secret-sync/dashlane/copy-value', {
+      const data = await apiJson<SecuritySecretCopyValueResponse>('/api/security/secret-sync/copy-value', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: row.name, confirm_clipboard: true }),
       })
-      toast.success(`Valeur copiée pour ${data.dashlane_title}`)
+      toast.success(`Valeur copiée pour ${data.secret_id}`)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
-      setDashlaneCopyingName(null)
+      setSecretCopyingName(null)
     }
   }
 
@@ -2366,7 +2367,7 @@ function SecuritySection({
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {providersForDisplay.map((provider) => {
-              const isDashlane = provider.id === 'dashlane'
+              const isSecretManager = provider.id === 'gcp-secret-manager'
               const active = provider.enabled && provider.implemented
               const providerTone =
                 !active
@@ -2383,8 +2384,8 @@ function SecuritySection({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      {isDashlane ? (
-                        <DashlaneLogo className="size-6 rounded-md" />
+                      {isSecretManager ? (
+                        <SecretManagerLogo className="size-6 rounded-md" />
                       ) : (
                         <span className="flex size-6 items-center justify-center rounded-md bg-zinc-200 text-[10px] font-semibold text-zinc-600">
                           {provider.label.slice(0, 2).toUpperCase()}
@@ -2424,84 +2425,84 @@ function SecuritySection({
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!dashlaneProvider?.login_command}
-              onClick={() => void copyText(dashlaneProvider?.login_command ?? 'dcli sync', 'Commande Dashlane copiée')}
+              disabled={!secretProvider?.login_command}
+              onClick={() => void copyText(secretProvider?.login_command ?? 'gcloud auth login', 'Commande de connexion copiée')}
             >
               <LogIn className="mr-1.5 size-3.5" />
-              Login Dashlane
+              Connexion gcloud
             </Button>
             <Button
               type="button"
               variant="outline"
               size="sm"
               disabled={syncChecking}
-              onClick={() => void runDashlaneCheck()}
+              onClick={() => void runSecretCheck()}
             >
               {syncChecking ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 size-3.5" />}
-              Check sync Dashlane
+              Check sync Secret Manager
             </Button>
             <Button
               type="button"
               variant="default"
               size="sm"
-              disabled={dashlaneSyncRunning || selectableDashlaneRows.length === 0}
-              onClick={() => openDashlaneModal('first')}
+              disabled={secretSyncRunning || selectableSecretRows.length === 0}
+              onClick={() => openSecretModal('first')}
             >
-              <DashlaneLogo className="mr-1.5 size-3.5" />
+              <SecretManagerLogo className="mr-1.5 size-3.5" />
               Sync sélection
             </Button>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              disabled={dashlaneSyncRunning || selectableDashlaneRows.length === 0}
+              disabled={secretSyncRunning || selectableSecretRows.length === 0}
               title={
-                selectableDashlaneRows.length === 0
+                selectableSecretRows.length === 0
                   ? 'Aucun secret fichier à synchroniser.'
                   : 'Ouvre la modale avec tous les secrets éligibles sélectionnés.'
               }
-              onClick={() => openDashlaneModal('all')}
+              onClick={() => openSecretModal('all')}
             >
-              {dashlaneSyncRunning ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+              {secretSyncRunning ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
               Sync all
             </Button>
             {secretSync ? (
               <p className="text-muted-foreground text-xs">
                 {secretSync.counts.synced} sync · {secretSync.counts.pending} à créer · {secretSync.counts.missing} absents
-                {secretSync.dashlane_inventory ? ` · ${secretSync.dashlane_inventory.count} secret(s) Dashlane lus` : ''}
+                {secretSync.inventory ? ` · ${secretSync.inventory.count} secret(s) lus dans le projet` : ''}
               </p>
             ) : null}
           </div>
 
-          {pendingDashlaneRows.length > 0 ? (
+          {pendingSecretRows.length > 0 ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Références Dashlane à poser</p>
+                <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Références Secret Manager à poser</p>
                 <span className="text-[11px] text-amber-900/80 dark:text-amber-200/80">
-                  {pendingDashlaneRows.length} variable(s)
+                  {pendingSecretRows.length} variable(s)
                 </span>
               </div>
               <ul className="space-y-2">
-                {pendingDashlaneRows.slice(0, 6).map((row) => (
+                {pendingSecretRows.slice(0, 6).map((row) => (
                   <li key={row.name} className="rounded-md border border-amber-200 bg-white/70 p-2 dark:border-amber-900/50 dark:bg-zinc-950/30">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="font-mono text-xs font-semibold">{row.name}</p>
-                        <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">{row.dashlane_title}</p>
-                        <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">{row.dashlane_reference_template}</p>
+                        <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">{row.secret_id}</p>
+                        <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">{row.secret_reference_template}</p>
                         <p
                           className={cn(
                             'mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
-                            row.dashlane_match_status === 'matched'
+                            row.match_status === 'matched'
                               ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
                               : 'bg-amber-50 text-amber-900 ring-amber-200',
                           )}
                         >
-                          {row.dashlane_match_status === 'matched'
-                            ? 'Z_KEY existe dans Dashlane'
-                            : dashlaneProvider?.write_supported
-                              ? 'Z_KEY sera créé dans Dashlane'
-                              : 'Writer Dashlane requis'}
+                          {row.match_status === 'matched'
+                            ? 'Le secret existe déjà'
+                            : secretProvider?.write_supported
+                              ? 'Le secret sera créé'
+                              : 'gcloud requis'}
                         </p>
                       </div>
                       <Button
@@ -2518,8 +2519,8 @@ function SecuritySection({
                   </li>
                 ))}
               </ul>
-              {pendingDashlaneRows.length > 6 ? (
-                <p className="text-muted-foreground mt-2 text-[11px]">+{pendingDashlaneRows.length - 6} autre(s) variable(s).</p>
+              {pendingSecretRows.length > 6 ? (
+                <p className="text-muted-foreground mt-2 text-[11px]">+{pendingSecretRows.length - 6} autre(s) variable(s).</p>
               ) : null}
             </div>
           ) : null}
@@ -2527,16 +2528,16 @@ function SecuritySection({
       </Card>
 
       <Dialog
-        open={dashlaneModalOpen}
+        open={secretModalOpen}
         onOpenChange={(open) => {
-          if (!dashlaneSyncRunning) setDashlaneModalOpen(open)
+          if (!secretSyncRunning) setSecretModalOpen(open)
         }}
       >
         <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden">
           <DialogHeader>
-            <DialogTitle>Sync Zab → Dashlane</DialogTitle>
+            <DialogTitle>Sync Zab → Secret Manager</DialogTitle>
             <DialogDescription>
-              Zab cherche <code className="bg-muted rounded px-1">Z_&lt;KEY&gt;</code> dans Dashlane, crée le Secret manquant si le writer est disponible, puis remplace la valeur locale par la référence <code className="bg-muted rounded px-1">dl://</code>.
+              Zab crée le secret manquant dans le projet Secret Manager configuré, puis remplace la valeur en clair du <code className="bg-muted rounded px-1">.env</code> par sa référence <code className="bg-muted rounded px-1">sm://</code>. La valeur n'est jamais réécrite sur disque.
             </DialogDescription>
           </DialogHeader>
 
@@ -2546,18 +2547,18 @@ function SecuritySection({
                 <input
                   type="checkbox"
                   className="size-4 rounded border-zinc-300"
-                  checked={dashlaneAllSelected}
-                  disabled={dashlaneSyncRunning || selectableDashlaneRows.length === 0}
-                  onChange={(event) => setDashlaneSelectionAll(event.currentTarget.checked)}
+                  checked={secretAllSelected}
+                  disabled={secretSyncRunning || selectableSecretRows.length === 0}
+                  onChange={(event) => setSecretSelectionAll(event.currentTarget.checked)}
                 />
                 Tout sélectionner
               </label>
               <span className="text-muted-foreground text-xs">
-                {selectedDashlaneRows.length}/{selectableDashlaneRows.length} sélectionné(s)
+                {selectedSecretRows.length}/{selectableSecretRows.length} sélectionné(s)
               </span>
             </div>
 
-            {dashlaneAllSelected ? (
+            {secretAllSelected ? (
               <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
                 <div className="flex gap-2">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -2567,9 +2568,9 @@ function SecuritySection({
                       <input
                         type="checkbox"
                         className="size-4 rounded border-amber-400"
-                        checked={dashlaneConfirmAll}
-                        disabled={dashlaneSyncRunning}
-                        onChange={(event) => setDashlaneConfirmAll(event.currentTarget.checked)}
+                        checked={secretConfirmAll}
+                        disabled={secretSyncRunning}
+                        onChange={(event) => setSecretConfirmAll(event.currentTarget.checked)}
                       />
                       Confirmer la synchronisation complète
                     </label>
@@ -2579,23 +2580,23 @@ function SecuritySection({
             ) : null}
 
             <div className="max-h-[48vh] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-              {selectableDashlaneRows.length === 0 ? (
+              {selectableSecretRows.length === 0 ? (
                 <p className="text-muted-foreground p-4 text-sm">
                   Aucune variable fichier en attente.
                 </p>
               ) : (
                 <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {selectableDashlaneRows.map((row) => {
-                    const checked = dashlaneSelectedNames.has(row.name)
-                    const result = dashlaneResults[row.name]
-                    const active = dashlaneActiveName === row.name
+                  {selectableSecretRows.map((row) => {
+                    const checked = secretSelectedNames.has(row.name)
+                    const result = secretResults[row.name]
+                    const active = secretActiveName === row.name
                     const synced = result?.status === 'synced'
-                    const created = synced && result?.dashlane_secret_status === 'created'
+                    const created = synced && result?.secret_status === 'created'
                     const failed = result?.status === 'error'
                     const createRequired = result?.status === 'create_required'
                     const resultReason =
-                      result?.reason === 'dashlane_secret_write_unavailable'
-                        ? 'Writer Dashlane non configuré pour créer le Secret.'
+                      result?.reason === 'secret_secret_write_unavailable'
+                        ? 'gcloud absent ou projet non configuré : création impossible.'
                         : result?.reason
                     return (
                       <li key={row.name} className="p-3">
@@ -2604,8 +2605,8 @@ function SecuritySection({
                             type="checkbox"
                             className="mt-1 size-4 rounded border-zinc-300"
                             checked={checked}
-                            disabled={dashlaneSyncRunning}
-                            onChange={(event) => toggleDashlaneSelection(row.name, event.currentTarget.checked)}
+                            disabled={secretSyncRunning}
+                            onChange={(event) => toggleSecretSelection(row.name, event.currentTarget.checked)}
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -2632,31 +2633,31 @@ function SecuritySection({
                                 </span>
                               ) : null}
                             </div>
-                            <p className="text-muted-foreground mt-1 font-mono text-[11px]">{row.dashlane_title}</p>
+                            <p className="text-muted-foreground mt-1 font-mono text-[11px]">{row.secret_id}</p>
                             <p className="text-muted-foreground mt-0.5 break-all font-mono text-[11px]">
-                              {dashlaneReferenceByName[row.name]
-                                ? `${row.name}=${dashlaneReferenceByName[row.name]}`
-                                : `${row.name}=dl://…`}
+                              {secretReferenceByName[row.name]
+                                ? `${row.name}=${secretReferenceByName[row.name]}`
+                                : `${row.name}=sm://…`}
                             </p>
-                            {row.dashlane_match_status === 'matched' ? (
+                            {row.match_status === 'matched' ? (
                               <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-300">
-                                Secret existant : <span className="font-mono">{row.dashlane_title}</span>
+                                Secret existant : <span className="font-mono">{row.secret_id}</span>
                               </p>
                             ) : (
                               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50/70 p-2 dark:border-amber-900/50 dark:bg-amber-950/20">
                                 <p className="min-w-0 flex-1 text-[11px] text-amber-900 dark:text-amber-100">
-                                  {dashlaneProvider?.write_supported ? 'Sera créé dans Dashlane' : 'Création automatique à configurer'} :{' '}
-                                  <span className="font-mono">{row.dashlane_title}</span>
+                                  {secretProvider?.write_supported ? 'Sera créé dans Secret Manager' : 'Création à configurer'} :{' '}
+                                  <span className="font-mono">{row.secret_id}</span>
                                 </p>
                                 <Button
                                   type="button"
                                   variant="outline"
                                   size="sm"
                                   className="h-7 text-[11px]"
-                                  disabled={dashlaneCopyingName === row.name}
-                                  onClick={() => void copyDashlaneValue(row)}
+                                  disabled={secretCopyingName === row.name}
+                                  onClick={() => void copySecretValue(row)}
                                 >
-                                  {dashlaneCopyingName === row.name ? (
+                                  {secretCopyingName === row.name ? (
                                     <Loader2 className="mr-1.5 size-3 animate-spin" />
                                   ) : (
                                     <Copy className="mr-1.5 size-3" />
@@ -2698,19 +2699,19 @@ function SecuritySection({
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" disabled={dashlaneSyncRunning} onClick={() => setDashlaneModalOpen(false)}>
+            <Button type="button" variant="outline" disabled={secretSyncRunning} onClick={() => setSecretModalOpen(false)}>
               Fermer
             </Button>
             <Button
               type="button"
               disabled={
-                dashlaneSyncRunning ||
-                selectedDashlaneRows.length === 0 ||
-                (dashlaneAllSelected && !dashlaneConfirmAll)
+                secretSyncRunning ||
+                selectedSecretRows.length === 0 ||
+                (secretAllSelected && !secretConfirmAll)
               }
-              onClick={() => void runDashlaneModalSync()}
+              onClick={() => void runSecretModalSync()}
             >
-              {dashlaneSyncRunning ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+              {secretSyncRunning ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
               Lancer un par un
             </Button>
           </DialogFooter>
@@ -2755,7 +2756,7 @@ function SecuritySection({
                   const proc = row.sources.find((s): s is SecurityEnvProcessSource => s.kind === 'process')
                   const primaryFile = fileSources[0]
                   const openToken = primaryFile ? `${primaryFile.path}:${primaryFile.key}:${primaryFile.line ?? ''}` : ''
-                  const dashlaneWebUrl = row.sync?.status === 'synced' ? row.sync.dashlane_web_url : ''
+                  const secretWebUrl = row.sync?.status === 'synced' ? row.sync.console_url : ''
                   return (
                     <TableRow key={row.name}>
                       <TableCell className="font-mono text-xs">{row.name}</TableCell>
@@ -2788,13 +2789,13 @@ function SecuritySection({
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <SecuritySyncPill sync={row.sync} />
-                          {dashlaneWebUrl ? (
+                          {secretWebUrl ? (
                             <a
-                              href={dashlaneWebUrl}
+                              href={secretWebUrl}
                               target="_blank"
                               rel="noreferrer"
-                              title="Voir dans Dashlane"
-                              aria-label={`Voir ${row.name} dans Dashlane`}
+                              title="Ouvrir dans la console Google Cloud"
+                              aria-label={`Ouvrir ${row.name} dans la console Google Cloud`}
                               className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'h-6 text-[11px]')}
                             >
                               <ExternalLink className="size-3" />

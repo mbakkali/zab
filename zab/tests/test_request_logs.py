@@ -187,6 +187,18 @@ def test_job_lifecycle_logs(monkeypatch, tmp_path: Path) -> None:
         time.sleep(0.05)
 
     assert job.status == "done"
+
+    # `job.status` bascule avant que le worker n'ait écrit l'événement « done » :
+    # interroger le journal dans la foulée le trouvait encore à « running » une
+    # fois sur trois. On attend l'écriture, pas le statut.
+    states: set[str] = set()
+    while time.time() < deadline:
+        query = request_logs.query_events(surface="jobs", q=job.id, limit=20)
+        states = {event["result"]["status"] for event in query["events"]}
+        if "done" in states:
+            break
+        time.sleep(0.05)
+
     query = request_logs.query_events(surface="jobs", q=job.id, limit=20)
     states = {event["result"]["status"] for event in query["events"]}
     assert {"queued", "running", "done"} <= states

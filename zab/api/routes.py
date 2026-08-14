@@ -2157,28 +2157,34 @@ def security_secret_providers() -> dict[str, Any]:
     return {"providers": security_secret_sync.secret_providers()}
 
 
+_SECRET_PROVIDER_IDS = (security_secret_sync.PROVIDER_ID, "")
+
+
 class SecretSyncCheckBody(BaseModel):
-    provider: str = "dashlane"
+    provider: str = security_secret_sync.PROVIDER_ID
     apply: bool = False
 
 
 @router.post("/security/secret-sync/check")
 def security_secret_sync_check(body: SecretSyncCheckBody) -> dict[str, Any]:
-    """Prépare le check de synchronisation Dashlane sans exposer les valeurs brutes."""
+    """Prépare le check de synchronisation sans exposer les valeurs brutes."""
     provider = body.provider.strip().lower()
-    if provider not in ("dashlane", ""):
-        raise HTTPException(status_code=400, detail="seul le provider dashlane est disponible pour l'instant")
+    if provider not in _SECRET_PROVIDER_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"seul le provider {security_secret_sync.PROVIDER_ID} est disponible pour l'instant",
+        )
     overview = _security_env_overview_payload()
     sync_payload = overview.get("secret_sync")
     if not isinstance(sync_payload, dict):
         raise HTTPException(status_code=500, detail="sync secrets indisponible")
-    return security_secret_sync.dashlane_sync_check(sync_payload, apply=body.apply)
+    return security_secret_sync.secret_sync_check(sync_payload, apply=body.apply)
 
 
-class DashlaneSecretSyncApplyBody(BaseModel):
-    provider: str = "dashlane"
+class SecretSyncApplyBody(BaseModel):
+    provider: str = security_secret_sync.PROVIDER_ID
     name: str = Field(..., min_length=1)
-    reference: str | None = Field(None, description="Reference dl:// deja creee dans Dashlane")
+    reference: str | None = Field(None, description="Référence sm:// déjà créée dans Secret Manager")
     selected_count: int = Field(1, ge=1)
     total_selectable: int | None = Field(None, ge=1)
     confirm_all: bool = False
@@ -2191,12 +2197,15 @@ def _secret_sync_row_by_name(sync_payload: dict[str, Any], name: str) -> dict[st
     return None
 
 
-@router.post("/security/secret-sync/dashlane/apply")
-def security_secret_sync_dashlane_apply(body: DashlaneSecretSyncApplyBody) -> dict[str, Any]:
-    """Applique une reference Dashlane a une variable .env sans exposer la valeur brute."""
+@router.post("/security/secret-sync/apply")
+def security_secret_sync_apply(body: SecretSyncApplyBody) -> dict[str, Any]:
+    """Crée le secret manquant puis remplace la valeur locale par sa référence."""
     provider = body.provider.strip().lower()
-    if provider not in ("dashlane", ""):
-        raise HTTPException(status_code=400, detail="seul le provider dashlane est disponible pour l'instant")
+    if provider not in _SECRET_PROVIDER_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"seul le provider {security_secret_sync.PROVIDER_ID} est disponible pour l'instant",
+        )
     overview = _security_env_overview_payload()
     sync_payload = overview.get("secret_sync")
     if not isinstance(sync_payload, dict):
@@ -2208,9 +2217,9 @@ def security_secret_sync_dashlane_apply(body: DashlaneSecretSyncApplyBody) -> di
     sync_row = _secret_sync_row_by_name(sync_payload, body.name)
     if not sync_row:
         raise HTTPException(status_code=404, detail="variable_introuvable")
-    reference = str(sync_row.get("dashlane_reference_value") or body.reference or "")
+    reference = str(sync_row.get("secret_reference") or body.reference or "")
     created_secret: dict[str, Any] | None = None
-    if sync_row.get("status") == "pending" and sync_row.get("dashlane_match_status") != "matched":
+    if sync_row.get("status") == "pending" and sync_row.get("match_status") != "matched":
         variable_row = next(
             (row for row in overview.get("variables") or [] if isinstance(row, dict) and row.get("name") == body.name),
             None,
@@ -2220,47 +2229,46 @@ def security_secret_sync_dashlane_apply(body: DashlaneSecretSyncApplyBody) -> di
         raw_value = _raw_security_value_for_row(variable_row)
         if not raw_value:
             return {
-                "provider": "dashlane",
+                "provider": security_secret_sync.PROVIDER_ID,
                 "result": {
                     "name": body.name,
                     "status": "error",
                     "reason": "valeur_locale_introuvable",
-                    "dashlane_title": sync_row.get("dashlane_title"),
-                    "dashlane_reference_value": sync_row.get("dashlane_reference_value"),
+                    "secret_id": sync_row.get("secret_id"),
+                    "secret_reference": sync_row.get("secret_reference"),
                 },
                 "secret_sync": sync_payload,
             }
-        created_secret = security_secret_sync.create_dashlane_secret(variable_row, value=raw_value)
+        created_secret = security_secret_sync.create_secret(variable_row, value=raw_value)
         if not created_secret.get("ok"):
             return {
-                "provider": "dashlane",
+                "provider": security_secret_sync.PROVIDER_ID,
                 "result": {
                     "name": body.name,
                     "status": "error",
-                    "reason": created_secret.get("reason") or "dashlane_secret_create_failed",
-                    "dashlane_title": created_secret.get("dashlane_title") or sync_row.get("dashlane_title"),
-                    "dashlane_reference_value": created_secret.get("dashlane_reference_value")
-                    or sync_row.get("dashlane_reference_value"),
-                    "dashlane_web_url": created_secret.get("dashlane_web_url") or sync_row.get("dashlane_web_url"),
-                    "hint": created_secret.get("hint"),
+                    "reason": created_secret.get("reason") or "secret_create_failed",
+                    "secret_id": created_secret.get("secret_id") or sync_row.get("secret_id"),
+                    "secret_reference": created_secret.get("secret_reference")
+                    or sync_row.get("secret_reference"),
+                    "console_url": created_secret.get("console_url") or sync_row.get("console_url"),
                 },
                 "secret_sync": sync_payload,
             }
-        reference = str(created_secret.get("dashlane_reference_value") or reference)
-    result = security_secret_sync.apply_dashlane_reference(
+        reference = str(created_secret.get("secret_reference") or reference)
+    result = security_secret_sync.apply_secret_reference(
         overview.get("variables") or [],
         name=body.name,
         reference=reference,
         allowed_paths=_allowed_security_env_paths(),
     )
     if created_secret and result.get("status") == "synced":
-        result["dashlane_secret_status"] = created_secret.get("status")
-        result["dashlane_title"] = created_secret.get("dashlane_title")
-        result["dashlane_reference_value"] = created_secret.get("dashlane_reference_value")
-        result["dashlane_web_url"] = created_secret.get("dashlane_web_url")
+        result["secret_status"] = created_secret.get("status")
+        result["secret_id"] = created_secret.get("secret_id")
+        result["secret_reference"] = created_secret.get("secret_reference")
+        result["console_url"] = created_secret.get("console_url")
     refreshed = _security_env_overview_payload()
     return {
-        "provider": "dashlane",
+        "provider": security_secret_sync.PROVIDER_ID,
         "result": result,
         "secret_sync": refreshed.get("secret_sync"),
     }
@@ -2297,13 +2305,13 @@ def _raw_security_value_for_row(row: dict[str, Any]) -> str | None:
     return None
 
 
-class DashlaneSecretCopyValueBody(BaseModel):
+class SecretCopyValueBody(BaseModel):
     name: str = Field(..., min_length=1)
     confirm_clipboard: bool = False
 
 
-@router.post("/security/secret-sync/dashlane/copy-value")
-def security_secret_sync_dashlane_copy_value(body: DashlaneSecretCopyValueBody) -> dict[str, Any]:
+@router.post("/security/secret-sync/copy-value")
+def security_secret_sync_copy_value(body: SecretCopyValueBody) -> dict[str, Any]:
     """Copie explicitement une valeur locale dans le presse-papiers sans la renvoyer."""
     if not body.confirm_clipboard:
         raise HTTPException(status_code=400, detail="confirmation_clipboard_requise")
@@ -2324,7 +2332,7 @@ def security_secret_sync_dashlane_copy_value(body: DashlaneSecretCopyValueBody) 
     return {
         "copied": True,
         "name": body.name,
-        "dashlane_title": sync_row.get("dashlane_title"),
+        "secret_id": sync_row.get("secret_id"),
     }
 
 

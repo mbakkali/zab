@@ -79,6 +79,10 @@ def check_evolution() -> dict[str, Any]:
         or os.environ.get("EVOLUTION_INSTANCE_NAME", "").strip()
     ):
         missing.append("EVOLUTION_INSTANCE")
+    # Une référence non résolue dans l'environnement signifie que la valeur n'a
+    # jamais été récupérée : l'appel partirait avec « sm://... » comme clé.
+    from zab.services.security_secret_sync import is_secret_reference
+
     unresolved = [
         key
         for key in (
@@ -87,12 +91,12 @@ def check_evolution() -> dict[str, Any]:
             "EVOLUTION_INSTANCE",
             "EVOLUTION_INSTANCE_NAME",
         )
-        if os.environ.get(key, "").strip().startswith("dl://")
+        if is_secret_reference(os.environ.get(key, ""))
     ]
     if unresolved:
         return {
             "status": "error",
-            "detail": f"unresolved Dashlane references: {','.join(unresolved)}",
+            "detail": f"unresolved secret references: {','.join(unresolved)}",
         }
     return {
         "status": "ok" if not missing else "degraded",

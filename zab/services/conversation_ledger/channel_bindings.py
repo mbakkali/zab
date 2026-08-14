@@ -181,6 +181,12 @@ def _evolution_smoke() -> tuple[str, str]:
         missing.append("EVOLUTION_INSTANCE")
     if missing:
         return "degraded", f"evolution_env_missing={','.join(missing)}"
+    # Une référence de secret arrivée telle quelle dans l'environnement veut dire
+    # que personne ne l'a résolue : l'appel partirait avec « sm://... » en guise
+    # de clé d'API. Mieux vaut refuser que d'émettre une requête qui échouera
+    # côté fournisseur, avec un message qui n'expliquera rien.
+    from zab.services.security_secret_sync import is_secret_reference
+
     unresolved = [
         key
         for key in (
@@ -189,12 +195,12 @@ def _evolution_smoke() -> tuple[str, str]:
             "EVOLUTION_INSTANCE",
             "EVOLUTION_INSTANCE_NAME",
         )
-        if os.environ.get(key, "").strip().startswith("dl://")
+        if is_secret_reference(os.environ.get(key, ""))
     ]
     if unresolved:
         return (
             "error",
-            f"evolution_dashlane_reference_unresolved={','.join(unresolved)}",
+            f"evolution_secret_reference_unresolved={','.join(unresolved)}",
         )
     return "ok", "evolution_env=present"
 

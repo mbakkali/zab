@@ -1,7 +1,15 @@
-"""Secret-provider sync metadata for the local Security dashboard.
+"""Sync des variables suivies vers un gestionnaire de secrets — Google Secret Manager.
 
-The functions in this module deliberately avoid returning raw secret values.
-They only build masked readiness/status data and human-reviewable plans.
+Les fonctions de ce module ne retournent jamais une valeur de secret en clair.
+Elles construisent un état masqué, lisible par un humain, et des plans d'action.
+
+Le fournisseur précédent était Dashlane, piloté par `dcli` et par un writer
+Playwright qui ouvrait Chrome pour créer les secrets manquants. Il a été retiré :
+il exigeait une session graphique connectée, ne fonctionnait donc pas sur une
+machine sans écran, et son coffre restait étranger au reste de l'infrastructure.
+Secret Manager s'interroge par `gcloud`, avec l'identité déjà attachée à la
+machine — aucune session à tenir, aucun mot de passe maître, et une révocation
+qui se fait au même endroit que les autres accès.
 """
 
 from __future__ import annotations
@@ -9,27 +17,31 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 
-DASHLANE_ID = "dashlane"
-DASHLANE_WEB_SECRETS_URL = "https://app.dashlane.com/#/credentials"
-_DASHLANE_CREATE_COMMAND_ENV = "ZAB_DASHLANE_SECRET_CREATE_COMMAND"
-_DASHLANE_REFERENCE_RE = re.compile(r"^dl://\S+$")
-_DASHLANE_UUID_RE = re.compile(
-    r"^\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?$"
-)
+PROVIDER_ID = "gcp-secret-manager"
+PROVIDER_LABEL = "Google Secret Manager"
+
+#: Schéma de référence écrit dans les `.env` locaux à la place de la valeur.
+REFERENCE_SCHEME = "sm://"
+_REFERENCE_RE = re.compile(r"^sm://(?:(?P<project>[a-z0-9][a-z0-9-]{4,28}[a-z0-9])/)?(?P<secret>[A-Za-z0-9_-]{1,255})$")
+
+#: Préfixe des identifiants créés par zab. Un secret préexistant peut toujours
+#: être référencé à la main : la référence est explicite, le préfixe ne sert
+#: qu'à nommer ce que zab crée lui-même.
+DEFAULT_SECRET_PREFIX = "zab-"
+
+_PROJECT_ENV = "ZAB_SECRET_MANAGER_PROJECT"
+_PREFIX_ENV = "ZAB_SECRET_MANAGER_PREFIX"
+_GCLOUD_TIMEOUT = 20.0
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
+# ── utilitaires de présentation ───────────────────────────────────────────────
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -49,522 +61,336 @@ def _short_error(value: str, secret_value: str = "", *, limit: int = 160) -> str
     return _short_text(text, limit=limit)
 
 
-def _normalize_secret_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", value.strip().lower())
-
-
-def dashlane_title_for_name(name: str) -> str:
-    """Return a Dashlane-safe title for a tracked env variable."""
-    clean = re.sub(r"[^A-Za-z0-9_.-]+", "_", name.strip()).strip("_")
-    if clean.upper().startswith("Z_"):
-        return clean or "Z_VARIABLE"
-    return f"Z_{clean or 'VARIABLE'}"
-
-
-def dashlane_reference_for_name(name: str) -> str:
-    return f"dl://{dashlane_title_for_name(name)}"
-
-
-def _dashlane_identity(value: str) -> str:
-    return value.strip().strip("{}").casefold()
-
-
-def _dashlane_reference_target(reference: str) -> str:
-    ref = reference.strip()
-    if not ref.startswith("dl://"):
-        return ""
-    return ref[5:].split("/", 1)[0].strip()
-
-
-def _dashlane_web_url_for_item_id(item_id: str) -> str:
-    target = item_id.strip().strip("{}")
-    if not target:
-        return DASHLANE_WEB_SECRETS_URL
-    return f"{DASHLANE_WEB_SECRETS_URL}/{quote(target, safe='')}"
-
-
-def _dashlane_web_url_for_reference(reference: str, items: list[dict[str, Any]]) -> str:
-    target = _dashlane_reference_target(reference)
-    if not target:
-        return DASHLANE_WEB_SECRETS_URL
-
-    target_identity = _dashlane_identity(target)
-    target_normalized = _normalize_secret_name(target)
-    for item in items:
-        item_id = str(item.get("id") or "")
-        item_reference_target = _dashlane_reference_target(str(item.get("reference") or ""))
-        title = str(item.get("title") or "")
-        if target_identity and target_identity in {
-            _dashlane_identity(item_id),
-            _dashlane_identity(item_reference_target),
-        }:
-            return str(item.get("web_url") or _dashlane_web_url_for_item_id(item_id))
-        if target_normalized and _normalize_secret_name(title) == target_normalized:
-            return str(item.get("web_url") or _dashlane_web_url_for_item_id(item_id))
-
-    if _DASHLANE_UUID_RE.match(target):
-        return _dashlane_web_url_for_item_id(target)
-    return DASHLANE_WEB_SECRETS_URL
-
-
-def _validate_dashlane_reference(reference: str) -> str:
-    ref = reference.strip()
-    if not _DASHLANE_REFERENCE_RE.match(ref):
-        raise ValueError("reference_dashlane_invalide")
-    if "<" in ref or ">" in ref:
-        raise ValueError("reference_dashlane_placeholder")
-    return ref
-
-
-def _dashlane_create_command() -> list[str]:
-    raw = os.environ.get(_DASHLANE_CREATE_COMMAND_ENV, "").strip()
-    if not raw:
-        node = shutil.which("node")
-        root = _repo_root()
-        script = root / "scripts" / "dashlane-secret-writer.mjs"
-        playwright_dir = root / "zab-ui" / "node_modules" / "playwright"
-        if node and script.is_file() and playwright_dir.is_dir():
-            return [node, str(script)]
-        return []
-    # Secrets must travel via stdin only. Passing them in argv would expose them
-    # to process listings and shell histories.
-    if "{value}" in raw:
-        return ["__invalid_value_placeholder__"]
-    if raw.startswith("["):
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return ["__invalid_json__"]
-        if not isinstance(data, list):
-            return ["__invalid_json__"]
-        return [str(part) for part in data if str(part).strip()]
+def _path_display(path: Path) -> str:
     try:
-        return shlex.split(raw)
-    except ValueError:
-        return ["__invalid_shell__"]
+        return f"~/{path.resolve().relative_to(Path.home())}"
+    except (ValueError, OSError):
+        return str(path)
 
 
-def dashlane_secret_write_available() -> bool:
-    cmd = _dashlane_create_command()
-    return bool(cmd) and not (cmd[0].startswith("__invalid_") if cmd else False)
+# ── résolution du projet et des identifiants ─────────────────────────────────
+
+def _gcloud() -> str | None:
+    return shutil.which("gcloud")
 
 
-def _format_dashlane_create_command(
-    command: list[str],
-    *,
-    name: str,
-    title: str,
-    reference: str,
-    note: str,
-) -> list[str]:
-    return [
-        part.replace("{name}", name)
-        .replace("{title}", title)
-        .replace("{reference}", reference)
-        .replace("{note}", note)
-        for part in command
-    ]
+def secret_manager_project() -> str:
+    """Projet GCP hébergeant les secrets.
 
-
-def _dashlane_create_success_from_match(match: dict[str, Any], *, status: str = "created") -> dict[str, Any]:
-    item_id = str(match.get("id") or "")
-    return {
-        "ok": True,
-        "status": status,
-        "provider": DASHLANE_ID,
-        "dashlane_title": match.get("title") or "",
-        "dashlane_reference_value": match.get("reference") or "",
-        "dashlane_web_url": match.get("web_url") or _dashlane_web_url_for_item_id(item_id),
-    }
-
-
-def _safe_dashlane_item(raw: Any) -> dict[str, Any] | None:
-    if not isinstance(raw, dict):
-        return None
-    title = str(raw.get("title") or raw.get("name") or "").strip()
-    item_id = str(raw.get("id") or "").strip()
-    if not title and not item_id:
-        return None
-    raw_reference = str(raw.get("reference") or "").strip()
-    raw_web_url = str(raw.get("web_url") or raw.get("url") or "").strip()
-    reference_target = item_id or title
-    return {
-        "id": item_id,
-        "title": title or item_id,
-        "reference": raw_reference if raw_reference.startswith("dl://") else f"dl://{reference_target}",
-        "web_url": raw_web_url if raw_web_url.startswith("https://") else _dashlane_web_url_for_item_id(item_id),
-    }
-
-
-def dashlane_secret_inventory(*, timeout: float = 5.0) -> dict[str, Any]:
-    """Return redacted Dashlane Secret metadata.
-
-    ``dcli secret -o json`` returns Secret item metadata. We keep only id/title
-    and never return field values.
+    Ordre : ``$ZAB_SECRET_MANAGER_PROJECT`` → ``secret_manager.project`` dans
+    ``~/.config/zab/config.yaml`` → projet actif de ``gcloud``. Vide si rien
+    n'est configuré : le module reste inerte plutôt que d'écrire au mauvais
+    endroit.
     """
-    dcli = shutil.which("dcli")
-    if not dcli:
-        return {"available": False, "status": "missing_cli", "items": [], "count": 0}
+    env = os.environ.get(_PROJECT_ENV, "").strip()
+    if env:
+        return env
+    try:
+        from zab.user_config import load_user_config
+
+        cfg = load_user_config()
+        block = cfg.get("secret_manager")
+        if isinstance(block, dict):
+            value = block.get("project")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    except Exception:  # noqa: BLE001, S110 — config illisible : on passe à la source suivante
+        pass
+    gcloud = _gcloud()
+    if not gcloud:
+        return ""
     try:
         proc = subprocess.run(
-            [dcli, "secret", "-o", "json"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            [gcloud, "config", "get-value", "project"],
+            capture_output=True, text=True, timeout=_GCLOUD_TIMEOUT, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
-            "available": False,
-            "status": "error",
-            "items": [],
-            "count": 0,
-            "status_detail": _short_text(str(exc)),
-        }
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    value = (proc.stdout or "").strip()
+    return "" if value in ("", "(unset)") else value
+
+
+def _secret_prefix() -> str:
+    env = os.environ.get(_PREFIX_ENV)
+    if env is not None:
+        return env.strip()
+    try:
+        from zab.user_config import load_user_config
+
+        block = load_user_config().get("secret_manager")
+        if isinstance(block, dict):
+            value = block.get("prefix")
+            if isinstance(value, str):
+                return value.strip()
+    except Exception:  # noqa: BLE001, S110 — config illisible : on garde le préfixe par défaut
+        pass
+    return DEFAULT_SECRET_PREFIX
+
+
+def secret_id_for_name(name: str) -> str:
+    """Identifiant Secret Manager proposé pour une variable d'environnement.
+
+    Secret Manager n'accepte que ``[A-Za-z0-9_-]`` sur 255 caractères. On
+    minuscule et on remplace le reste par un tiret, ce qui rend l'identifiant
+    lisible dans la console : ``QONTO_API_KEY`` → ``zab-qonto-api-key``.
+    """
+    clean = re.sub(r"[^A-Za-z0-9]+", "-", name.strip()).strip("-").lower()
+    if not clean:
+        clean = "variable"
+    prefix = _secret_prefix()
+    if prefix and clean.startswith(prefix):
+        return clean[:255]
+    return f"{prefix}{clean}"[:255]
+
+
+def secret_reference_for_name(name: str, *, project: str | None = None) -> str:
+    proj = project if project is not None else secret_manager_project()
+    secret = secret_id_for_name(name)
+    return f"{REFERENCE_SCHEME}{proj}/{secret}" if proj else f"{REFERENCE_SCHEME}{secret}"
+
+
+def parse_secret_reference(reference: str) -> tuple[str, str] | None:
+    """``sm://projet/identifiant`` → ``(projet, identifiant)``. ``None`` si invalide.
+
+    Le projet est facultatif dans la référence : sans lui, celui de la
+    configuration s'applique. Une référence sans projet reste donc portable
+    entre deux environnements qui ne pointent pas le même.
+    """
+    m = _REFERENCE_RE.match(reference.strip())
+    if not m:
+        return None
+    return (m.group("project") or secret_manager_project(), m.group("secret"))
+
+
+def is_secret_reference(value: str) -> bool:
+    return bool(_REFERENCE_RE.match(value.strip()))
+
+
+def secret_console_url(project: str, secret_id: str) -> str:
+    if not project or not secret_id:
+        return "https://console.cloud.google.com/security/secret-manager"
+    return (
+        f"https://console.cloud.google.com/security/secret-manager/secret/{secret_id}"
+        f"/versions?project={project}"
+    )
+
+
+# ── interrogation du fournisseur ─────────────────────────────────────────────
+
+def _run_gcloud(args: list[str], *, timeout: float = _GCLOUD_TIMEOUT) -> tuple[bool, str, str]:
+    gcloud = _gcloud()
+    if not gcloud:
+        return False, "", "gcloud_absent"
+    try:
+        proc = subprocess.run(
+            [gcloud, *args], capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "", "timeout"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, "", _short_error(str(exc))
     if proc.returncode != 0:
-        text = proc.stderr.strip() or proc.stdout.strip()
+        return False, "", _short_error(proc.stderr or proc.stdout or "echec_gcloud")
+    return True, proc.stdout or "", ""
+
+
+def secret_inventory(*, project: str | None = None, timeout: float = _GCLOUD_TIMEOUT) -> dict[str, Any]:
+    """Liste les secrets du projet, sans jamais lire une seule valeur."""
+    proj = project if project is not None else secret_manager_project()
+    if not proj:
         return {
-            "available": False,
-            "status": "error",
-            "items": [],
-            "count": 0,
-            "status_detail": _short_text(text),
+            "available": False, "status": "project_not_configured", "count": 0,
+            "project": "", "items": [],
+            "status_detail": (
+                "Aucun projet GCP configuré : renseigner secret_manager.project dans "
+                "~/.config/zab/config.yaml ou $ZAB_SECRET_MANAGER_PROJECT."
+            ),
+        }
+    ok, out, err = _run_gcloud(
+        ["secrets", "list", "--project", proj, "--format", "json(name)"], timeout=timeout
+    )
+    if not ok:
+        status = "gcloud_missing" if err == "gcloud_absent" else "unavailable"
+        return {
+            "available": False, "status": status, "count": 0, "project": proj,
+            "items": [], "status_detail": err or None,
         }
     try:
-        data = json.loads(proc.stdout or "[]")
-    except Exception as exc:  # noqa: BLE001 - tolerate dcli output drift.
+        raw = json.loads(out or "[]")
+    except json.JSONDecodeError:
         return {
-            "available": False,
-            "status": "parse_error",
-            "items": [],
-            "count": 0,
-            "status_detail": _short_text(str(exc)),
+            "available": False, "status": "unreadable", "count": 0, "project": proj,
+            "items": [], "status_detail": "sortie gcloud illisible",
         }
-    if isinstance(data, list):
-        raw_items = data
-    elif isinstance(data, dict):
-        raw_items = data.get("items") or data.get("secrets") or []
-    else:
-        raw_items = []
-    items = [item for item in (_safe_dashlane_item(raw) for raw in raw_items) if item]
-    items.sort(key=lambda item: str(item.get("title") or "").casefold())
-    return {"available": True, "status": "ok", "items": items, "count": len(items)}
-
-
-def _dashlane_matches(name: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    normalized_desired = _normalize_secret_name(dashlane_title_for_name(name))
-    if not normalized_desired:
-        return []
-    matches: list[dict[str, Any]] = []
-    for item in items:
-        title = str(item.get("title") or "")
-        normalized_title = _normalize_secret_name(title)
-        if not normalized_title:
+    items: list[dict[str, Any]] = []
+    for entry in raw if isinstance(raw, list) else []:
+        full = str((entry or {}).get("name") or "")
+        secret_id = full.rsplit("/", 1)[-1] if full else ""
+        if not secret_id:
             continue
-        if normalized_title != normalized_desired:
-            continue
-        matches.append(
-            {
-                "id": item.get("id") or "",
-                "title": title,
-                "reference": item.get("reference") or "",
-                "web_url": item.get("web_url") or _dashlane_web_url_for_item_id(str(item.get("id") or "")),
-                "match": "exact",
-                "score": 1.0,
-            }
-        )
-    matches.sort(key=lambda item: (-float(item.get("score") or 0), str(item.get("title") or "").casefold()))
-    return matches[:3]
+        items.append({
+            "secret_id": secret_id,
+            "reference": f"{REFERENCE_SCHEME}{proj}/{secret_id}",
+            "console_url": secret_console_url(proj, secret_id),
+        })
+    items.sort(key=lambda i: i["secret_id"])
+    return {
+        "available": True, "status": "ready", "count": len(items),
+        "project": proj, "items": items, "status_detail": None,
+    }
 
 
-def _run_status(cmd: list[str]) -> tuple[bool, str | None]:
-    try:
-        proc = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, _short_text(str(exc))
-    text = proc.stdout.strip() or proc.stderr.strip()
-    return proc.returncode == 0, (_short_text(text) if text else None)
+def secret_write_available() -> bool:
+    """Vrai si `gcloud` est là et un projet configuré. La création est alors possible."""
+    return bool(_gcloud()) and bool(secret_manager_project())
 
 
 def secret_providers() -> list[dict[str, Any]]:
-    """Return configured providers for the UI provider rail."""
-    dcli = shutil.which("dcli")
-    dashlane_ok = False
-    dashlane_status: str | None = None
-    if dcli:
-        dashlane_ok, dashlane_status = _run_status([dcli, "status"])
-    dashlane_write_available = dashlane_secret_write_available()
+    """Rail des fournisseurs affiché par le dashboard."""
+    gcloud = _gcloud()
+    project = secret_manager_project()
+    inventory = secret_inventory(project=project) if (gcloud and project) else None
+
+    if not gcloud:
+        status, label = "missing_cli", "gcloud absent"
+    elif not project:
+        status, label = "not_configured", "Projet GCP non configuré"
+    elif inventory and inventory.get("available"):
+        status, label = "ready", f"Connecté — projet {project}"
+    else:
+        status, label = "login_required", "Accès refusé ou API désactivée"
 
     return [
         {
-            "id": DASHLANE_ID,
-            "label": "Dashlane",
-            "available": bool(dcli),
+            "id": PROVIDER_ID,
+            "label": PROVIDER_LABEL,
+            "available": bool(gcloud),
             "implemented": True,
             "enabled": True,
-            "cli": "dcli",
-            "cli_path": dcli,
-            "status": "ready" if dashlane_ok else ("login_required" if dcli else "missing_cli"),
-            "status_label": (
-                "CLI connecte" if dashlane_ok else ("Login requis" if dcli else "dcli absent")
-            ),
-            "status_detail": dashlane_status,
-            "login_command": "dcli sync",
-            "check_command": "dcli status",
+            "cli": "gcloud",
+            "cli_path": gcloud,
+            "project": project,
+            "status": status,
+            "status_label": label,
+            "status_detail": (inventory or {}).get("status_detail"),
+            "login_command": "gcloud auth login",
+            "check_command": f"gcloud secrets list --project {project}" if project else "gcloud config get-value project",
             "capabilities": [
-                "detect_dl_refs",
+                "detect_references",
                 "sync_plan",
-                "write_local_dl_refs",
-                "create_missing_secrets" if dashlane_write_available else "create_missing_secrets_requires_writer",
+                "write_local_references",
+                "create_missing_secrets" if secret_write_available() else "create_missing_secrets_requires_gcloud",
             ],
             "limitations": [
                 (
-                    "Le CLI Dashlane expose le coffre en lecture. Zab utilise le writer local quand il est disponible; "
-                    "sur macOS il cible Chrome deja connecte via AppleScript, sinon il bascule sur Playwright/CDP."
+                    "Zab n'écrit jamais la valeur d'un secret dans un fichier : le .env local "
+                    "reçoit une référence sm://, que l'application résout à l'exécution."
                 ),
             ],
-            "write_supported": dashlane_write_available,
-            "local_reference_write_supported": True,
-            "create_command_env": _DASHLANE_CREATE_COMMAND_ENV,
         },
-        {
-            "id": "dotenvx",
-            "label": "dotenvx",
-            "available": bool(shutil.which("dotenvx")),
-            "implemented": False,
-            "enabled": False,
-            "cli": "dotenvx",
-            "status": "planned",
-            "status_label": "Prevus",
-            "capabilities": ["planned"],
-            "limitations": ["Provider grise pour cette iteration."],
-            "write_supported": False,
-        },
-        {
-            "id": "op",
-            "label": "1Password",
-            "available": bool(shutil.which("op")),
-            "implemented": False,
-            "enabled": False,
-            "cli": "op",
-            "status": "planned",
-            "status_label": "Prevus",
-            "capabilities": ["planned"],
-            "limitations": ["Provider grise pour cette iteration."],
-            "write_supported": False,
-        },
-        {
-            "id": "sops",
-            "label": "SOPS",
-            "available": bool(shutil.which("sops")),
-            "implemented": False,
-            "enabled": False,
-            "cli": "sops",
-            "status": "planned",
-            "status_label": "Prevus",
-            "capabilities": ["planned"],
-            "limitations": ["Provider grise pour cette iteration."],
-            "write_supported": False,
-        },
+        {"id": "dotenvx", "label": "dotenvx", "available": False, "implemented": False, "enabled": False},
+        {"id": "op", "label": "1Password", "available": False, "implemented": False, "enabled": False},
+        {"id": "sops", "label": "SOPS", "available": False, "implemented": False, "enabled": False},
     ]
 
 
-def _source_lines(sources: list[dict[str, Any]]) -> list[str]:
-    out: list[str] = []
-    for source in sources:
-        if source.get("kind") == "file":
-            label = str(source.get("path_display") or source.get("path") or ".env")
-            key = str(source.get("key") or "")
-            line = source.get("line")
-            suffix = f" (l.{line})" if line else ""
-            out.append(f"- {label} -> {key}{suffix}")
-        elif source.get("kind") == "process":
-            keys = [str(k) for k in source.get("keys") or [] if k]
-            out.append(f"- Processus dashboard -> {', '.join(keys) if keys else 'variable presente'}")
-    return out or ["- Aucune source locale detectee"]
+# ── création d'un secret ─────────────────────────────────────────────────────
 
-
-def _dashlane_note_template(variable: dict[str, Any], *, reference: str | None = None) -> str:
-    name = str(variable.get("name") or "")
-    source_text = "\n".join(_source_lines(variable.get("sources") or []))
-    ref = reference or dashlane_reference_for_name(name)
-    return "\n".join(
-        [
-            "Zab Security sync",
-            f"Variable: {name}",
-            "Provider target: Dashlane Secret",
-            "",
-            "Local sources:",
-            source_text,
-            "",
-            "After creating the Dashlane Secret, replace the local .env value with:",
-            f"{name}={ref}",
-            "",
-            "Do not paste the secret value in this note.",
-        ]
-    )
-
-
-def create_dashlane_secret(
+def create_secret(
     variable: dict[str, Any],
     *,
     value: str,
-    timeout: float = 20.0,
+    project: str | None = None,
 ) -> dict[str, Any]:
-    """Create a missing Dashlane Secret through a configured writer command.
-
-    Dashlane's public ``dcli secret`` command is read-only. When a local writer
-    is configured, Zab sends the secret payload on stdin as JSON and then
-    verifies the created item by re-reading the redacted Dashlane inventory.
-    """
+    """Crée le secret et sa première version. Ne retourne aucune valeur en clair."""
     name = str(variable.get("name") or "").strip()
-    title = dashlane_title_for_name(name)
-    reference = dashlane_reference_for_name(name)
     if not name:
-        return {"ok": False, "status": "error", "reason": "variable_introuvable"}
-    secret_value = value.strip()
-    if not secret_value:
-        return {
-            "ok": False,
-            "status": "error",
-            "reason": "valeur_locale_introuvable",
-            "dashlane_title": title,
-            "dashlane_reference_value": reference,
-        }
-    if secret_value.startswith("dl://"):
-        return {
-            "ok": True,
-            "status": "exists",
-            "provider": DASHLANE_ID,
-            "dashlane_title": title,
-            "dashlane_reference_value": secret_value,
-            "dashlane_web_url": _dashlane_web_url_for_reference(secret_value, []),
-        }
+        return {"ok": False, "status": "failed", "reason": "nom_variable_absent"}
+    if not value:
+        return {"ok": False, "status": "failed", "reason": "valeur_vide"}
 
-    inventory = dashlane_secret_inventory()
-    items = [item for item in (_safe_dashlane_item(raw) for raw in inventory.get("items") or []) if item]
-    matches = _dashlane_matches(name, items)
-    if matches:
-        return _dashlane_create_success_from_match(matches[0], status="exists")
+    proj = project if project is not None else secret_manager_project()
+    if not proj:
+        return {"ok": False, "status": "failed", "reason": "projet_non_configure"}
+    gcloud = _gcloud()
+    if not gcloud:
+        return {"ok": False, "status": "failed", "reason": "gcloud_absent"}
 
-    command = _dashlane_create_command()
-    if not command:
-        return {
-            "ok": False,
-            "status": "unsupported",
-            "reason": "dashlane_secret_write_unavailable",
-            "dashlane_title": title,
-            "dashlane_reference_value": reference,
-            "dashlane_web_url": DASHLANE_WEB_SECRETS_URL,
-            "hint": f"Configure {_DASHLANE_CREATE_COMMAND_ENV}; dcli secret est lecture seule.",
-        }
-    if command[0].startswith("__invalid_"):
-        return {
-            "ok": False,
-            "status": "error",
-            "reason": "dashlane_secret_create_command_invalid",
-            "dashlane_title": title,
-            "dashlane_reference_value": reference,
-        }
+    secret_id = secret_id_for_name(name)
+    reference = f"{REFERENCE_SCHEME}{proj}/{secret_id}"
 
-    note = _dashlane_note_template(variable, reference=reference)
-    argv = _format_dashlane_create_command(command, name=name, title=title, reference=reference, note=note)
-    payload = json.dumps(
-        {
-            "provider": DASHLANE_ID,
-            "name": name,
-            "title": title,
-            "value": secret_value,
-            "note": note,
-        },
-        ensure_ascii=False,
+    exists, _, _ = _run_gcloud(["secrets", "describe", secret_id, "--project", proj])
+    args = (
+        ["secrets", "versions", "add", secret_id, "--project", proj, "--data-file=-"]
+        if exists
+        else ["secrets", "create", secret_id, "--project", proj,
+              "--replication-policy=automatic", "--data-file=-"]
     )
+    # La valeur passe par stdin : jamais par argv, où elle serait lisible dans
+    # la table des processus par n'importe quel utilisateur de la machine.
     try:
         proc = subprocess.run(
-            argv,
-            input=payload,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            [gcloud, *args], input=value, capture_output=True, text=True, timeout=_GCLOUD_TIMEOUT, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
-            "ok": False,
-            "status": "error",
-            "reason": "dashlane_secret_create_failed",
-            "dashlane_title": title,
-            "dashlane_reference_value": reference,
-            "error": _short_error(str(exc), secret_value),
-        }
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "status": "failed", "reason": _short_error(str(exc), value)}
     if proc.returncode != 0:
-        text = proc.stderr.strip() or proc.stdout.strip()
         return {
-            "ok": False,
-            "status": "error",
-            "reason": "dashlane_secret_create_failed",
-            "dashlane_title": title,
-            "dashlane_reference_value": reference,
-            "exit_code": proc.returncode,
-            "error": _short_error(text or "commande_echouee", secret_value),
+            "ok": False, "status": "failed",
+            "reason": _short_error(proc.stderr or proc.stdout or "echec_creation", value),
+            "secret_id": secret_id, "secret_reference": reference,
         }
-
-    dcli = shutil.which("dcli")
-    if dcli:
-        try:
-            subprocess.run([dcli, "sync"], check=False, capture_output=True, text=True, timeout=8)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
-    refreshed = dashlane_secret_inventory()
-    refreshed_items = [
-        item for item in (_safe_dashlane_item(raw) for raw in refreshed.get("items") or []) if item
-    ]
-    refreshed_matches = _dashlane_matches(name, refreshed_items)
-    if refreshed_matches:
-        return _dashlane_create_success_from_match(refreshed_matches[0], status="created")
-
-    returned_item: dict[str, Any] | None = None
-    if proc.stdout.strip():
-        try:
-            returned_item = _safe_dashlane_item(json.loads(proc.stdout))
-        except Exception:  # noqa: BLE001 - stdout is optional and not trusted.
-            returned_item = None
-    if returned_item and _normalize_secret_name(str(returned_item.get("title") or "")) == _normalize_secret_name(title):
-        return _dashlane_create_success_from_match(returned_item, status="created")
-
     return {
-        "ok": False,
-        "status": "error",
-        "reason": "dashlane_secret_create_not_verified",
-        "dashlane_title": title,
-        "dashlane_reference_value": reference,
-        "dashlane_web_url": DASHLANE_WEB_SECRETS_URL,
+        "ok": True,
+        "status": "version_added" if exists else "created",
+        "secret_id": secret_id,
+        "secret_reference": reference,
+        "console_url": secret_console_url(proj, secret_id),
     }
 
 
+def read_secret(reference: str, *, timeout: float = _GCLOUD_TIMEOUT) -> tuple[str | None, str]:
+    """Lit la valeur derrière une référence. Réservé aux chemins qui en ont besoin.
+
+    Retourne ``(valeur, "")`` ou ``(None, motif)``. Aucun appelant ne doit
+    reverser le résultat dans un payload d'API.
+    """
+    parsed = parse_secret_reference(reference)
+    if not parsed:
+        return None, "reference_invalide"
+    project, secret_id = parsed
+    if not project:
+        return None, "projet_non_configure"
+    ok, out, err = _run_gcloud(
+        ["secrets", "versions", "access", "latest", "--secret", secret_id, "--project", project],
+        timeout=timeout,
+    )
+    if not ok:
+        return None, err or "acces_refuse"
+    return out, ""
+
+
+# ── construction de l'état ───────────────────────────────────────────────────
+
 def _reference_hint(value: str) -> str:
-    v = value.strip()
-    if not v.startswith("dl://"):
+    parsed = parse_secret_reference(value)
+    if not parsed:
         return ""
-    if len(v) <= 18:
-        return v
-    return v[:12] + "..." + v[-6:]
+    project, secret_id = parsed
+    return f"{project}/{secret_id}" if project else secret_id
 
 
-def _path_display(path: Path) -> str:
-    home = Path.home()
-    try:
-        rel = path.resolve().relative_to(home)
-        return f"~/{rel.as_posix()}"
-    except (OSError, ValueError):
-        return str(path)
+def _note_template(variable: dict[str, Any], *, reference: str) -> str:
+    name = str(variable.get("name") or "")
+    sources = variable.get("sources") or []
+    lines = [f"Variable suivie par zab : {name}", f"Référence locale : {reference}"]
+    if sources:
+        lines.append("Fichiers qui la déclarent :")
+        for src in sources[:8]:
+            path = src.get("path") if isinstance(src, dict) else src
+            if path:
+                lines.append(f"  - {_path_display(Path(str(path)))}")
+    return "\n".join(lines)
 
 
 def build_secret_sync_payload(
@@ -572,16 +398,18 @@ def build_secret_sync_payload(
     raw_values_by_name: dict[str, str],
     *,
     generated_at_utc: str | None = None,
-    dashlane_inventory: dict[str, Any] | None = None,
+    inventory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build provider sync status for the tracked env variables.
+    """État de synchronisation des variables suivies.
 
-    ``raw_values_by_name`` is accepted only to detect provider references. Raw
-    values must not be copied into the returned payload.
+    ``raw_values_by_name`` sert uniquement à reconnaître une référence déjà
+    posée. Aucune valeur brute n'entre dans le retour.
     """
     generated = generated_at_utc or _now_iso()
-    inventory = dashlane_inventory if isinstance(dashlane_inventory, dict) else dashlane_secret_inventory()
-    dashlane_items = [item for item in (_safe_dashlane_item(raw) for raw in inventory.get("items") or []) if item]
+    inv = inventory if isinstance(inventory, dict) else secret_inventory()
+    project = str(inv.get("project") or "")
+    known = {str(item.get("secret_id")): item for item in inv.get("items") or []}
+
     rows: list[dict[str, Any]] = []
     counts = {"synced": 0, "pending": 0, "missing": 0, "total": 0}
 
@@ -589,63 +417,57 @@ def build_secret_sync_payload(
         name = str(variable.get("name") or "")
         present = bool(variable.get("present"))
         raw = str(raw_values_by_name.get(name) or "").strip()
-        is_dashlane_ref = raw.startswith("dl://")
-        if is_dashlane_ref:
+        referenced = is_secret_reference(raw)
+
+        if referenced:
             status = "synced"
-            counts["synced"] += 1
         elif present:
             status = "pending"
-            counts["pending"] += 1
         else:
             status = "missing"
-            counts["missing"] += 1
+        counts[status] += 1
         counts["total"] += 1
 
-        matches = _dashlane_matches(name, dashlane_items)
-        selected_match = matches[0] if matches else None
-        title = str((selected_match or {}).get("title") or dashlane_title_for_name(name))
-        reference = str((selected_match or {}).get("reference") or dashlane_reference_for_name(name))
-        web_url = (
-            _dashlane_web_url_for_reference(raw, dashlane_items)
-            if is_dashlane_ref
-            else str((selected_match or {}).get("web_url") or DASHLANE_WEB_SECRETS_URL)
-        )
-        row = {
+        parsed = parse_secret_reference(raw) if referenced else None
+        secret_id = parsed[1] if parsed else secret_id_for_name(name)
+        reference = raw if referenced else secret_reference_for_name(name, project=project)
+        in_provider = secret_id in known
+
+        rows.append({
             "name": name,
             "status": status,
-            "provider": DASHLANE_ID if is_dashlane_ref else None,
-            "recommended_provider": DASHLANE_ID if status == "pending" else None,
-            "dashlane_title": title,
-            "dashlane_reference_value": reference,
-            "dashlane_reference_template": f"{name}={reference}" if name else reference,
-            "dashlane_web_url": web_url,
-            "dashlane_match_status": "matched" if selected_match else "not_found",
-            "dashlane_matches": matches,
-            "reference_hint": _reference_hint(raw) if is_dashlane_ref else "",
-            "note_template": _dashlane_note_template(variable, reference=reference) if status == "pending" else "",
+            "provider": PROVIDER_ID if referenced else None,
+            "recommended_provider": PROVIDER_ID if status == "pending" else None,
+            "secret_id": secret_id,
+            "secret_reference": reference,
+            "secret_reference_template": f"{name}={reference}" if name else reference,
+            "console_url": secret_console_url(parsed[0] if parsed else project, secret_id),
+            "match_status": "matched" if in_provider else "not_found",
+            "reference_hint": _reference_hint(raw) if referenced else "",
+            "note_template": _note_template(variable, reference=reference) if status == "pending" else "",
             "source_count": len(variable.get("sources") or []),
-        }
-        rows.append(row)
+        })
 
-    status = "ok" if counts["pending"] == 0 else "needs_sync"
     return {
-        "provider": DASHLANE_ID,
-        "status": status,
+        "provider": PROVIDER_ID,
+        "status": "ok" if counts["pending"] == 0 else "needs_sync",
         "generated_at_utc": generated,
-        "write_supported": False,
-        "dashlane_inventory": {
-            "available": bool(inventory.get("available")),
-            "status": inventory.get("status") or "unknown",
-            "count": int(inventory.get("count") or 0),
-            "status_detail": inventory.get("status_detail"),
-            "items": dashlane_items,
+        "write_supported": secret_write_available(),
+        "project": project,
+        "inventory": {
+            "available": bool(inv.get("available")),
+            "status": inv.get("status") or "unknown",
+            "count": int(inv.get("count") or 0),
+            "project": project,
+            "status_detail": inv.get("status_detail"),
+            "items": list(inv.get("items") or []),
         },
         "counts": counts,
         "variables": rows,
         "manual_steps": [
-            "Lancer dcli sync si Dashlane n'est pas connecte.",
-            "Pour une sync complete, configurer le writer ZAB_DASHLANE_SECRET_CREATE_COMMAND si dcli ne sait pas creer de Secret.",
-            "La modale synchronise ensuite chaque variable une par une: creation du Secret manquant puis remplacement local par dl://.",
+            "Configurer secret_manager.project dans ~/.config/zab/config.yaml.",
+            "S'authentifier : gcloud auth login (le poste, ou l'identité attachée sur une VM).",
+            "La modale crée ensuite le secret manquant puis remplace la valeur locale par sa référence sm://.",
         ],
     }
 
@@ -661,21 +483,24 @@ def attach_secret_sync(
     return sync
 
 
-def dashlane_sync_check(sync_payload: dict[str, Any], *, apply: bool = False) -> dict[str, Any]:
+def secret_sync_check(sync_payload: dict[str, Any], *, apply: bool = False) -> dict[str, Any]:
     pending = int(sync_payload.get("counts", {}).get("pending") or 0)
-    write_available = dashlane_secret_write_available()
-    if apply and pending and not write_available:
+    can_write = secret_write_available()
+    if apply and pending and not can_write:
         status = "action_required"
-        message = "Creation Dashlane non cablee: configurez ZAB_DASHLANE_SECRET_CREATE_COMMAND pour creer les Secrets manquants."
+        message = (
+            "Création impossible : installer gcloud et renseigner secret_manager.project "
+            "dans ~/.config/zab/config.yaml."
+        )
     elif apply and pending:
         status = "needs_sync"
-        message = f"{pending} secret(s) seront crees puis references un par un par la modale."
+        message = f"{pending} secret(s) seront créés puis référencés un par un."
     elif pending:
         status = "needs_sync"
-        message = f"{pending} secret(s) a synchroniser vers Dashlane."
+        message = f"{pending} secret(s) à synchroniser vers {PROVIDER_LABEL}."
     else:
         status = "ok"
-        message = "Aucune variable locale en attente de synchronisation Dashlane."
+        message = "Aucune variable locale en attente de synchronisation."
     return {
         **sync_payload,
         "status": status,
@@ -685,64 +510,48 @@ def dashlane_sync_check(sync_payload: dict[str, Any], *, apply: bool = False) ->
     }
 
 
-def copy_to_clipboard(value: str) -> tuple[bool, str | None]:
-    """Copy a secret value to the OS clipboard without returning it."""
-    if not value:
-        return False, "valeur_vide"
-    pbcopy = shutil.which("pbcopy")
-    if not pbcopy:
-        return False, "clipboard_indisponible"
-    try:
-        proc = subprocess.run(
-            [pbcopy],
-            input=value,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=3,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, _short_text(str(exc), limit=120)
-    if proc.returncode != 0:
-        return False, _short_text(proc.stderr or proc.stdout or "clipboard_error", limit=120)
-    return True, None
-
+# ── écriture de la référence dans les .env locaux ────────────────────────────
 
 def _dotenv_line_parts(raw_line: str) -> tuple[str, str]:
-    if raw_line.endswith("\r\n"):
-        return raw_line[:-2], "\r\n"
-    if raw_line.endswith("\n"):
-        return raw_line[:-1], "\n"
-    return raw_line, ""
+    stripped = raw_line.rstrip("\n")
+    newline = raw_line[len(stripped):]
+    return stripped, newline
 
 
 def _replace_dotenv_key(text: str, key: str, reference: str) -> tuple[str, bool]:
-    pattern = re.compile(rf"^(\s*(?:export\s+)?{re.escape(key)}\s*=\s*).*$")
+    lines = text.splitlines(keepends=True)
     changed = False
-    out: list[str] = []
-    for raw_line in text.splitlines(keepends=True):
-        body, eol = _dotenv_line_parts(raw_line)
-        match = pattern.match(body)
-        if match:
-            out.append(f"{match.group(1)}{reference}{eol}")
-            changed = True
-        else:
-            out.append(raw_line)
-    return "".join(out), changed
+    for index, raw_line in enumerate(lines):
+        stripped, newline = _dotenv_line_parts(raw_line)
+        bare = stripped.strip()
+        if bare.startswith("#") or "=" not in bare:
+            continue
+        candidate = bare.split("=", 1)[0].strip()
+        if candidate.startswith("export "):
+            candidate = candidate[len("export "):].strip()
+        if candidate != key:
+            continue
+        prefix = "export " if bare.startswith("export ") else ""
+        lines[index] = f"{prefix}{key}={reference}{newline or ''}"
+        changed = True
+    return "".join(lines), changed
 
 
-def apply_dashlane_reference(
+def apply_secret_reference(
     variables: list[dict[str, Any]],
     *,
     name: str,
     reference: str | None = None,
     allowed_paths: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Replace raw local .env values with Dashlane references.
+    """Remplace la valeur en clair d'un .env par sa référence ``sm://``.
 
-    This intentionally does not return or log the old value. Dashlane's CLI is
-    read-only for vault mutations, so Zab only persists dl:// references to
-    secrets that live in Dashlane.
+    Ne retourne ni ne journalise jamais l'ancienne valeur. Trois garde-fous sont
+    conservés du fournisseur précédent, et méritent de l'être : le périmètre de
+    chemins autorisés, le refus d'écrire ailleurs que dans un fichier nommé
+    ``.env``, et l'écriture atomique par fichier temporaire puis ``replace`` —
+    une interruption au mauvais moment laisserait sinon un ``.env`` tronqué,
+    c'est-à-dire une application qui ne démarre plus.
     """
     clean_name = name.strip()
     row = next((v for v in variables if str(v.get("name") or "") == clean_name), None)
@@ -754,10 +563,9 @@ def apply_dashlane_reference(
     if sync.get("status") == "synced":
         return {"name": clean_name, "status": "skipped", "reason": "deja_synced"}
 
-    try:
-        ref = _validate_dashlane_reference(reference or dashlane_reference_for_name(clean_name))
-    except ValueError as exc:
-        return {"name": clean_name, "status": "error", "reason": str(exc)}
+    ref = (reference or secret_reference_for_name(clean_name)).strip()
+    if not is_secret_reference(ref):
+        return {"name": clean_name, "status": "error", "reason": "reference_invalide"}
 
     file_sources: list[dict[str, Any]] = [
         source
@@ -810,7 +618,7 @@ def apply_dashlane_reference(
         if not changed_keys or updated == original:
             continue
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        tmp_path = path.with_name(f".env.zab-dashlane-tmp-{ts}")
+        tmp_path = path.with_name(f".env.zab-secret-tmp-{ts}")
         try:
             st = path.stat()
             tmp_path.write_text(updated, encoding="utf-8")
@@ -835,7 +643,7 @@ def apply_dashlane_reference(
                 "path": str(path),
                 "path_display": _path_display(path),
                 "keys": changed_keys,
-                "storage": "dashlane_reference",
+                "storage": "secret_manager_reference",
             }
         )
 
@@ -850,8 +658,36 @@ def apply_dashlane_reference(
     return {
         "name": clean_name,
         "status": "synced",
-        "provider": DASHLANE_ID,
+        "provider": PROVIDER_ID,
         "reference_hint": _reference_hint(ref),
         "changed_files": changed_files,
         "skipped_sources": skipped_sources,
     }
+
+
+# ── presse-papiers ───────────────────────────────────────────────────────────
+
+def copy_to_clipboard(value: str) -> tuple[bool, str | None]:
+    """Copie une valeur dans le presse-papiers sans jamais la retourner."""
+    if not value:
+        return False, "valeur_vide"
+    # macOS d'abord, puis Wayland et X11 : le dashboard tourne aussi bien sur le
+    # poste que sur une machine distante avec un serveur graphique.
+    candidates: list[list[str]] = []
+    for binary, args in (("pbcopy", []), ("wl-copy", []), ("xclip", ["-selection", "clipboard"]), ("xsel", ["--clipboard", "--input"])):
+        found = shutil.which(binary)
+        if found:
+            candidates.append([found, *args])
+    if not candidates:
+        return False, "clipboard_indisponible"
+    last: str | None = None
+    for cmd in candidates:
+        try:
+            proc = subprocess.run(cmd, input=value, text=True, capture_output=True, timeout=5, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            last = _short_error(str(exc), value)
+            continue
+        if proc.returncode == 0:
+            return True, None
+        last = _short_error(proc.stderr or "echec_copie", value)
+    return False, last or "echec_copie"
