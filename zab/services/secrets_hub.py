@@ -152,11 +152,19 @@ def provenance_de(path: Path) -> dict[str, str]:
         org = projet[: -len("-cowork")]
         if len(dossiers) > 1:
             projet = dossiers[1]
+    # Un projet peut porter plusieurs `.env` — `projet/.env` et
+    # `projet/backend/.env` — avec des valeurs différentes sous le même nom.
+    # Sans ce niveau, les deux visent le même identifiant et le second écrase
+    # le premier : la valeur n'est pas perdue (elle reste en version 1) mais
+    # plus rien ne dit laquelle vient d'où.
+    debut = 2 if (org and len(dossiers) > 1) else 1
+    portee = "-".join(dossiers[debut:])
+
     try:
         affiche = str(resolu.relative_to(Path.home()))
     except ValueError:
         affiche = str(resolu)
-    return {"org": org, "project": projet, "path": affiche}
+    return {"org": org, "project": projet, "scope": portee, "path": affiche}
 
 
 def scan_tracked_values(
@@ -542,7 +550,9 @@ def mirror_projects_to_provider(
             # compris — sinon deux conventions de nommage cohabitent dans le
             # même projet GCP et on ne sait plus laquelle chercher.
             secret_id = provider.secret_id_for_name(
-                "-".join(x for x in (marques["org"], marques["project"], nom) if x)
+                "-".join(
+                    x for x in (marques["org"], marques["project"], marques.get("scope"), nom) if x
+                )
             )
             entree = {
                 "name": nom, "secret_id": secret_id,
@@ -565,6 +575,7 @@ def mirror_projects_to_provider(
                 {"name": nom}, value=valeur, project=project, secret_id=secret_id,
                 labels={
                     "zab-org": marques["org"], "zab-project": marques["project"],
+                    "zab-scope": marques.get("scope", ""),
                     "zab-collected": horodatage[:10], "zab-kind": "project-env",
                 },
                 annotations={

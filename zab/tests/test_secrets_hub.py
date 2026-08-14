@@ -406,3 +406,31 @@ def test_le_miroir_projet_nomme_par_projet_et_ne_confond_pas_deux_memes_cles(mon
         ("zab-acme-api-secret-key", "valeur-api"),
         ("zab-acme-portail-secret-key", "valeur-portail"),
     ]
+
+
+def test_deux_env_du_meme_projet_ne_se_recouvrent_pas(monkeypatch, tmp_path):
+    from zab.services import secrets_hub, security_secret_sync
+
+    root, _cfg = _setup(monkeypatch, tmp_path, tracked=[])
+    _tracked_only(monkeypatch, [])
+    projet = root / "acme-cowork" / "api"
+    (projet / "backend").mkdir(parents=True)
+    (projet / ".env").write_text("DB_PASSWORD=racine\n", encoding="utf-8")
+    (projet / "backend" / ".env").write_text("DB_PASSWORD=backend\n", encoding="utf-8")
+
+    recus: list[tuple[str, str]] = []
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
+    monkeypatch.setattr(
+        security_secret_sync, "create_secret",
+        lambda variable, *, value, project=None, secret_id=None, labels=None, annotations=None: (
+            recus.append((secret_id, value)),
+            {"ok": True, "status": "created", "secret_id": secret_id},
+        )[1],
+    )
+    secrets_hub.mirror_projects_to_provider(apply=True)
+
+    # Le sous-chemin distingue les deux : sans lui, le second écrasait le premier.
+    assert sorted(recus) == [
+        ("zab-acme-api-backend-db-password", "backend"),
+        ("zab-acme-api-db-password", "racine"),
+    ]
