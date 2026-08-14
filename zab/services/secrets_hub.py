@@ -356,12 +356,20 @@ def mirror_to_provider(
     )
     project = provider.secret_manager_project()
     provenances = _charger_provenances()
+    # Les clés agrégées depuis un projet versionné ne repartent pas au miroir :
+    # elles y arriveraient par la porte de derrière, alors qu'elles en sont
+    # exclues par principe. La fiche de provenance les distingue — elle seule
+    # porte le nom d'origine de la variable.
+    agregees = {k for k, v in provenances.items() if isinstance(v, dict) and v.get("var")}
     resultats: list[dict[str, Any]] = []
 
     for name in tracked:
         brute = valeurs.get(name)
         valeur = str(brute).strip() if brute is not None else ""
         if not valeur:
+            continue
+        if names is None and name in agregees:
+            resultats.append({"name": name, "status": "exclu_projet_versionne"})
             continue
         secret_id = _secret_id_for(name)
         entree = {"name": name, "secret_id": secret_id, "status": "would_mirror"}
@@ -527,12 +535,14 @@ def mirror_projects_to_provider(
     }
     resultats: list[dict[str, Any]] = []
     ecartes: list[dict[str, Any]] = []
+    versionnes: list[dict[str, Any]] = []
     horodatage = _maintenant()
 
     for fichier in _env_files():
         if str(fichier) == str(hub):
             continue
         marques = provenance_de(fichier)
+        versionne = est_projet_versionne(fichier)
         try:
             valeurs = dotenv_values(fichier)
         except OSError:
@@ -545,6 +555,12 @@ def mirror_projects_to_provider(
                 continue
             if sensitive_only and not ressemble_a_un_secret(nom):
                 ecartes.append({"name": nom, "org": marques["org"], "project": marques["project"]})
+                continue
+            if versionne:
+                # Un projet git a son propre cycle de vie et ses propres
+                # secrets d'exécution ; les dupliquer dans le miroir crée deux
+                # sources qui divergeront. Ils sont agrégés dans le collecteur.
+                versionnes.append({"name": nom, "org": marques["org"], "project": marques["project"]})
                 continue
             # Même normalisation que pour un secret du collecteur — préfixe
             # compris — sinon deux conventions de nommage cohabitent dans le
@@ -592,6 +608,7 @@ def mirror_projects_to_provider(
     return {
         "project": project, "applied": apply,
         "results": resultats, "skipped": ecartes,
+        "versioned_projects": versionnes,
         "sensitive_only": sensitive_only,
     }
 
@@ -633,3 +650,103 @@ def ressemble_a_un_secret(nom: str) -> bool:
     et affiché — un filtre silencieux ferait croire à une couverture complète.
     """
     return bool(_motif_sensible().search(nom))
+
+
+def est_projet_versionne(fichier: Path) -> bool:
+    """Le ``.env`` appartient-il à un projet suivi par git ?
+
+    Deux preuves, et pas d'heuristique de nom : un ``.git``, ou un
+    ``.github/workflows`` non vide — de l'intégration continue n'existe que dans
+    un dépôt versionné.
+
+    Le premier signe manque souvent ici : Mutagen exclut ``.git``, donc un
+    projet parfaitement versionné sur l'autre machine paraît nu sur celle-ci.
+    C'est pourquoi le second compte autant.
+    """
+    for dossier in [fichier.parent, *fichier.parent.parents]:
+        if str(dossier) == str(Path.home()):
+            break
+        if (dossier / ".git").exists():
+            return True
+        flux = dossier / ".github" / "workflows"
+        try:
+            if flux.is_dir() and any(flux.iterdir()):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def cle_agregee(marques: dict[str, str], nom: str) -> str:
+    """Nom sous lequel un secret de projet versionné entre dans le collecteur.
+
+    Préfixé par l'organisation, le projet et le sous-chemin : le collecteur est
+    plat, et douze noms portent des valeurs différentes selon le projet. Sans
+    préfixe, en agréger deux en garderait un seul.
+
+    Le nom change donc, et c'est voulu : pour ces valeurs le collecteur est un
+    inventaire de secours, pas ce que l'application lit — elle lit son propre
+    ``.env``, qui n'est pas touché.
+    """
+    import re
+
+    morceaux = [marques.get("org", ""), marques.get("project", ""), marques.get("scope", ""), nom]
+    brut = "_".join(x for x in morceaux if x)
+    return re.sub(r"[^A-Za-z0-9]+", "_", brut).strip("_").upper()
+
+
+def collect_projects_to_user_dotenv(
+    *,
+    apply: bool = False,
+    sensitive_only: bool = True,
+) -> dict[str, Any]:
+    """Agrège dans le collecteur les secrets des projets versionnés.
+
+    Ceux-là ne vont pas au miroir : un dépôt git a son propre cycle de vie, et
+    les dupliquer côté fournisseur créerait deux sources qui divergeraient.
+    """
+    cible = user_dotenv_path()
+    existantes = dotenv_values(cible) if cible.is_file() else {}
+    presentes = {k for k, v in existantes.items() if v is not None and str(v).strip()}
+
+    a_ecrire: dict[str, str] = {}
+    resultats: list[dict[str, Any]] = []
+    for fichier in _env_files():
+        if str(fichier) == str(cible) or not est_projet_versionne(fichier):
+            continue
+        marques = provenance_de(fichier)
+        try:
+            valeurs = dotenv_values(fichier)
+        except OSError:
+            continue
+        for nom, brute in (valeurs or {}).items():
+            valeur = str(brute).strip() if brute is not None else ""
+            if not valeur or (sensitive_only and not ressemble_a_un_secret(nom)):
+                continue
+            cle = cle_agregee(marques, nom)
+            if cle in presentes and str(existantes.get(cle) or "").strip() == valeur:
+                resultats.append({"key": cle, "status": "deja_a_jour", "source": marques["path"]})
+                continue
+            a_ecrire[cle] = valeur
+            resultats.append({
+                "key": cle, "name": nom, "status": "would_aggregate" if not apply else "aggregated",
+                "source": marques["path"],
+            })
+
+    if apply and a_ecrire:
+        _upsert_dotenv(
+            cible, a_ecrire,
+            entete="# Agrégées depuis les projets versionnés (zab secrets collect --projects).",
+        )
+        provenances = _charger_provenances()
+        for fichier in _env_files():
+            if str(fichier) == str(cible) or not est_projet_versionne(fichier):
+                continue
+            marques = provenance_de(fichier)
+            for nom in (dotenv_values(fichier) or {}):
+                cle = cle_agregee(marques, nom)
+                if cle in a_ecrire:
+                    provenances[cle] = {**marques, "collected": _aujourdhui(), "var": nom}
+        _ecrire_provenances(provenances)
+
+    return {"path": str(cible), "applied": apply, "results": resultats}

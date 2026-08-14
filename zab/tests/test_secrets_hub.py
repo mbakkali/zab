@@ -434,3 +434,83 @@ def test_deux_env_du_meme_projet_ne_se_recouvrent_pas(monkeypatch, tmp_path):
         ("zab-acme-api-backend-db-password", "backend"),
         ("zab-acme-api-db-password", "racine"),
     ]
+
+
+def test_un_projet_versionne_est_reconnu_sans_git_local(monkeypatch, tmp_path):
+    from zab.services import secrets_hub
+
+    root, _cfg = _setup(monkeypatch, tmp_path, tracked=[])
+    # Mutagen exclut .git : un projet versionné peut n'avoir que sa CI ici.
+    avec_ci = root / "acme-cowork" / "appli"
+    (avec_ci / ".github" / "workflows").mkdir(parents=True)
+    (avec_ci / ".github" / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    (avec_ci / ".env").write_text("API_KEY=k\n", encoding="utf-8")
+
+    sans = root / "acme-cowork" / "notes"
+    sans.mkdir(parents=True)
+    (sans / ".env").write_text("API_KEY=k\n", encoding="utf-8")
+
+    assert secrets_hub.est_projet_versionne(avec_ci / ".env") is True
+    assert secrets_hub.est_projet_versionne(sans / ".env") is False
+
+
+def test_les_projets_versionnes_sont_agreges_et_pas_mis_au_miroir(monkeypatch, tmp_path):
+    from zab.services import secrets_hub, security_secret_sync
+
+    root, cfg_dir = _setup(monkeypatch, tmp_path, tracked=[])
+    _tracked_only(monkeypatch, [])
+    versionne = root / "acme-cowork" / "appli"
+    (versionne / ".github" / "workflows").mkdir(parents=True)
+    (versionne / ".github" / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    (versionne / ".env").write_text("DB_PASSWORD=du-depot\n", encoding="utf-8")
+    libre = root / "acme-cowork" / "notes"
+    libre.mkdir(parents=True)
+    (libre / ".env").write_text("DB_PASSWORD=du-cowork\n", encoding="utf-8")
+
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
+    envoyes: list[str] = []
+    monkeypatch.setattr(
+        security_secret_sync, "create_secret",
+        lambda variable, *, value, project=None, secret_id=None, labels=None, annotations=None: (
+            envoyes.append(value), {"ok": True, "status": "created", "secret_id": secret_id})[1],
+    )
+
+    miroir = secrets_hub.mirror_projects_to_provider(apply=True)
+    assert envoyes == ["du-cowork"]                       # seul le cowork part au miroir
+    assert [v["project"] for v in miroir["versioned_projects"]] == ["appli"]
+
+    secrets_hub.collect_projects_to_user_dotenv(apply=True)
+    hub = (cfg_dir / ".env").read_text(encoding="utf-8")
+    # Le nom est préfixé : sans cela, les deux DB_PASSWORD s'écraseraient.
+    assert "ACME_APPLI_DB_PASSWORD=du-depot" in hub
+    assert "du-cowork" not in hub
+    # Le .env du projet n'est pas touché.
+    assert (versionne / ".env").read_text(encoding="utf-8") == "DB_PASSWORD=du-depot\n"
+
+
+def test_une_cle_agregee_ne_repart_pas_au_miroir(monkeypatch, tmp_path):
+    from zab.services import secrets_hub, security_secret_sync
+
+    root, cfg_dir = _setup(monkeypatch, tmp_path, tracked=[])
+    _tracked_only(monkeypatch, [])
+    versionne = root / "acme-cowork" / "appli"
+    (versionne / ".github" / "workflows").mkdir(parents=True)
+    (versionne / ".github" / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    (versionne / ".env").write_text("DB_PASSWORD=du-depot\n", encoding="utf-8")
+    (cfg_dir / ".env").write_text("PROPRE_AU_HUB=valeur\n", encoding="utf-8")
+
+    secrets_hub.collect_projects_to_user_dotenv(apply=True)
+
+    envoyes: list[str] = []
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
+    monkeypatch.setattr(
+        security_secret_sync, "create_secret",
+        lambda variable, *, value, project=None, secret_id=None, labels=None, annotations=None: (
+            envoyes.append(variable["name"]), {"ok": True, "status": "created", "secret_id": "x"})[1],
+    )
+    resume = secrets_hub.mirror_to_provider(apply=True)
+
+    # La clé agrégée est dans le collecteur mais ne doit pas atteindre GCP.
+    assert envoyes == ["PROPRE_AU_HUB"]
+    exclus = [r["name"] for r in resume["results"] if r["status"] == "exclu_projet_versionne"]
+    assert exclus == ["ACME_APPLI_DB_PASSWORD"]

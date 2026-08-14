@@ -77,6 +77,25 @@ By default it keeps only names that announce a secret — `KEY`, `TOKEN`,
 the same to store as a password. Override the pattern with
 `secret_manager.sensitive_name_pattern`, or take everything with `--all`.
 
+A `.env` inside a version-controlled project is left out of the mirror
+entirely and aggregated into the hub instead: a git repository has its own
+lifecycle, and duplicating its secrets into the provider creates two sources
+that will drift. Detection takes two forms of proof — a `.git`, or a non-empty
+`.github/workflows`, since CI only exists in a versioned repository. The second
+matters because Mutagen excludes `.git`, so a perfectly versioned project can
+look bare on a mirrored machine.
+
+```bash
+zab secrets collect --projects --apply
+```
+
+Aggregated keys are prefixed (`<ORG>_<PROJECT>_<SCOPE>_<KEY>`) because the hub
+is flat and would otherwise merge two projects' `DB_PASSWORD` into one. The name
+therefore changes, deliberately: for these values the hub is an inventory, not
+what the application reads — it reads its own `.env`, which is never modified.
+They are also excluded from `mirror`, so they cannot reach the provider through
+the hub's back door.
+
 The filter reads the name, not the value, so a secret called `ARCHIVE_PATH`
 escapes it. What it skips is therefore counted and listed rather than dropped
 in silence: a quiet filter reads as full coverage when it is not.

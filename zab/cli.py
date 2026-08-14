@@ -2996,10 +2996,27 @@ def secrets_status_cmd(
 @secrets_app.command("collect")
 def secrets_collect_cmd(
     force: bool = typer.Option(False, "--force", "-f", help="Écrase une clé déjà renseignée"),
+    projects: bool = typer.Option(
+        False, "--projects",
+        help="Agréger aussi les secrets des projets versionnés, sous un nom préfixé",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Écrit réellement le fichier"),
 ) -> None:
     """Fusionne les valeurs des .env projets dans ~/.config/zab/.env."""
     from zab.services import secrets_hub
+
+    if projects:
+        agr = secrets_hub.collect_projects_to_user_dotenv(apply=apply)
+        neufs = [r for r in agr["results"] if r["status"] != "deja_a_jour"]
+        typer.echo(typer.style("Agrégation des projets versionnés", bold=True))
+        typer.echo(f"  {len(neufs)} secret(s) à agréger · {len(agr['results']) - len(neufs)} déjà à jour")
+        for r in neufs[:8]:
+            typer.echo(typer.style(f"    {r['key']}", dim=True))
+        if len(neufs) > 8:
+            typer.echo(typer.style(f"    … et {len(neufs) - 8} autre(s)", dim=True))
+        if not apply:
+            typer.echo(typer.style("  Simulation — ajouter --apply pour écrire.", dim=True))
+        typer.echo("")
 
     summary = secrets_hub.collect_to_user_dotenv(force=force, apply=apply)
     typer.echo(typer.style("Collecte vers ~/.config/zab/.env", bold=True))
