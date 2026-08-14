@@ -296,13 +296,32 @@ def secret_providers() -> list[dict[str, Any]]:
 
 # ── création d'un secret ─────────────────────────────────────────────────────
 
+def sanitize_label(value: str, *, limite: int = 63) -> str:
+    """Ramène une valeur au jeu de caractères des étiquettes GCP.
+
+    Une étiquette n'accepte que ``[a-z0-9_-]`` sur 63 caractères. Un nom de
+    projet comme ``Projet_Agile`` passe donc en ``projet_agile`` ; un chemin,
+    lui, ne peut pas devenir une étiquette et va en annotation, qui accepte les
+    barres obliques et 512 octets.
+    """
+    propre = re.sub(r"[^a-z0-9_-]+", "-", value.strip().lower()).strip("-_")
+    return propre[:limite]
+
+
 def create_secret(
     variable: dict[str, Any],
     *,
     value: str,
     project: str | None = None,
+    labels: dict[str, str] | None = None,
+    annotations: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Crée le secret et sa première version. Ne retourne aucune valeur en clair."""
+    """Crée le secret et sa première version. Ne retourne aucune valeur en clair.
+
+    ``labels`` et ``annotations`` ne s'appliquent qu'à la création : sur un
+    secret existant, on ajoute une version sans toucher à son étiquetage, qui
+    peut avoir été ajusté à la main.
+    """
     name = str(variable.get("name") or "").strip()
     if not name:
         return {"ok": False, "status": "failed", "reason": "nom_variable_absent"}
@@ -320,12 +339,17 @@ def create_secret(
     reference = f"{REFERENCE_SCHEME}{proj}/{secret_id}"
 
     exists, _, _ = _run_gcloud(["secrets", "describe", secret_id, "--project", proj])
-    args = (
-        ["secrets", "versions", "add", secret_id, "--project", proj, "--data-file=-"]
-        if exists
-        else ["secrets", "create", secret_id, "--project", proj,
-              "--replication-policy=automatic", "--data-file=-"]
-    )
+    if exists:
+        args = ["secrets", "versions", "add", secret_id, "--project", proj, "--data-file=-"]
+    else:
+        args = ["secrets", "create", secret_id, "--project", proj,
+                "--replication-policy=automatic", "--data-file=-"]
+        etiquettes = {sanitize_label(k): sanitize_label(v) for k, v in (labels or {}).items() if v}
+        if etiquettes:
+            args.append("--labels=" + ",".join(f"{k}={v}" for k, v in sorted(etiquettes.items())))
+        notes = {sanitize_label(k): str(v)[:512] for k, v in (annotations or {}).items() if v}
+        if notes:
+            args.append("--set-annotations=" + ",".join(f"{k}={v}" for k, v in sorted(notes.items())))
     # La valeur passe par stdin : jamais par argv, où elle serait lisible dans
     # la table des processus par n'importe quel utilisateur de la machine.
     try:

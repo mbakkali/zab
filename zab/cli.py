@@ -3020,10 +3020,30 @@ def secrets_collect_cmd(
 @secrets_app.command("mirror")
 def secrets_mirror_cmd(
     name: list[str] = typer.Option(None, "--name", "-n", help="Limiter à ces variables"),
+    projects: bool = typer.Option(
+        False, "--projects",
+        help="Sauvegarder aussi chaque .env projet, sous un identifiant nommé par projet",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Écrit réellement dans Secret Manager"),
 ) -> None:
     """Recopie le collecteur vers Secret Manager. Ne touche à aucun fichier local."""
     from zab.services import secrets_hub
+
+    if projects:
+        par_projet = secrets_hub.mirror_projects_to_provider(apply=apply)
+        typer.echo(typer.style("Sauvegarde des .env projets", bold=True))
+        compte: dict[str, int] = {}
+        for row in par_projet["results"]:
+            cle = f"{row['org'] or '—'}/{row['project']}"
+            compte[cle] = compte.get(cle, 0) + 1
+            if row["status"] == "error":
+                typer.echo(typer.style(f"  {row['secret_id']} — {row.get('reason')}", fg=typer.colors.RED))
+        for cle, n in sorted(compte.items()):
+            typer.echo(f"  {cle:<48} {n:3d}")
+        typer.echo(f"  total : {len(par_projet['results'])} secret(s)")
+        if not apply:
+            typer.echo(typer.style("  Simulation — ajouter --apply pour écrire.", dim=True))
+        typer.echo("")
 
     resume = secrets_hub.mirror_to_provider(tuple(name) if name else None, apply=apply)
     typer.echo(typer.style("Miroir du collecteur vers Secret Manager", bold=True))

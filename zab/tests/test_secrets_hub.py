@@ -123,7 +123,7 @@ def test_mirror_ne_touche_jamais_au_fichier_local(monkeypatch, tmp_path):
 
     envoye: dict[str, str] = {}
 
-    def _fake_create(variable, *, value, project=None):
+    def _fake_create(variable, *, value, project=None, **_extra):
         envoye["name"] = variable["name"]
         envoye["value"] = value
         return {"ok": True, "status": "created", "secret_id": "zab-qonto-api-key"}
@@ -267,7 +267,7 @@ def test_mirror_couvre_tout_le_collecteur_pas_seulement_le_catalogue(monkeypatch
     monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
     monkeypatch.setattr(
         security_secret_sync, "create_secret",
-        lambda variable, *, value, project=None: (
+        lambda variable, *, value, project=None, **_extra: (
             vus.append(variable["name"]),
             {"ok": True, "status": "created", "secret_id": "x"},
         )[1],
@@ -275,3 +275,61 @@ def test_mirror_couvre_tout_le_collecteur_pas_seulement_le_catalogue(monkeypatch
 
     secrets_hub.mirror_to_provider(apply=True)
     assert sorted(vus) == ["HORS_CATALOGUE", "SUIVIE"]
+
+
+def test_provenance_deduite_du_chemin(monkeypatch, tmp_path):
+    from zab.services import secrets_hub
+
+    root, _ = _setup(monkeypatch, tmp_path, tracked=[])
+    cas = [
+        ("agileimmo-cowork/Projet_Agile/backend/.env", "agileimmo", "Projet_Agile"),
+        ("flowmetrik-cowork/.env", "flowmetrik", "flowmetrik-cowork"),
+        ("ipmvp/app/.env", "", "ipmvp"),
+    ]
+    for relatif, org, projet in cas:
+        chemin = root / relatif
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_text("", encoding="utf-8")
+        pr = secrets_hub.provenance_de(chemin)
+        assert (pr["org"], pr["project"]) == (org, projet), relatif
+        assert pr["path"].endswith(relatif)
+
+
+def test_le_miroir_etiquette_avec_la_provenance(monkeypatch, tmp_path):
+    from zab.services import secrets_hub, security_secret_sync
+
+    names = ["UNE_CLE"]
+    root, cfg_dir = _setup(monkeypatch, tmp_path, tracked=names)
+    _tracked_only(monkeypatch, names)
+    projet = root / "acme-cowork" / "portail"
+    projet.mkdir(parents=True)
+    (projet / ".env").write_text("UNE_CLE=valeur\n", encoding="utf-8")
+
+    secrets_hub.collect_to_user_dotenv(apply=True)
+    assert secrets_hub.provenance_path().is_file()
+
+    recu: dict = {}
+    monkeypatch.setattr(security_secret_sync, "read_secret", lambda ref, **_: (None, "absent"))
+    monkeypatch.setattr(
+        security_secret_sync, "create_secret",
+        lambda variable, *, value, project=None, labels=None, annotations=None: (
+            recu.update(labels=labels, annotations=annotations),
+            {"ok": True, "status": "created", "secret_id": "x"},
+        )[1],
+    )
+    secrets_hub.mirror_to_provider(apply=True)
+
+    assert recu["labels"]["zab-org"] == "acme"
+    assert recu["labels"]["zab-project"] == "portail"
+    assert len(recu["labels"]["zab-collected"]) == 10          # AAAA-MM-JJ
+    assert recu["annotations"]["zab-source"].endswith("acme-cowork/portail/.env")
+    assert recu["annotations"]["zab-mirrored-at"].endswith("Z")
+
+
+def test_les_etiquettes_respectent_le_jeu_de_caracteres_gcp():
+    from zab.services.security_secret_sync import sanitize_label
+
+    assert sanitize_label("Projet_Agile") == "projet_agile"
+    assert sanitize_label("suivi réglementaire") == "suivi-r-glementaire"
+    assert sanitize_label("--bords--") == "bords"
+    assert len(sanitize_label("x" * 200)) == 63

@@ -43,50 +43,120 @@ def _quote_dotenv_value(val: str) -> str:
     return v
 
 
-def _env_files() -> list[Path]:
-    """``.env`` des racines de projets, sur trois niveaux, plus celui du dépôt skills.
+#: Dossiers qu'on ne traverse jamais : dépendances, caches, artefacts. Sans
+#: cette liste, un seul `node_modules` ajoute des milliers de `.env` d'exemples
+#: fournis par des paquets tiers, qui ne sont pas les secrets de personne.
+_DOSSIERS_IGNORES = frozenset({
+    "node_modules", ".venv", "venv", ".git", "__pycache__", "site-packages",
+    ".next", ".nuxt", ".turbo", "dist", "build", "coverage", "target", ".cache",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "vendor", "Pods",
+    ".Trash-1001", "skills-vendor", ".terraform",
+})
 
-    Trois niveaux parce qu'un dépôt peut vivre sous ``racine/org/projet`` — c'est
-    le cas de plusieurs ici. Au-delà, on balaierait des dépendances vendorisées.
-    """
-    out: list[Path] = []
-    seen: set[str] = set()
+#: Profondeur maximale sous une racine. Six suffit pour
+#: `racine/espace/projet/service/sous-service/.env` ; au-delà on ramasse des
+#: fixtures de test plutôt que de la configuration.
+_PROFONDEUR_MAX = 6
 
-    def _add(path: Path) -> None:
+
+def _racines_de_recherche() -> list[Path]:
+    """Racines à balayer : celles déclarées à zab, plus le dépôt skills."""
+    racines: list[Path] = []
+    vues: set[str] = set()
+    for candidat in list(projects_roots_resolved()) + [skills_root_from_config_file_only()]:
+        if candidat is None:
+            continue
         try:
-            resolved = path.resolve()
-        except OSError:
-            return
-        key = str(resolved)
-        if key in seen or not resolved.is_file():
-            return
-        seen.add(key)
-        out.append(resolved)
-
-    def _children(path: Path) -> list[Path]:
-        try:
-            return sorted(
-                (p for p in path.iterdir() if p.is_dir() and not p.name.startswith(".")),
-                key=lambda x: x.name.casefold(),
-            )
-        except OSError:
-            return []
-
-    for root in projects_roots_resolved():
-        try:
-            root_r = root.resolve()
+            resolue = Path(candidat).expanduser().resolve()
         except OSError:
             continue
-        _add(root_r / ".env")
-        for level1 in _children(root_r):
-            _add(level1 / ".env")
-            for level2 in _children(level1):
-                _add(level2 / ".env")
+        if resolue.is_dir() and str(resolue) not in vues:
+            vues.add(str(resolue))
+            racines.append(resolue)
+    return racines
 
-    skills = skills_root_from_config_file_only()
-    if skills is not None:
-        _add(skills / ".env")
-    return out
+
+def _env_files() -> list[Path]:
+    """Tous les ``.env`` sous les racines déclarées, **liens symboliques suivis**.
+
+    La version précédente s'arrêtait à trois niveaux et ne suivait aucun lien.
+    Sur un poste réel elle voyait 10 fichiers sur 27 : tout ce qui vit plus
+    profond — `espace/projet/backend/.env` — et tout ce qui n'est atteignable
+    que par un lien, comme les dossiers agrégés sous `clients/_cowork-links/`,
+    lui échappait sans que rien ne le signale.
+
+    Suivre les liens impose deux précautions : dédoublonner sur le chemin réel,
+    puisqu'un même fichier est souvent atteignable par plusieurs chemins, et
+    mémoriser les répertoires déjà visités, sans quoi un lien qui pointe vers un
+    ancêtre fait tourner la descente indéfiniment.
+    """
+    trouves: dict[str, Path] = {}
+    repertoires_vus: set[str] = set()
+
+    def descendre(dossier: Path, profondeur: int) -> None:
+        if profondeur > _PROFONDEUR_MAX:
+            return
+        try:
+            reel = str(dossier.resolve())
+        except OSError:
+            return
+        if reel in repertoires_vus:
+            return
+        repertoires_vus.add(reel)
+        try:
+            entrees = sorted(dossier.iterdir(), key=lambda p: p.name.casefold())
+        except OSError:
+            return
+        for entree in entrees:
+            nom = entree.name
+            try:
+                if entree.is_file() and nom == ".env":
+                    cle = str(entree.resolve())
+                    trouves.setdefault(cle, entree.resolve())
+                elif entree.is_dir() and nom not in _DOSSIERS_IGNORES:
+                    descendre(entree, profondeur + 1)
+            except OSError:
+                continue
+
+    for racine in _racines_de_recherche():
+        descendre(racine, 0)
+    return [trouves[k] for k in sorted(trouves)]
+
+
+def provenance_de(path: Path) -> dict[str, str]:
+    """Organisation, projet et chemin déduits de l'emplacement d'un ``.env``.
+
+    La convention ``<org>-cowork`` du poste porte l'organisation ; en dessous,
+    le premier sous-dossier nomme le projet. Hors convention, le premier
+    segment sous la racine fait office de projet et l'organisation reste vide —
+    mieux vaut un champ absent qu'une organisation inventée.
+    """
+    try:
+        resolu = path.resolve()
+    except OSError:
+        resolu = path
+    segments: list[str] = []
+    for racine in _racines_de_recherche():
+        try:
+            segments = list(resolu.relative_to(racine).parts)
+            break
+        except ValueError:
+            continue
+    if not segments:
+        segments = [resolu.parent.name]
+    dossiers = segments[:-1] if segments and segments[-1] == ".env" else segments
+
+    org = ""
+    projet = dossiers[0] if dossiers else ""
+    if projet.endswith("-cowork"):
+        org = projet[: -len("-cowork")]
+        if len(dossiers) > 1:
+            projet = dossiers[1]
+    try:
+        affiche = str(resolu.relative_to(Path.home()))
+    except ValueError:
+        affiche = str(resolu)
+    return {"org": org, "project": projet, "path": affiche}
 
 
 def scan_tracked_values(
@@ -197,6 +267,7 @@ def collect_to_user_dotenv(*, force: bool = False, apply: bool = True) -> dict[s
     tracked = tracked_env_names_for_security()
     trouvees: dict[str, str] = {}
     fichiers = _env_files()
+    origines: dict[str, Path] = {}
     for path in fichiers:
         try:
             values = dotenv_values(path)
@@ -208,10 +279,12 @@ def collect_to_user_dotenv(*, force: bool = False, apply: bool = True) -> dict[s
             raw = values.get(name)
             if raw is not None and str(raw).strip():
                 trouvees[name] = str(raw).strip()
+                origines[name] = path
 
     cible = user_dotenv_path()
     existantes = dotenv_values(cible) if cible.is_file() else {}
     presentes = {k for k, v in existantes.items() if v is not None and str(v).strip()}
+    provenances = _charger_provenances()
 
     a_ecrire: dict[str, str] = {}
     ignorees: list[str] = []
@@ -230,6 +303,14 @@ def collect_to_user_dotenv(*, force: bool = False, apply: bool = True) -> dict[s
         ecrites = _upsert_dotenv(
             cible, a_ecrire, entete="# Collectées depuis les .env projets (zab secrets collect)."
         )
+        # La provenance se perd à la collecte : une fois la valeur dans le
+        # collecteur, plus rien ne dit de quel projet elle venait. On la note
+        # à côté, au moment où on la connaît encore.
+        for nom in a_ecrire:
+            origine = origines.get(nom)
+            if origine is not None:
+                provenances[nom] = {**provenance_de(origine), "collected": _aujourdhui()}
+        _ecrire_provenances(provenances)
 
     return {
         "path": str(cible),
@@ -266,6 +347,7 @@ def mirror_to_provider(
         k for k, v in valeurs.items() if v is not None and str(v).strip()
     )
     project = provider.secret_manager_project()
+    provenances = _charger_provenances()
     resultats: list[dict[str, Any]] = []
 
     for name in tracked:
@@ -287,7 +369,21 @@ def mirror_to_provider(
             entree.update(status="deja_a_jour")
             resultats.append(entree)
             continue
-        cree = provider.create_secret({"name": name}, value=valeur, project=project)
+        marques = provenances.get(name) or {}
+        cree = provider.create_secret(
+            {"name": name},
+            value=valeur,
+            project=project,
+            labels={
+                "zab-org": marques.get("org", ""),
+                "zab-project": marques.get("project", ""),
+                "zab-collected": marques.get("collected", ""),
+            },
+            annotations={
+                "zab-source": marques.get("path", ""),
+                "zab-mirrored-at": _maintenant(),
+            },
+        )
         if not cree.get("ok"):
             entree.update(status="error", reason=cree.get("reason"))
         else:
@@ -359,3 +455,120 @@ def _secret_id_for(name: str) -> str:
     except Exception:  # noqa: BLE001, S110 — config illisible : on dérive du nom
         pass
     return provider.secret_id_for_name(name)
+
+
+def provenance_path() -> Path:
+    """Fiche d'origine des valeurs du collecteur. Ne contient aucune valeur."""
+    return config_dir() / "secrets-provenance.json"
+
+
+def _aujourdhui() -> str:
+    return _maintenant()[:10]
+
+
+def _maintenant() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _charger_provenances() -> dict[str, dict[str, str]]:
+    import json
+
+    chemin = provenance_path()
+    if not chemin.is_file():
+        return {}
+    try:
+        charge = json.loads(chemin.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return charge if isinstance(charge, dict) else {}
+
+
+def _ecrire_provenances(donnees: dict[str, dict[str, str]]) -> None:
+    import json
+
+    chemin = provenance_path()
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text(json.dumps(donnees, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                      encoding="utf-8")
+
+
+def mirror_projects_to_provider(
+    *,
+    apply: bool = False,
+    include_hub_keys: bool = False,
+) -> dict[str, Any]:
+    """Sauvegarde chaque ``.env`` projet, sous un identifiant nommé par projet.
+
+    Le collecteur est plat : il ne peut pas tenir deux ``SECRET_KEY`` de valeurs
+    différentes. Douze noms sont dans ce cas sur un poste réel, et les fusionner
+    en garderait un seul — donc en perdrait onze. Le miroir n'a pas cette
+    limite : ``zab-<org>-<projet>-<cle>`` distingue ce que le collecteur
+    confond, et les étiquettes disent d'où chaque valeur vient.
+
+    Par défaut, les clés déjà présentes dans le collecteur sont sautées : elles
+    sont sauvegardées par ``mirror``, sous leur nom court.
+    """
+    project = provider.secret_manager_project()
+    hub = user_dotenv_path()
+    cles_hub = {
+        k for k, v in (dotenv_values(hub) if hub.is_file() else {}).items()
+        if v is not None and str(v).strip()
+    }
+    resultats: list[dict[str, Any]] = []
+    horodatage = _maintenant()
+
+    for fichier in _env_files():
+        if str(fichier) == str(hub):
+            continue
+        marques = provenance_de(fichier)
+        try:
+            valeurs = dotenv_values(fichier)
+        except OSError:
+            continue
+        for nom, brute in (valeurs or {}).items():
+            valeur = str(brute).strip() if brute is not None else ""
+            if not valeur:
+                continue
+            if nom in cles_hub and not include_hub_keys:
+                continue
+            secret_id = provider.sanitize_label(
+                "-".join(x for x in (marques["org"], marques["project"], nom) if x),
+                limite=255,
+            )
+            entree = {
+                "name": nom, "secret_id": secret_id,
+                "org": marques["org"], "project": marques["project"],
+                "path": marques["path"], "status": "would_mirror",
+            }
+            if not apply:
+                resultats.append(entree)
+                continue
+            if not project:
+                entree.update(status="error", reason="projet_non_configure")
+                resultats.append(entree)
+                continue
+            amont, _ = provider.read_secret(f"sm://{project}/{secret_id}")
+            if amont is not None and amont.strip() == valeur:
+                entree.update(status="deja_a_jour")
+                resultats.append(entree)
+                continue
+            cree = provider.create_secret(
+                {"name": nom}, value=valeur, project=project,
+                labels={
+                    "zab-org": marques["org"], "zab-project": marques["project"],
+                    "zab-collected": horodatage[:10], "zab-kind": "project-env",
+                },
+                annotations={
+                    "zab-source": marques["path"], "zab-var": nom,
+                    "zab-mirrored-at": horodatage,
+                },
+            )
+            entree.update(
+                status="mirrored" if cree.get("ok") else "error",
+                reason=None if cree.get("ok") else cree.get("reason"),
+            )
+            resultats.append(entree)
+
+    return {"project": project, "applied": apply, "results": resultats}
