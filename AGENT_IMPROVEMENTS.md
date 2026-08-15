@@ -3,6 +3,16 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-08-15 - A versioned project's secrets belong in the hub, not in the provider
+
+- Trigger: mention
+- Context: the operator drew a line the earlier work had not: a `.env` belonging to a git-managed project should be aggregated into the local hub and kept out of Secret Manager entirely. A repository has its own lifecycle; a copy in the provider becomes a second source that drifts.
+- Observation: detecting "is this a git project" from a mirrored machine is not what it looks like. Mutagen excludes `.git`, so on this host only 1 of 16 `.env` files sat in a directory with a visible `.git` — while six of those projects carry a non-empty `.github/workflows`, which only exists in a versioned repository. A check reading `.git` alone would have classified five real repositories as loose folders and mirrored their secrets anyway. A second trap followed: the hub is mirrored wholesale, so aggregating those values into it would have pushed them to the provider through the back door, undoing the rule while appearing to honour it.
+- Improvement: `est_projet_versionne` accepts either proof, `.git` or a populated `.github/workflows`. `mirror --projects` skips those projects and reports them separately rather than silently. `collect --projects` aggregates them into the hub under `<ORG>_<PROJECT>_<SCOPE>_<KEY>` — prefixed because the hub is flat and would otherwise merge two projects' `DB_PASSWORD` into one; the name changes deliberately, since for these values the hub is an inventory and the application still reads its own untouched `.env`. Aggregated keys are excluded from `mirror`, identified by the provenance file, which alone records the original variable name.
+- Evidence: 546 passing. On a real workstation the split came out 41 aggregated / 16 mirrored; the 43 aggregated keys were verified byte-identical to their sources, with nothing in the hub lost or modified. The 41 already pushed were then removed from the provider, each one checked to still exist in the hub before deletion.
+- Status: verified
+- Operational note, not a code defect: `gcloud` credentials expired mid-session, and the VM's attached service account could not stand in — it holds `secretmanager.secretAccessor`, enough to read a secret by name but not to list or delete. `vmlink` and `vmshare` both depend on `gcloud` too, so the usual way of sending a link to a phone was down for the same reason it needed fixing. Granting the attached account `secretmanager.admin` on the project would remove the recurring interactive re-auth and is revocable from IAM without touching a personal account.
+
 ## 2026-08-14 - Scan every project through symlinks, tag what is mirrored, and namespace per project
 
 - Trigger: mention
