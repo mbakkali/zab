@@ -184,9 +184,10 @@ def test_mcp_connectors_and_tasks_agent_contracts(monkeypatch) -> None:
 
 
 def test_tasks_sources_and_channels_list_have_a_working_json_cli(monkeypatch, tmp_path) -> None:
-    """Pins two manifest-parity gaps found by the capability audit: `tasks.sources_status`
-    declared `zab config --json`, which `zab config` never implemented, and `channels.list`
-    promised json_cli without an actual --json flag on `zab channels list`."""
+    """Pins two manifest-parity gaps found by the capability audit, now fixed:
+    `tasks.sources_status` declared `zab config --json`, which `zab config` never
+    implemented, and `channels.list` promised json_cli without the manifest's own
+    `cli` field advertising the `--json` flag `zab channels list` actually has."""
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = CliRunner()
 
@@ -194,7 +195,7 @@ def test_tasks_sources_and_channels_list_have_a_working_json_cli(monkeypatch, tm
 
     manifest = {cap["id"]: cap for cap in get_capabilities()["capabilities"]}
     assert manifest["tasks.sources_status"]["cli"] == "zab tasks sources --json"
-    assert manifest["channels.list"]["cli"] == "zab channels list"
+    assert manifest["channels.list"]["cli"] == "zab channels list --json"
 
     sources = runner.invoke(app, ["tasks", "sources", "--json"])
     assert sources.exit_code == 0, sources.output

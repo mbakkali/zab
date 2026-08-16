@@ -227,6 +227,67 @@ def test_digest_for_date_uses_local_calendar_window_and_batches(tmp_path: Path) 
     assert payload["batches"] == [{"index": 1, "count": 1, "conversation_ids": ["hermes-abc"]}]
 
 
+def test_digest_cwd_filter_selects_the_session_that_ran_there(tmp_path: Path, monkeypatch) -> None:
+    """`zab conversations digest --cwd <dir>` doit repondre a "quelles sessions ont
+    vraiment tourne dans ce dossier", independamment du rattachement semantique
+    org/projet qui peut regrouper deux sessions de repertoires differents sous le
+    meme nom de projet (alias/contenu partages)."""
+    monkeypatch.setattr(
+        "zab.services.conversation_digest.organization_slug_set_from_user_config",
+        lambda: {"example-client"},
+    )
+    in_alpha = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-alpha",
+        room="conversation",
+        path=tmp_path / "alpha.jsonl",
+        content="alpha",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:00:00Z", "content": "Point sur alpha aujourd'hui"},
+        ),
+    )
+    in_beta = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-beta",
+        room="conversation",
+        path=tmp_path / "beta.jsonl",
+        # meme mot "alpha" dans le contenu : le rattachement semantique classerait
+        # cette session sous le meme projet que `in_alpha` malgre un repertoire different.
+        content="alpha",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T18:00:00Z", "content": "Essai isole pour alpha"},
+        ),
+    )
+    projects = [_project("alpha", "example-client", "/workspace/projects/client/alpha")]
+
+    unfiltered = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[in_alpha, in_beta],
+        projects=projects,
+    )
+    assert unfiltered["shown_conversations"] == 2
+    assert unfiltered["cwd_filter"] is None
+
+    filtered = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[in_alpha, in_beta],
+        projects=projects,
+        cwd="/workspace/projects/client/alpha",
+    )
+
+    assert filtered["shown_conversations"] == 1
+    assert filtered["scanned_conversations"] == unfiltered["scanned_conversations"]
+    assert filtered["items"][0]["conversation_id"] == "alpha"
+    assert filtered["cwd_filter"] == "/workspace/projects/client/alpha"
+
+    md = format_conversation_digest_markdown(filtered)
+    assert "Filtre repertoire de travail: `/workspace/projects/client/alpha`" in md
+
+
 def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     doc = AgentMemoryDocument(
         source="codex_transcript",

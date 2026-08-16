@@ -57,8 +57,17 @@ def build_conversation_digest(
     include_subagents: bool = False,
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
-    """Construit un digest local sans ecrire dans Postgres."""
+    """Construit un digest local sans ecrire dans Postgres.
+
+    `cwd`, si fourni, restreint le digest aux conversations dont le chemin du
+    transcript ou l'identifiant de session (`wing`) porte le repertoire de
+    travail donne. L'attribution `org`/`project` est semantique (alias, slug,
+    contenu) et peut donc etiqueter une session lancee dans un sous-dossier
+    avec le nom d'un projet different ; ce filtre repond a "quelles sessions
+    ont vraiment tourne dans ce dossier", independamment de cette attribution.
+    """
 
     now_utc = _ensure_aware(now or datetime.now(timezone.utc))
     window_since = _ensure_aware(since) if since is not None else now_utc - timedelta(days=max(1, int(days)))
@@ -79,6 +88,7 @@ def build_conversation_digest(
         )
     skipped_stale = int(collect_stats.get("skipped_stale", 0))
     project_rows = projects if projects is not None else discover_projects()
+    cwd_norm = _normalize_match_text(cwd) if cwd and cwd.strip() else None
 
     items: list[ConversationDigestItem] = []
     scanned_conversations = 0
@@ -105,6 +115,8 @@ def build_conversation_digest(
             continue
         intent = _intent_from_messages(user_messages)
         if not intent:
+            continue
+        if cwd_norm and cwd_norm not in _project_path_match_text(doc):
             continue
         match = _match_project(doc, intent, project_rows)
         provider_retained[provider] += 1
@@ -151,6 +163,7 @@ def build_conversation_digest(
             "since": window_since.isoformat(),
             "until": window_until.isoformat(),
         },
+        "cwd_filter": cwd.strip() if cwd and cwd.strip() else None,
         # `scanned` reste le total considéré, que le transcript ait été lu ou écarté
         # sur sa seule date de modification : les compteurs restent comparables d'une
         # version à l'autre, et le détail du raccourci est exposé séparément.
@@ -229,6 +242,8 @@ def format_conversation_digest_markdown(payload: dict[str, Any]) -> str:
     ]
     if int(payload.get("skipped_subagents") or 0):
         lines.append(f"Subagents ignores: {payload['skipped_subagents']}.")
+    if payload.get("cwd_filter"):
+        lines.append(f"Filtre repertoire de travail: `{payload['cwd_filter']}`.")
     lines.extend(["", "## Ce que tu as essaye de faire"])
 
     groups = payload.get("groups") or {}
