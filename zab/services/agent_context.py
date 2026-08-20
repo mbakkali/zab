@@ -1124,6 +1124,24 @@ def mcp_tools() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "tools_catalog",
+            "description": (
+                "Catalogue des outils actionnables : implémentation primaire, repli, "
+                "statut et skill associée. À appeler pour savoir ce qui est réellement "
+                "faisable avant de choisir un chemin."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "q": {"type": "string", "description": "Filtre plein texte sur le catalogue."},
+                    "kind": {"type": "string", "description": "Type d'outil (mcp, cli, api, skill…)."},
+                    "status": {"type": "string", "description": "Statut d'annotation de l'outil."},
+                    "provider": {"type": "string", "description": "Fournisseur (attio, gmail, gcp…)."},
+                    "limit": {"type": "integer", "default": 50},
+                },
+            },
+        },
+        {
             "name": "skills_manifest",
             "description": "Liste compacte des skills disponibles pour agents, agrégée depuis repos et projets.",
             "inputSchema": {
@@ -1338,6 +1356,19 @@ def _call_mcp_tool_impl(name: str, args: dict[str, Any]) -> Any:
         return search(str(args.get("query") or ""), limit=int(args.get("limit") or 10), sections=sections)
     if name == "inspect":
         return state_index.get_section_item(str(args.get("section") or ""), str(args.get("key") or ""))
+    if name == "tools_catalog":
+        from zab.services import tool_catalog
+
+        # `limit` borné : le catalogue complet ferait plusieurs milliers de
+        # lignes dans le contexte de l'agent, ce que cet outil existe justement
+        # pour éviter. Le filtrage se fait côté zab, pas côté modèle.
+        return tool_catalog.list_tools(
+            q=str(args.get("q") or ""),
+            kind=args.get("kind") or None,
+            status=args.get("status") or None,
+            provider=args.get("provider") or None,
+            limit=max(1, min(int(args.get("limit") or 50), 200)),
+        )
     if name == "skills_manifest":
         return skills_manifest(
             org=args.get("org") or None,

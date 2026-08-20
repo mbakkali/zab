@@ -219,11 +219,10 @@ def get_capabilities() -> dict[str, Any]:
             risk="read",
             core="zab.services.tool_catalog.build_tools_catalog",
             cli="zab tools list --json",
-            mcp=None,
+            mcp="tools_catalog",
             api="GET /api/tools/catalog",
             ui="Tools Catalog",
-            status="partial",
-            parity_notes="Core/CLI/API expose the catalog; a dedicated MCP surface is optional and can be added later if needed.",
+            status="complete",
         ),
         _capability(
             id="skills.manifest",
