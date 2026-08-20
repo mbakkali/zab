@@ -9,6 +9,7 @@ from typing import Any
 
 from zab.paths import skills_roots_resolved_from_config
 from zab.services.inventory_config import infer_mcp_repo_base_from_skill_md
+from zab.user_config import projects_roots_resolved
 
 
 def _discovery_repo_bases() -> list[Path]:
@@ -214,12 +215,54 @@ def scan_mcps_packages_hints() -> list[dict[str, Any]]:
     return hints
 
 
+def scan_project_mcp_json() -> list[dict[str, Any]]:
+    """Entrées depuis les ``.mcp.json`` à la racine des projets.
+
+    C'est là que Claude Code range ses serveurs MCP au niveau projet, et sur
+    Linux c'est **le seul** emplacement peuplé : `configs/cursor-mcp.json` est
+    propre au dépôt skills, `~/.cursor/mcp.json` n'existe que si Cursor est
+    installé, et le chemin Claude Desktop est macOS. Sans ce scan, le registre
+    MCP de zab restait vide sur la VM, et `source-health` rapportait
+    `mcp_registry: not_verified · item_count 0` — un diagnostic vert sur une
+    inventaire aveugle.
+
+    Un seul niveau : la racine de chaque projet, pas de descente récursive —
+    `~/projects` est un monorepo, un walk complet coûterait cher pour rien.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for root in projects_roots_resolved():
+        try:
+            children = sorted(p for p in root.iterdir() if p.is_dir())
+        except OSError:
+            continue
+        for project in children:
+            path = project / ".mcp.json"
+            if not path.is_file():
+                continue
+            key = str(path.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.extend(
+                normalize_mcp_servers(
+                    load_mcp_json(path),
+                    f"{project.name}/.mcp.json",
+                    config_file=path,
+                    source_kind="project_mcp_json",
+                    skills_repo_root=None,
+                )
+            )
+    return out
+
+
 def list_mcp_servers_flat() -> list[dict[str, Any]]:
     """Toutes les définitions serveur MCP détectées (une entrée par nom × fichier source)."""
     servers: list[dict[str, Any]] = []
     servers.extend(scan_skills_repo_config_files())
     servers.extend(scan_user_cursor_mcp())
     servers.extend(scan_user_claude_desktop_mcp())
+    servers.extend(scan_project_mcp_json())
     for s in servers:
         s.setdefault("fingerprint", mcp_fingerprint(s))
     return servers

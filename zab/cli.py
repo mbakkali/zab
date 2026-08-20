@@ -47,6 +47,7 @@ from zab.services.cli_add import (
     resolve_mcp_json_path,
 )
 from zab.services.memory_scan import resolve_mehdi_memory_database_url
+from zab.services.postgres_dsn import resolve_postgres_dsn
 from zab.services import mempalace_mcp_snippet as mempalace_mcp_snippet
 from zab.services.scanner import resolve_optional_scan_root, workspace_scan
 from zab.services.pm_env_sync import sync_pm_tokens_to_user_dotenv
@@ -1209,8 +1210,16 @@ def doctor() -> None:
                 typer.echo(typer.style(f"      {ver[0][:120]}", dim=True))
         except (OSError, subprocess.TimeoutExpired):
             pass
+    # `resolve_postgres_dsn` en premier : c'est le résolveur canonique, celui
+    # qu'utilisent `source-health` et la couche mémoire. Lui seul regarde dans
+    # `config_dir()` — donc `~/.config/zab/.env`, où le DSN vit réellement.
+    # `resolve_mehdi_memory_database_url` ne sonde que l'ancre skills et ses
+    # parents ; sans ce premier appel, `doctor` annonçait « absent » pendant que
+    # `source-health` annonçait « ok » sur la même machine, et on croyait la
+    # mémoire non configurée alors qu'elle répondait.
     dsn_ok = bool(
-        resolve_mehdi_memory_database_url(skills_root_from_config_file_only())
+        resolve_postgres_dsn()
+        or resolve_mehdi_memory_database_url(skills_root_from_config_file_only())
         or resolve_mehdi_memory_database_url(root)
     )
     typer.echo(

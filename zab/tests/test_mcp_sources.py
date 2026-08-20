@@ -68,3 +68,49 @@ def test_mcps_dir_hints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     assert len(hints) == 1
     assert hints[0]["package_count"] == 1
     assert "pkg-a" in hints[0]["package_names"]
+
+
+def test_scan_project_mcp_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Un `.mcp.json` à la racine d'un projet est inventorié.
+
+    Sur Linux c'est le seul emplacement peuplé : `configs/cursor-mcp.json` est
+    propre au dépôt skills, `~/.cursor/mcp.json` suppose Cursor installé, et le
+    chemin Claude Desktop est macOS. Sans ce scan le registre reste vide.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    projects = tmp_path / "projects"
+    (projects / "alpha").mkdir(parents=True)
+    (projects / "alpha" / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"alpha-mcp": {"command": "zab", "args": ["mcp", "serve"]}}}),
+        encoding="utf-8",
+    )
+    # Un projet sans `.mcp.json` ne doit rien produire ni faire échouer le scan.
+    (projects / "beta").mkdir()
+    cfg = tmp_path / ".config" / "zab"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "config.yaml").write_text(
+        f"skills_roots: []\nprojects_roots: [{json.dumps(str(projects))}]\n",
+        encoding="utf-8",
+    )
+
+    items = mcp_sources.scan_project_mcp_json()
+
+    assert [i["name"] for i in items] == ["alpha-mcp"]
+    assert items[0]["source_kind"] == "project_mcp_json"
+    assert items[0]["source_label"] == "alpha/.mcp.json"
+    assert items[0]["transport_command"] == "zab"
+
+
+def test_scan_project_mcp_json_ignores_unreadable_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Une racine projets déclarée mais absente ne fait pas tomber l'inventaire."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = tmp_path / ".config" / "zab"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "config.yaml").write_text(
+        f"skills_roots: []\nprojects_roots: [{json.dumps(str(tmp_path / 'nowhere'))}]\n",
+        encoding="utf-8",
+    )
+
+    assert mcp_sources.scan_project_mcp_json() == []
