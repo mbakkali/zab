@@ -227,6 +227,82 @@ def test_digest_for_date_uses_local_calendar_window_and_batches(tmp_path: Path) 
     assert payload["batches"] == [{"index": 1, "count": 1, "conversation_ids": ["hermes-abc"]}]
 
 
+def test_digest_workdir_filter_selects_exact_directory_not_sibling(tmp_path: Path) -> None:
+    """`--workdir` doit choisir par repertoire de travail exact, pas par
+    rattachement semantique de projet : deux sessions Claude ouvertes dans
+    des repertoires distincts sous le meme workspace parent, seule celle du
+    repertoire demande doit rester."""
+    in_dir = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-alpha",
+        room="conversation",
+        path=tmp_path / "in-dir.jsonl",
+        content="notes",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:00:00Z", "content": "Avance sur alpha"},
+        ),
+    )
+    other_dir = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-beta",
+        room="conversation",
+        path=tmp_path / "other-dir.jsonl",
+        content="notes",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:05:00Z", "content": "Avance sur beta"},
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[in_dir, other_dir],
+        projects=[],
+        workdir="/workspace/projects/client/alpha",
+    )
+
+    assert payload["shown_conversations"] == 1
+    assert payload["items"][0]["conversation_id"] == "in-dir"
+    assert payload["skipped_workdir"] == 1
+    assert payload["workdir"] == "/workspace/projects/client/alpha"
+
+
+def test_digest_without_workdir_keeps_both_directories(tmp_path: Path) -> None:
+    docs = [
+        AgentMemoryDocument(
+            source="claude_code_transcript",
+            wing="claude__-workspace-projects-client-alpha",
+            room="conversation",
+            path=tmp_path / "a.jsonl",
+            content="notes",
+            metadata={"conversation_provider": "claude"},
+            messages=({"role": "user", "timestamp": "2026-06-24T17:00:00Z", "content": "Avance sur alpha"},),
+        ),
+        AgentMemoryDocument(
+            source="claude_code_transcript",
+            wing="claude__-workspace-projects-client-beta",
+            room="conversation",
+            path=tmp_path / "b.jsonl",
+            content="notes",
+            metadata={"conversation_provider": "claude"},
+            messages=({"role": "user", "timestamp": "2026-06-24T17:05:00Z", "content": "Avance sur beta"},),
+        ),
+    ]
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=docs,
+        projects=[],
+    )
+
+    assert payload["shown_conversations"] == 2
+    assert payload["workdir"] is None
+    assert payload["skipped_workdir"] == 0
+
+
 def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     doc = AgentMemoryDocument(
         source="codex_transcript",
