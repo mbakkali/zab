@@ -303,12 +303,18 @@ def get_capabilities() -> dict[str, Any]:
             summary="Run the dashboard/system health check and stream check results.",
             risk="read",
             core="zab.services.system_check.run_system_check",
-            cli="zab doctor",
+            cli=None,
             mcp="system_health_check",
             api="GET /api/system/check",
             ui="Check system",
             status="partial",
-            parity_notes="MCP can run the aggregate check; JSON CLI parity for `zab doctor` is still separate.",
+            parity_notes=(
+                "No CLI form calls run_system_check(): `zab doctor` is a separate, older "
+                "toolchain/config sanity check (SKILLS_ROOT, uv/node/npm, mempalace, memory DSN "
+                "presence) that never imports zab.services.system_check. MCP/API/UI already "
+                "expose the real dashboard health check; a dedicated CLI command is planned, "
+                "not yet added."
+            ),
         ),
         _capability(
             id="cli.auth_check",
