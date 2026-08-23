@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -65,14 +66,45 @@ def _json_loads(value: str | bytes | None, default: Any) -> Any:
 def connect(*, migrate: bool = True) -> sqlite3.Connection:
     path = database_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn = _open_with_lock_retry(path)
     if migrate:
         migrate_schema(conn)
     return conn
+
+
+def _open_with_lock_retry(
+    path: Path, *, attempts: int = 8, initial_delay: float = 0.05
+) -> sqlite3.Connection:
+    """Open a connection, retrying a transient "database is locked" at the
+    Python level.
+
+    `PRAGMA busy_timeout` does not cover this: switching journal_mode to WAL
+    needs an exclusive lock, and SQLite does not run the busy handler for
+    that specific pragma — it returns SQLITE_BUSY immediately instead of
+    waiting, even with busy_timeout set. In practice this only bites the
+    first connection(s) to ever open a given database file (later
+    connections find it already in WAL mode and the pragma is a no-op), but
+    concurrent processes racing that first conversion hit it for real, as CI
+    did here.
+    """
+    delay = initial_delay
+    last_exc: sqlite3.OperationalError | None = None
+    for _ in range(attempts):
+        try:
+            conn = sqlite3.connect(str(path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            return conn
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            last_exc = exc
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+    assert last_exc is not None
+    raise last_exc
 
 
 @contextmanager
