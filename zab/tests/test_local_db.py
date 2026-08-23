@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -114,6 +115,34 @@ def test_search_state_matches_partial_multi_term_query(tmp_path: Path, monkeypat
 
     assert rows
     assert rows[0]["key"] == "obsidian"
+
+
+def test_connect_waits_out_a_transient_writer_lock(tmp_path: Path, monkeypatch) -> None:
+    """CI hit a real `sqlite3.OperationalError: database is locked` from
+    `connect()` even though it sets `PRAGMA busy_timeout = 5000`, because that
+    pragma ran *after* `PRAGMA journal_mode = WAL` — the one statement most
+    likely to contend with a concurrent writer (switching journal mode needs
+    an exclusive lock) had no retry window. Hold a write lock on a fresh
+    (not-yet-WAL) database from another connection, release it shortly after,
+    and confirm connect() waits it out instead of raising immediately."""
+    db_path = tmp_path / "zab.db"
+    monkeypatch.setenv("ZAB_LOCAL_DATABASE_PATH", str(db_path))
+
+    blocker = sqlite3.connect(str(db_path), check_same_thread=False)
+    blocker.execute("BEGIN IMMEDIATE")
+    blocker.execute("CREATE TABLE _lock_probe (id INTEGER)")
+
+    def release() -> None:
+        blocker.commit()
+        blocker.close()
+
+    timer = threading.Timer(0.3, release)
+    timer.start()
+    try:
+        conn = local_db.connect(migrate=False)
+    finally:
+        timer.cancel()
+    conn.close()
 
 
 def test_db_cli_status_and_export(tmp_path: Path, monkeypatch) -> None:
