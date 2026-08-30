@@ -30,6 +30,7 @@ from zab.services import (
     conversations,
     crons,
     discovery,
+    machine,
     jobs,
     memory_db,
     model_runtimes,
@@ -1296,6 +1297,18 @@ def features_api() -> dict[str, Any]:
 @router.get("/agent-guide")
 def agent_guide_api() -> dict[str, Any]:
     return agent_guide()
+
+
+@router.get("/machine")
+def machine_api(response: Response) -> dict[str, Any]:
+    """Où zab tourne — Mac de travail, VM cowork, ou machine quelconque.
+
+    Deux onglets ouverts côte à côte sont sinon indiscernables, et on répare
+    alors la mauvaise machine. La réponse liste aussi les sources qui ne
+    peuvent PAS fonctionner ici : iMessage sur la VM n'est pas une panne.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return machine.get_machine()
 
 
 @router.get("/state")

@@ -1075,6 +1075,23 @@ def _resolve_inventory_section(raw: str) -> str:
     return section
 
 
+@app.command("machine")
+def machine_cmd(*, json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts.")) -> None:
+    """Dit sur QUELLE machine ce zab tourne — Mac de travail ou VM cowork."""
+    from zab.services.machine import get_machine
+
+    infos = get_machine()
+    if json_out:
+        typer.echo(json.dumps(infos, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"{infos['libelle']}  —  {infos['hote']} ({infos['systeme']} {infos['architecture']})")
+    if infos.get("tailscale"):
+        typer.echo(f"tailnet : {infos['tailscale']}")
+    typer.echo(f"home    : {infos['home']}")
+    for source in infos.get("sources_indisponibles") or []:
+        typer.echo(f"  — {source['source']} indisponible ici : {source['raison']}")
+
+
 @app.command("config")
 def config_cmd(
     *,

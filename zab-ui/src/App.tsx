@@ -103,6 +103,7 @@ import {
 import { startJobAndCollectLines } from '@/lib/job-stream'
 import { cn } from '@/lib/utils'
 import { LanguageSwitcher } from '@/components/language-switcher'
+import { MachineBadge, useMachine } from '@/components/machine-badge'
 import { useI18n } from '@/i18n/use-i18n'
 import { NAV_I18N_KEY } from '@/i18n/nav-labels'
 import { useFormatDate } from '@/i18n/format'
@@ -354,6 +355,7 @@ export default function App() {
   const [editorOpen, setEditorOpen] = useState(false)
 
   const initialRoute = useMemo(() => parseLocationHashToRoute(), [])
+  const machine = useMachine()
   const [tab, setTab] = useState<NavId>(() => initialRoute.tab ?? 'overview')
   const [routeId, setRouteId] = useState<string | null>(() => initialRoute.id)
   const [scanTools, setScanTools] = useState<ScanToolsPayload | null>(null)
@@ -540,6 +542,7 @@ export default function App() {
               </div>
             </div>
             <div className="text-muted-foreground flex min-w-0 max-w-[42%] flex-shrink-0 items-center justify-end gap-2 sm:max-w-[48%] md:max-w-[55%] lg:max-w-md">
+              <MachineBadge machine={machine} />
               <LanguageSwitcher />
               {overview ? (
                 overview.skills_root ? (

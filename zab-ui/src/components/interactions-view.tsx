@@ -15,6 +15,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { useMachine } from '@/components/machine-badge'
 import { LoadingState } from '@/components/ui/loading-state'
 
 type Channel = {
@@ -143,6 +144,19 @@ async function apiJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/* Une source qui ne PEUT PAS exister ici n'est pas en panne.
+   iMessage lit `~/Library/Messages/chat.db` : sur la VM le canal remonte en
+   `error`, et l'écran affichait une pastille rouge sans dire que le geste de
+   réparation n'existe pas. `/api/machine` liste ces sources ; on les marque
+   « hors machine » et on les sort du décompte des erreurs. */
+function horsMachine(channel: Channel, motifs: string[]): boolean {
+  // Les trois identifiants, pas un seul : le canal iMessage porte
+  // `channel_type: ios_messages` ET `channel_id: imessage-local`. Ne regarder
+  // que `channel_type` le laissait passer pour une panne.
+  const cle = `${channel.channel_type ?? ''} ${channel.channel_id ?? ''} ${channel.label ?? ''}`.toLowerCase()
+  return motifs.some((m) => cle.includes(m))
+}
+
 function statusTone(status?: string): string {
   if (status === 'ok') return 'border-succes/35 bg-succes/10 text-succes'
   if (status === 'degraded') return 'border-alerte/35 bg-alerte/10 text-alerte'
@@ -194,6 +208,11 @@ function SourceBadge({ source, channelType }: { source?: string; channelType?: s
 }
 
 export function InteractionsView({ onOpenTool }: InteractionsViewProps) {
+  const machine = useMachine()
+  const sourcesAbsentes = useMemo(
+    () => (machine?.sources_indisponibles ?? []).flatMap((s) => s.motifs ?? [s.source]),
+    [machine],
+  )
   const [channels, setChannels] = useState<Channel[]>([])
   const [organizations, setOrganizations] = useState<Organization[]>([])
   const [selectedOrg, setSelectedOrg] = useState<string | null>(null)
@@ -358,6 +377,7 @@ export function InteractionsView({ onOpenTool }: InteractionsViewProps) {
             {channels.map((channel) => {
               const meta = sourceMeta(channel.channel_type, channel.channel_type)
               const Icon = meta.icon
+              const absente = horsMachine(channel, sourcesAbsentes)
               return (
                 <button
                   key={channel.channel_id}
@@ -375,12 +395,23 @@ export function InteractionsView({ onOpenTool }: InteractionsViewProps) {
                       <span className="text-sm font-medium">{channel.label || channel.channel_id}</span>
                     </div>
                     <span
+                      title={
+                        absente
+                          ? machine?.sources_indisponibles.find((s) =>
+                              horsMachine(channel, s.motifs ?? [s.source]),
+                            )?.raison
+                          : channel.last_check_reason
+                      }
                       className={cn(
                         'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                        statusTone(channel.last_check_status),
+                        absente
+                          ? 'border-border bg-muted text-muted-foreground'
+                          : statusTone(channel.last_check_status),
                       )}
                     >
-                      {channel.last_check_status || 'unknown'}
+                      {absente
+                        ? `hors ${machine?.libelle ?? 'machine'}`
+                        : channel.last_check_status || 'unknown'}
                     </span>
                   </div>
                   <div className="text-muted-foreground text-xs">{channel.account || '—'}</div>
