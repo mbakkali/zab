@@ -57,8 +57,17 @@ def build_conversation_digest(
     include_subagents: bool = False,
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
-    """Construit un digest local sans ecrire dans Postgres."""
+    """Construit un digest local sans ecrire dans Postgres.
+
+    `cwd`, quand fourni, restreint le resultat aux conversations demarrees
+    dans ce repertoire exact : la correspondance projet est semantique (nom,
+    alias) et peut rattacher une session a un sous-projet plutot qu'au
+    repertoire de travail reel, donc ce filtre lit directement le chemin tel
+    qu'il apparait dans le transcript plutot que de faire confiance au
+    rattachement projet.
+    """
 
     now_utc = _ensure_aware(now or datetime.now(timezone.utc))
     window_since = _ensure_aware(since) if since is not None else now_utc - timedelta(days=max(1, int(days)))
@@ -80,9 +89,12 @@ def build_conversation_digest(
     skipped_stale = int(collect_stats.get("skipped_stale", 0))
     project_rows = projects if projects is not None else discover_projects()
 
+    cwd_needle = _normalize_cwd_filter(cwd)
+
     items: list[ConversationDigestItem] = []
     scanned_conversations = 0
     skipped_subagents = 0
+    skipped_cwd_mismatch = 0
     provider_seen: Counter[str] = Counter()
     provider_retained: Counter[str] = Counter()
 
@@ -99,6 +111,9 @@ def build_conversation_digest(
         if updated_at is None:
             continue
         if updated_at < window_since or updated_at >= upper_bound:
+            continue
+        if cwd_needle and not _matches_cwd(doc, cwd_needle):
+            skipped_cwd_mismatch += 1
             continue
         user_messages = _useful_user_messages(doc)
         if not user_messages:
@@ -162,6 +177,8 @@ def build_conversation_digest(
         "batch_size": batch_n,
         "batches": batches,
         "skipped_subagents": skipped_subagents,
+        "cwd_filter": cwd_needle,
+        "skipped_cwd_mismatch": skipped_cwd_mismatch,
         "provider_counts": dict(sorted(provider_seen.items())),
         "retained_provider_counts": dict(sorted(provider_retained.items())),
         "org_counts": dict(org_counts.most_common()),
@@ -182,6 +199,7 @@ def build_conversation_digest_for_date(
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
     now: datetime | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     """Construit un digest pour une journee locale precise."""
 
@@ -201,6 +219,7 @@ def build_conversation_digest_for_date(
         include_subagents=include_subagents,
         documents=documents,
         projects=projects,
+        cwd=cwd,
     )
     payload["target_date"] = on.isoformat()
     payload["timezone"] = timezone_name
@@ -229,6 +248,11 @@ def format_conversation_digest_markdown(payload: dict[str, Any]) -> str:
     ]
     if int(payload.get("skipped_subagents") or 0):
         lines.append(f"Subagents ignores: {payload['skipped_subagents']}.")
+    if payload.get("cwd_filter"):
+        lines.append(
+            f"Filtre repertoire: {payload['cwd_filter']} "
+            f"({int(payload.get('skipped_cwd_mismatch') or 0)} conversation(s) hors repertoire ignoree(s))."
+        )
     lines.extend(["", "## Ce que tu as essaye de faire"])
 
     groups = payload.get("groups") or {}
@@ -604,6 +628,31 @@ def _canonical_org(org: str | None) -> str | None:
     if slug in allowed or slug == "hors-org":
         return slug
     return "hors-org"
+
+
+def _normalize_cwd_filter(cwd: str | None) -> str | None:
+    if not cwd:
+        return None
+    normalized = cwd.strip().rstrip("/\\")
+    return normalized or None
+
+
+def _matches_cwd(doc: AgentMemoryDocument, needle: str) -> bool:
+    """Whole-segment match of `needle` against the transcript's own text.
+
+    Transcripts embed the session's working directory verbatim (a `cwd=...`
+    marker, an `AGENTS.md instructions for <path>` line, a quoted path in the
+    tool call log) rather than as a structured field common to every
+    provider, so this greps the raw content for the exact path instead of
+    trusting the semantic project match, which can label a session with a
+    sub-project name. The boundary check stops `/repo/zab` from matching
+    `/repo/zab-ui`.
+    """
+
+    pattern = re.compile(rf"(?<![\w/.-]){re.escape(needle)}(?![\w-])")
+    if pattern.search(doc.content):
+        return True
+    return bool(pattern.search(str(doc.path)))
 
 
 def _project_path_match_text(doc: AgentMemoryDocument) -> str:

@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-08-30 - Weekly hygiene pass: base health confirmed green, digest working-directory filter closed
+
+- Trigger: mention
+- Context: the weekly hygiene routine ran the offline parts of `docs/capability-audit.md` against a fresh checkout — full test suite, `ruff check .`, the UI typecheck, the publish guard, and a static sweep of every capability's declared CLI/API form. No commits had landed since the 2026-08-09 pass, so this run mostly re-confirms rather than re-fixes.
+- Observation: `uv run pytest zab/tests -q` passed 524/524 with no regressions. `ruff check .` still reports the same 10 import-order/single-letter-variable findings the 2026-08-09 pass deliberately left as style-only. `npx tsc --noEmit -p tsconfig.app.json` and `./scripts/publish-check.sh` are both clean. A static sweep invoking every declared capability's CLI form with `--help` and matching every declared API form against the live FastAPI route table found zero parity gaps — the two gaps `docs/capability-audit.md` records (`tasks.sources_status` → `zab config --json`, `channels.list` missing `--json`) were already closed in the 2026-08-02/2026-08-09 passes and stayed closed. A grep for `/Users/<name>` paths, real personal emails and client names outside `.venv` turned up nothing new. Of the three backlog items still `Status: captured`, one (remote VM readiness) needs a real remote VM this sandbox cannot reach, and the other two-thirds of the conversation-digest friction (intent boilerplate skip, retained/shown counters) were already fixed; the remaining third — "no flag to select conversations by working directory" — was still open and cheap to close without real transcript data.
+- Improvement: added a `--cwd` filter to `zab conversations digest` (and the underlying `build_conversation_digest`/`build_conversation_digest_for_date`). It greps the transcript's own text for the exact directory string instead of trusting the semantic project matcher, which can label a session with a sub-project name; a word-boundary check keeps `/repo/zab` from matching a sibling like `/repo/zab-ui`. The payload now reports `cwd_filter` and `skipped_cwd_mismatch` so a filtered run is distinguishable from an empty window.
+- Evidence: `uv run pytest zab/tests/test_conversation_digest.py -q` (2 new tests: exact-directory match plus sibling-prefix rejection, and the no-filter case unaffected); `uv run pytest zab/tests -q` passes 526/526; `ruff check` clean on the touched files; `zab conversations digest --help` shows the new `--cwd` option wired through.
+- Status: verified
+
 ## 2026-08-09 - Weekly hygiene pass: crashing tool catalog, silent CLI parity gaps, a leaked email
 
 - Trigger: mention
