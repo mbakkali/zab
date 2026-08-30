@@ -84,6 +84,103 @@ def test_digest_extracts_codex_user_message_and_maps_project(tmp_path: Path, mon
     assert item["project"] == "zab"
 
 
+def test_digest_cwd_filter_keeps_exact_directory_and_rejects_sibling(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "zab.services.conversation_digest.organization_slug_set_from_user_config",
+        lambda: set(),
+    )
+    zab_session = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "zab-session.jsonl",
+        content="cwd=/workspace/projects/zab",
+        metadata={"conversation_provider": "codex"},
+        raw_events=(
+            {
+                "timestamp": "2026-06-24T23:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Fais un digest pour zab"}],
+                },
+            },
+        ),
+    )
+    # A sibling directory sharing the same prefix ("/workspace/projects/zab") must
+    # not match a `--cwd /workspace/projects/zab` filter.
+    zab_ui_session = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "zab-ui-session.jsonl",
+        content="cwd=/workspace/projects/zab-ui",
+        metadata={"conversation_provider": "codex"},
+        raw_events=(
+            {
+                "timestamp": "2026-06-24T23:05:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Corrige le typecheck de l'UI"}],
+                },
+            },
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[zab_session, zab_ui_session],
+        projects=[],
+        cwd="/workspace/projects/zab",
+    )
+
+    assert payload["shown_conversations"] == 1
+    assert payload["skipped_cwd_mismatch"] == 1
+    assert payload["cwd_filter"] == "/workspace/projects/zab"
+    assert payload["items"][0]["intent"] == "Fais un digest pour zab"
+
+
+def test_digest_without_cwd_filter_keeps_both_directories(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "zab.services.conversation_digest.organization_slug_set_from_user_config",
+        lambda: set(),
+    )
+    zab_session = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "zab-session.jsonl",
+        content="cwd=/workspace/projects/zab",
+        metadata={"conversation_provider": "codex"},
+        raw_events=(
+            {
+                "timestamp": "2026-06-24T23:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Fais un digest pour zab"}],
+                },
+            },
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[zab_session],
+        projects=[],
+    )
+
+    assert payload["shown_conversations"] == 1
+    assert payload["skipped_cwd_mismatch"] == 0
+    assert payload["cwd_filter"] is None
+
+
 def test_digest_cleans_redacts_claude_loop_and_ignores_subagents(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "zab.services.conversation_digest.organization_slug_set_from_user_config",
