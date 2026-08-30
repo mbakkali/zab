@@ -130,9 +130,9 @@ async function apiPostJson<T>(path: string, body: Record<string, unknown>): Prom
 }
 
 function severityBanner(sev: string): string {
-  if (sev === 'fail') return 'border-red-300 bg-red-50 text-red-900'
-  if (sev === 'warn') return 'border-amber-300 bg-amber-50 text-amber-950'
-  return 'border-emerald-200 bg-emerald-50 text-emerald-950'
+  if (sev === 'fail') return 'border-danger/35 bg-danger/10 text-danger'
+  if (sev === 'warn') return 'border-alerte/35 bg-alerte/10 text-alerte'
+  return 'border-succes/35 bg-succes/10 text-succes'
 }
 
 function sourceToProviderSlug(source: string, wing?: string | null): string {
@@ -151,11 +151,11 @@ function sourceToProviderSlug(source: string, wing?: string | null): string {
 
 function conversationMessageClass(role: string): string {
   const r = role.toLowerCase()
-  if (r === 'user') return 'border-sky-200 bg-sky-50'
-  if (r === 'assistant') return 'border-zinc-200 bg-white'
-  if (r === 'tool') return 'border-violet-200 bg-violet-50'
-  if (r === 'system') return 'border-amber-200 bg-amber-50'
-  return 'border-zinc-200 bg-muted/50'
+  if (r === 'user') return 'border-info/35 bg-info/10'
+  if (r === 'assistant') return 'border-border bg-card'
+  if (r === 'tool') return 'border-border bg-muted'
+  if (r === 'system') return 'border-alerte/35 bg-alerte/10'
+  return 'border-border bg-muted/50'
 }
 
 function formatMessageTime(value?: string | null): string | null {
@@ -639,12 +639,12 @@ export function ConversationsView() {
         <CardContent className="space-y-3">
           {browseStorage === 'index_fallback' ? (
             <div
-              className="border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-50 rounded-lg border px-3 py-2 text-sm"
+              className="border-alerte/35 bg-alerte/10 text-alerte rounded-lg border px-3 py-2 text-sm"
               role="status"
               data-testid="conversations-index-fallback-notice"
             >
               <p className="font-medium">Historique depuis l&apos;index Postgres (mémoire MCP)</p>
-              <p className="text-muted-foreground mt-1 text-xs dark:text-amber-100/85">
+              <p className="text-muted-foreground mt-1 text-xs">
                 L&apos;archive <code className="font-mono">zab_conversations</code> est encore vide — les données viennent
                 des anciennes lignes <code className="font-mono">mehdi_memory_*</code>. Lancez{' '}
                 <strong>Synchroniser</strong> (pas le dry-run) pour remplir l&apos;archive et stabiliser les compteurs.
@@ -660,7 +660,7 @@ export function ConversationsView() {
                 strokeWidth={2}
               />
               <input
-                className="border-input bg-background w-full rounded-lg border py-2 pr-3 pl-9 text-sm outline-none transition focus:ring-2 focus:ring-zinc-300"
+                className="border-input bg-background w-full rounded-lg border py-2 pr-3 pl-9 text-sm outline-none transition focus:ring-2 focus:ring-ring/40"
                 placeholder="Rechercher dans les conversations…"
                 value={q}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setQ(e.target.value)}
@@ -955,11 +955,11 @@ export function ConversationsView() {
                   </div>
                 ) : Array.isArray(detailDoc.chunks) && detailDoc.chunks.length > 0 ? (
                   <div
-                    className="border-amber-300 bg-amber-50/90 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-50 space-y-2 rounded-xl border p-3 text-xs"
+                    className="border-alerte/35 bg-alerte/10 text-alerte space-y-2 rounded-xl border p-3 text-xs"
                     data-testid="conversation-chunks-fallback"
                   >
                     <p className="font-medium">Pas de messages structurés en archive</p>
-                    <p className="text-muted-foreground dark:text-amber-100/85">
+                    <p className="text-muted-foreground">
                       Contenu affiché depuis l&apos;index de recherche (chunks). Une sync complète peut remplir la
                       colonne messages si le JSONL source est disponible.
                     </p>

@@ -139,10 +139,10 @@ function linesToList(value: string): string[] {
 }
 
 function statusTone(status: ToolStatus): string {
-  if (status === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-  if (status === 'warn') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
-  if (status === 'fail') return 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300'
-  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+  if (status === 'ok') return 'border-succes/35 bg-succes/10 text-succes'
+  if (status === 'warn') return 'border-alerte/35 bg-alerte/10 text-alerte'
+  if (status === 'fail') return 'border-danger/35 bg-danger/10 text-danger'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function StatusIcon({ status }: { status: ToolStatus }) {
@@ -174,13 +174,13 @@ function implKindLabel(kind?: string | null): string {
 
 function implKindTone(kind?: string | null): string {
   const key = (kind ?? '').trim().toLowerCase()
-  if (key === 'mcp') return 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-300'
-  if (key === 'api' || key === 'api+skill') return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300'
-  if (key === 'cli') return 'border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300'
-  if (key === 'composio') return 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300'
-  if (key === 'channel') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-  if (key === 'memory') return 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300'
-  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+  if (key === 'mcp') return 'border-border bg-muted text-foreground'
+  if (key === 'api' || key === 'api+skill') return 'border-info/35 bg-info/10 text-info'
+  if (key === 'cli') return 'border-border bg-muted text-foreground'
+  if (key === 'composio') return 'border-alerte/35 bg-alerte/10 text-alerte'
+  if (key === 'channel') return 'border-succes/35 bg-succes/10 text-succes'
+  if (key === 'memory') return 'border-info/35 bg-info/10 text-info'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function primaryImplementation(tool: ToolsCatalogTool): ToolImplementation | undefined {
@@ -441,19 +441,19 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Healthy</CardDescription>
-            <CardTitle className="text-3xl text-emerald-600" data-testid="tools-ok">{countLabel(summary?.ok)}</CardTitle>
+            <CardTitle className="text-3xl text-succes" data-testid="tools-ok">{countLabel(summary?.ok)}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Warnings</CardDescription>
-            <CardTitle className="text-3xl text-amber-600" data-testid="tools-warn">{countLabel(summary?.warn)}</CardTitle>
+            <CardTitle className="text-3xl text-alerte" data-testid="tools-warn">{countLabel(summary?.warn)}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Failures</CardDescription>
-            <CardTitle className="text-3xl text-red-600" data-testid="tools-fail">{countLabel(summary?.fail)}</CardTitle>
+            <CardTitle className="text-3xl text-danger" data-testid="tools-fail">{countLabel(summary?.fail)}</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -482,7 +482,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by tool, skill, command, provider…"
-              className="border-input bg-background min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-zinc-300"
+              className="border-input bg-background min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none transition focus:ring-2 focus:ring-ring/40"
             />
             <div className="flex flex-wrap gap-2">
               {(['all', 'ok', 'warn', 'fail', 'skipped'] as const).map((status) => (
@@ -499,12 +499,12 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
             </div>
           </div>
           {duplicateIds.length > 0 ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+            <div className="rounded-md border border-alerte/35 bg-alerte/10 px-3 py-2 text-xs text-alerte">
               Duplicate ids: {duplicateIds.join(', ')}
             </div>
           ) : null}
           {validationSummary ? (
-            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+            <div className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground">
               Validation: {validationSummary.errors} errors · {validationSummary.warnings} warnings ·{' '}
               {validationSummary.unsafe_commands} unsafe command(s)
             </div>
@@ -667,7 +667,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
               </div>
 
               {checkResult ? (
-                <Card className="border-sky-200">
+                <Card className="border-info/35">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
                       <span>Recheck</span>
@@ -698,7 +698,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
               ) : null}
 
               {editing && editForm ? (
-                <Card className="border-amber-200">
+                <Card className="border-alerte/35">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">Éditer le tool</CardTitle>
                     <CardDescription>
@@ -711,7 +711,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
                       <label className="space-y-1">
                         <span className="text-muted-foreground">Label</span>
                         <input
-                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                           value={editForm.label}
                           onChange={(e) => setEditForm({ ...editForm, label: e.target.value })}
                         />
@@ -719,7 +719,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
                       <label className="space-y-1">
                         <span className="text-muted-foreground">Kind</span>
                         <input
-                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                           value={editForm.kind}
                           onChange={(e) => setEditForm({ ...editForm, kind: e.target.value })}
                         />
@@ -727,7 +727,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
                       <label className="space-y-1">
                         <span className="text-muted-foreground">Coverage</span>
                         <input
-                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                           value={editForm.coverage}
                           onChange={(e) => setEditForm({ ...editForm, coverage: e.target.value })}
                         />
@@ -735,7 +735,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
                       <label className="space-y-1">
                         <span className="text-muted-foreground">Safety</span>
                         <input
-                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                           value={editForm.safety}
                           onChange={(e) => setEditForm({ ...editForm, safety: e.target.value })}
                         />
@@ -828,7 +828,7 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
                       <ul className="space-y-1">
                         {selectedTool.linked_skills?.map((skill) => (
                           <li key={skill.id} className="flex items-start gap-2">
-                            <span className={skill.found ? 'text-emerald-600' : 'text-amber-600'}>{skill.found ? '✓' : '!'}</span>
+                            <span className={skill.found ? 'text-succes' : 'text-alerte'}>{skill.found ? '✓' : '!'}</span>
                             <span>
                               <code className="font-mono">{skill.id}</code>
                               {skill.path ? <span className="text-muted-foreground"> · {skill.path}</span> : null}
@@ -898,14 +898,14 @@ export function ToolsCatalogView({ initialToolId }: ToolsCatalogViewProps = {}) 
               </Card>
 
               {selectedValidationIssues.length > 0 ? (
-                <Card className="border-amber-200">
+                <Card className="border-alerte/35">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">Validation issues</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-1 text-xs">
                     {selectedValidationIssues.map((issue) => (
                       <p key={`${issue.code}-${issue.tool_id}-${issue.message}`}>
-                        <span className={issue.severity === 'error' ? 'text-red-600' : 'text-amber-600'}>{issue.severity}</span>
+                        <span className={issue.severity === 'error' ? 'text-danger' : 'text-alerte'}>{issue.severity}</span>
                         {' · '}
                         {issue.code} — {issue.message}
                       </p>

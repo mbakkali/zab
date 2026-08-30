@@ -236,7 +236,7 @@ function NavButton({
       onClick={onClick}
       className={cn(
         'group flex items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors',
-        active ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-700 hover:bg-zinc-100',
+        active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-foreground hover:bg-muted',
       )}
     >
       <HugeiconsIcon icon={icon} size={18} strokeWidth={active ? 2 : 1.6} />

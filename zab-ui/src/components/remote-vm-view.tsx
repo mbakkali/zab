@@ -167,35 +167,35 @@ function formatBytes(bytes: number) {
 function statusTone(status?: string | null) {
   switch ((status || '').toUpperCase()) {
     case 'RUNNING':
-      return 'bg-emerald-500/15 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300'
+      return 'bg-succes/10 text-succes ring-succes/35'
     case 'TERMINATED':
     case 'STOPPED':
     case 'SUSPENDED':
-      return 'bg-zinc-500/15 text-zinc-700 ring-zinc-500/30 dark:text-zinc-300'
+      return 'bg-secondary/15 text-foreground ring-ring/40'
     case 'STAGING':
     case 'PROVISIONING':
     case 'STOPPING':
     case 'SUSPENDING':
-      return 'bg-amber-500/15 text-amber-700 ring-amber-500/30 dark:text-amber-300'
+      return 'bg-alerte/10 text-alerte ring-alerte/35'
     default:
-      return 'bg-red-500/15 text-red-700 ring-red-500/30 dark:text-red-300'
+      return 'bg-danger/10 text-danger ring-danger/35'
   }
 }
 
 const SESSION_TONE: Record<string, string> = {
-  watching: 'bg-emerald-500',
-  'scanning-alpha': 'bg-sky-500',
-  'scanning-beta': 'bg-sky-500',
-  reconciling: 'bg-sky-500',
-  'staging-alpha': 'bg-sky-500',
-  'staging-beta': 'bg-sky-500',
-  transitioning: 'bg-sky-500',
-  saving: 'bg-sky-500',
-  'connecting-alpha': 'bg-amber-500',
-  'connecting-beta': 'bg-amber-500',
-  'waiting-for-rescan': 'bg-amber-500',
-  halted: 'bg-red-500',
-  paused: 'bg-zinc-400',
+  watching: 'bg-succes/10',
+  'scanning-alpha': 'bg-info/10',
+  'scanning-beta': 'bg-info/10',
+  reconciling: 'bg-info/10',
+  'staging-alpha': 'bg-info/10',
+  'staging-beta': 'bg-info/10',
+  transitioning: 'bg-info/10',
+  saving: 'bg-info/10',
+  'connecting-alpha': 'bg-alerte/10',
+  'connecting-beta': 'bg-alerte/10',
+  'waiting-for-rescan': 'bg-alerte/10',
+  halted: 'bg-danger/10',
+  paused: 'bg-secondary',
 }
 
 export function RemoteVmView() {
@@ -336,7 +336,7 @@ export function RemoteVmView() {
               {vm?.status ?? '—'}
             </span>
             {running && liveSession != null ? (
-              <span className="text-muted-foreground rounded-full bg-emerald-500/10 px-2.5 py-0.5 font-mono text-xs tabular-nums text-emerald-700 dark:text-emerald-300">
+              <span className="text-muted-foreground rounded-full bg-succes/10 px-2.5 py-0.5 font-mono text-xs tabular-nums text-succes">
                 {formatDuration(liveSession)}
               </span>
             ) : null}
@@ -367,7 +367,7 @@ export function RemoteVmView() {
       </header>
 
       {vm?.error ? (
-        <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300">{vm.error}</p>
+        <p className="rounded-lg border border-danger/35 bg-danger/10 p-3 text-xs text-danger">{vm.error}</p>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -402,7 +402,7 @@ export function RemoteVmView() {
             <p className="text-muted-foreground text-xs">Connexions SSH</p>
             <div className="flex items-center gap-2">
               <span
-                className={`size-2.5 rounded-full ${ssh?.active ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'}`}
+                className={`size-2.5 rounded-full ${ssh?.active ? 'bg-succes/10 animate-pulse' : 'bg-secondary'}`}
                 aria-hidden
               />
               <p className="text-2xl font-semibold tabular-nums">{ssh?.connections.length ?? 0}</p>
@@ -530,8 +530,8 @@ export function RemoteVmView() {
               <span
                 className={`rounded-full px-2 py-0.5 ring-1 ring-inset ${
                   ssh?.control_master.state === 'up'
-                    ? 'bg-emerald-500/15 text-emerald-700 ring-emerald-500/30 dark:text-emerald-300'
-                    : 'bg-zinc-500/15 text-zinc-600 ring-zinc-500/30 dark:text-zinc-300'
+                    ? 'bg-succes/10 text-succes ring-succes/35'
+                    : 'bg-secondary/15 text-muted-foreground ring-ring/40'
                 }`}
               >
                 control master {ssh?.control_master.state}
@@ -552,7 +552,7 @@ export function RemoteVmView() {
                     <span className="flex min-w-0 items-center gap-2">
                       <span
                         className={`size-2 shrink-0 rounded-full ${
-                          c.kind === 'tunnel' ? 'bg-sky-500' : c.kind === 'sync-agent' ? 'bg-violet-500' : 'bg-emerald-500'
+                          c.kind === 'tunnel' ? 'bg-info/10' : c.kind === 'sync-agent' ? 'bg-secondary' : 'bg-succes/10'
                         }`}
                         aria-hidden
                       />
@@ -635,20 +635,20 @@ export function RemoteVmView() {
                 <li key={session.name} className="space-y-1.5 py-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className={`size-2 shrink-0 rounded-full ${SESSION_TONE[tone] ?? 'bg-zinc-400'}`} aria-hidden />
+                      <span className={`size-2 shrink-0 rounded-full ${SESSION_TONE[tone] ?? 'bg-secondary'}`} aria-hidden />
                       <span className="truncate font-medium">{session.name}</span>
                       <span className="text-muted-foreground text-xs">{session.paused ? 'paused' : session.status}</span>
                     </span>
                     <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
                       {session.alpha.files.toLocaleString('fr-FR')} / {session.beta.files.toLocaleString('fr-FR')} fichiers
                       {session.file_delta !== 0 ? (
-                        <span className="ml-2 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
+                        <span className="ml-2 rounded-full bg-alerte/10 px-1.5 py-0.5 text-alerte">
                           Δ {session.file_delta > 0 ? '+' : ''}
                           {session.file_delta}
                         </span>
                       ) : null}
                       {session.conflicts > 0 ? (
-                        <span className="ml-2 rounded-full bg-red-500/15 px-1.5 py-0.5 text-red-700 dark:text-red-300">
+                        <span className="ml-2 rounded-full bg-danger/10 px-1.5 py-0.5 text-danger">
                           {session.conflicts} conflit(s)
                         </span>
                       ) : null}
@@ -657,7 +657,7 @@ export function RemoteVmView() {
                   <div className="bg-muted h-1 w-full overflow-hidden rounded-full">
                     <div
                       className={`h-full rounded-full ${
-                        session.status === 'watching' ? 'bg-emerald-500' : session.paused ? 'bg-zinc-400' : 'bg-sky-500'
+                        session.status === 'watching' ? 'bg-succes/10' : session.paused ? 'bg-secondary' : 'bg-info/10'
                       }`}
                       style={{
                         width:
@@ -697,7 +697,7 @@ function Metric({
   hint?: string
   tone?: 'ok' | 'warn'
 }) {
-  const toneClass = tone === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : ''
+  const toneClass = tone === 'ok' ? 'text-succes' : tone === 'warn' ? 'text-alerte' : ''
   return (
     <div className="bg-muted/40 min-w-0 rounded-lg p-3">
       <p className="text-muted-foreground text-xs">{label}</p>

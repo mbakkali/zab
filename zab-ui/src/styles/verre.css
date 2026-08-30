@@ -1,0 +1,204 @@
+/* ============================================================
+   Couche VERRE — la matière translucide de la whiteapp.
+   Sœur de `relief.css`, et construite sur le même principe : une exception
+   validée se BORNE, sinon elle redevient la règle.
+
+   Pourquoi elle existe : le verre dépoli revenait cinq fois dans le moodboard
+   (pastille de section, tuile de statistique sur photo, barre de navigation,
+   carte de données sur photo, carte d'agent sur photo) alors que le dépôt ne
+   contenait que six `backdrop-filter` isolés, dispersés dans quatre fichiers,
+   sans variable ni règle. Chacun avait sa valeur, aucune ne se ressemblait.
+
+   Ce que le verre APPORTE, et que le relief ne sait pas faire : de la
+   profondeur au-dessus d'un fond que l'on ne contrôle pas — une photo, une
+   illustration, une page qui défile. Le relief suppose une surface opaque
+   posée sur une autre ; le verre suppose qu'on voit à travers.
+
+   Quatre bornes, tenues par ce fichier :
+
+     1. TROIS DENSITÉS, et pas une de plus. Au-delà, personne ne sait plus
+        laquelle veut dire quoi — c'est la leçon déjà tirée sur le relief ;
+     2. le verre ne porte JAMAIS de couleur de marque. Un verre teinté est une
+        décoration, et la charte refuse la décoration. L'accent passe par le
+        contenu posé dessus, jamais par la matière ;
+     3. DEUX JEUX DE VALEURS, clair et sombre — et ce n'est pas une symétrie.
+        Un blanc translucide sur fond sombre paraît beaucoup plus présent que
+        le noir translucide équivalent sur fond clair : la même opacité rend
+        deux matières différentes. Les valeurs sombres sont donc plus basses ;
+     4. sur un fond INCONNU au repos, une barre de navigation est OPAQUE, pas
+        en verre. Voir le piège ci-dessous — il est démontré, pas supposé.
+
+   Le piège, tel qu'il a été observé sur deux références du moodboard :
+   `moodboard/12-navbar-transparente.png` montre une barre en verre posée sur
+   un héros. Le titre passe dessous et se retrouve coupé en deux — le haut des
+   lettres net, le bas flouté. C'est joli en maquette et cassé en usage.
+   `moodboard/14-flowenergy-anim.mp4` fait la même barre en PILULE OPAQUE, et
+   le problème disparaît, y compris quand une photo pleine largeur passe
+   derrière. D'où la borne 4, et la classe `.verre-barre` qui, elle, exige un
+   fond dont on répond.
+   ============================================================ */
+
+:root {
+  /* La teinte de la matière. Elle dérive de la SURFACE, pas d'une couleur
+     écrite : changer le thème change le verre, sans toucher ce fichier.
+     Aucune valeur de marque ici — voir borne 2. */
+  --verre-teinte: var(--color-neutral-0, #fff);
+
+  /* Trois densités = trois triplets « opacité / flou / liseré ».
+     Le liseré supérieur est ce qui fait lire la surface comme un bord physique
+     plutôt que comme une tache floue : sans lui, le verre n'a pas d'arête. */
+
+  /* VOILE — le plus léger. Pour une pastille, une étiquette, un badge posé sur
+     un fond calme (aplat, dégradé doux). Ne tient PAS sur une photo chargée. */
+  --verre-voile-fond: color-mix(in srgb, var(--verre-teinte) 62%, transparent);
+  --verre-voile-flou: 10px;
+  --verre-voile-liseré: color-mix(in srgb, var(--verre-teinte) 70%, transparent);
+
+  /* CARTE — la densité de travail. Pour une tuile de données posée sur une
+     photo. C'est celle qui doit rester lisible sur un fond texturé : le flou
+     écrase le détail de l'image sans en masquer la couleur. */
+  --verre-carte-fond: color-mix(in srgb, var(--verre-teinte) 78%, transparent);
+  --verre-carte-flou: 18px;
+  --verre-carte-liseré: color-mix(in srgb, var(--verre-teinte) 82%, transparent);
+
+  /* BARRE — la plus dense. Pour une navigation flottante, sur un fond dont on
+     répond. Volontairement proche de l'opaque : c'est la borne 4 traduite en
+     valeur, pas une timidité. */
+  --verre-barre-fond: color-mix(in srgb, var(--verre-teinte) 88%, transparent);
+  --verre-barre-flou: 24px;
+  --verre-barre-liseré: color-mix(in srgb, var(--verre-teinte) 90%, transparent);
+
+  /* La saturation du fond vu à travers. Légèrement au-dessus de 1 : un flou
+     seul délave l'image derrière, et le verre paraît sale. */
+  --verre-saturation: 1.15;
+}
+
+.dark {
+  /* Borne 3 : la matière s'inverse, les valeurs ne se recopient pas.
+     Un blanc à 62 % sur du noir écrase l'image derrière ; les opacités
+     descendent donc, et le liseré de lumière prend le relais du bord — même
+     raisonnement que le relief en sombre. */
+  --verre-teinte: var(--color-neutral-1000, #000);
+
+  --verre-voile-fond: color-mix(in srgb, var(--verre-teinte) 46%, transparent);
+  --verre-voile-liseré: rgba(255, 255, 255, 0.10);
+
+  --verre-carte-fond: color-mix(in srgb, var(--verre-teinte) 58%, transparent);
+  --verre-carte-liseré: rgba(255, 255, 255, 0.14);
+
+  --verre-barre-fond: color-mix(in srgb, var(--verre-teinte) 72%, transparent);
+  --verre-barre-liseré: rgba(255, 255, 255, 0.16);
+
+  /* En sombre, sursaturer vire au criard : on désature légèrement. */
+  --verre-saturation: 0.95;
+}
+
+@layer components {
+  /* --- Les trois densités ------------------------------------------------
+     `-webkit-backdrop-filter` n'est pas de la superstition : Safari, y compris
+     sur iOS, ne comprend toujours que la version préfixée. Sans elle, le fond
+     reste net et le texte posé dessus devient illisible — sur iPhone
+     uniquement, donc invisible en développement. */
+  .verre-voile,
+  .verre-carte,
+  .verre-barre {
+    position: relative;
+    /* La bordure est portée par le liseré ci-dessous, pas par `border` : une
+       bordure pleine sur du translucide se voit comme un trait dur et tue
+       l'effet de matière. */
+    border: 0;
+  }
+
+  .verre-voile {
+    background-color: var(--verre-voile-fond);
+    -webkit-backdrop-filter: blur(var(--verre-voile-flou)) saturate(var(--verre-saturation));
+    backdrop-filter: blur(var(--verre-voile-flou)) saturate(var(--verre-saturation));
+    box-shadow: inset 0 1px 0 var(--verre-voile-liseré);
+  }
+
+  .verre-carte {
+    background-color: var(--verre-carte-fond);
+    -webkit-backdrop-filter: blur(var(--verre-carte-flou)) saturate(var(--verre-saturation));
+    backdrop-filter: blur(var(--verre-carte-flou)) saturate(var(--verre-saturation));
+    box-shadow:
+      inset 0 1px 0 var(--verre-carte-liseré),
+      0 1px 2px rgba(0, 0, 0, 0.05);
+  }
+
+  .verre-barre {
+    background-color: var(--verre-barre-fond);
+    -webkit-backdrop-filter: blur(var(--verre-barre-flou)) saturate(var(--verre-saturation));
+    backdrop-filter: blur(var(--verre-barre-flou)) saturate(var(--verre-saturation));
+    box-shadow:
+      inset 0 1px 0 var(--verre-barre-liseré),
+      0 1px 2px rgba(0, 0, 0, 0.06),
+      0 8px 24px -16px rgba(0, 0, 0, 0.24);
+  }
+
+  /* --- Le repli, et pourquoi il est obligatoire --------------------------
+     Firefox a longtemps livré `backdrop-filter` derrière un drapeau, et
+     certains navigateurs d'entreprise le désactivent encore. Sans repli, le
+     fond translucide reste translucide SANS flou : le contenu derrière
+     transparaît net, et le texte devient illisible. L'échec est silencieux —
+     la page s'affiche, elle est simplement fausse.
+
+     `@supports not` couvre les deux propriétés : tester seulement la version
+     non préfixée exclurait à tort les Safari anciens, qui savent flouter. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .verre-voile { background-color: color-mix(in srgb, var(--verre-teinte) 92%, transparent); }
+    .verre-carte,
+    .verre-barre { background-color: var(--verre-teinte); }
+  }
+
+  /* --- Le voile de lisibilité -------------------------------------------
+     À poser sous un TEXTE placé directement sur une photo, sans carte. Le
+     verre ne s'applique qu'à une surface ; un titre blanc posé sur une image
+     n'a, lui, aucun contraste garanti — la photo décide, et elle change.
+
+     Ce n'est pas un effet : c'est la seule façon de rendre mesurable un
+     contraste sur fond variable. La gate de contraste de la charte lit une
+     couleur de fond unie ; sur une photo, elle ne peut rien dire. */
+  .verre-voile-texte {
+    position: relative;
+    isolation: isolate;
+  }
+  .verre-voile-texte::before {
+    content: "";
+    position: absolute;
+    inset: -0.5em -0.75em;
+    z-index: -1;
+    background: radial-gradient(
+      120% 100% at 50% 50%,
+      rgba(0, 0, 0, 0.55) 0%,
+      rgba(0, 0, 0, 0.35) 55%,
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+
+  /* --- Le refus, écrit dans le code -------------------------------------
+     Cette classe n'existe que pour être citée dans la vitrine et dans les
+     revues : elle documente ce qu'on ne fait PAS. Un verre teinté à l'accent
+     de filiale est la dérive la plus probable de cette couche, parce qu'elle
+     paraît anodine. Elle ne l'est pas : elle transforme une matière en
+     décoration, et fait sauter le plafond de surface de l'accent, qui compte
+     les aplats. */
+  .verre-teinté-REFUSÉ {
+    /* Aucune déclaration. Voir borne 2 — cette classe ne doit rien rendre. */
+  }
+}
+
+/* --- Mouvement ------------------------------------------------------------
+   Le flou d'arrière-plan est l'une des propriétés les plus coûteuses du
+   navigateur : il recompose la zone à chaque image. L'animer, ou animer un
+   élément qui en porte un, fait tomber la page à quelques images par seconde
+   sur une machine modeste — et le symptôme ressemble à un problème de réseau,
+   pas de CSS.
+
+   D'où la règle : on anime l'OPACITÉ ou la POSITION d'un élément en verre,
+   jamais son rayon de flou. */
+@media (prefers-reduced-motion: reduce) {
+  .verre-voile,
+  .verre-carte,
+  .verre-barre { transition: none; }
+}

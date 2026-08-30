@@ -29,7 +29,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
           className={cn(
             'rounded px-2 py-1 transition-colors',
             locale === id
-              ? 'bg-zinc-900 text-white shadow-sm'
+              ? 'bg-primary text-primary-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground',
           )}
         >

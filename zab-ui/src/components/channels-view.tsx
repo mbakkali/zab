@@ -126,11 +126,11 @@ function channelIcon(type: string) {
 }
 
 function channelTone(type: string) {
-  if (type === 'email') return 'bg-blue-50 text-blue-700 border-blue-200'
-  if (type === 'whatsapp') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
-  if (type === 'slack') return 'bg-violet-50 text-violet-700 border-violet-200'
-  if (type === 'telegram') return 'bg-sky-50 text-sky-700 border-sky-200'
-  return 'bg-zinc-50 text-zinc-700 border-zinc-200'
+  if (type === 'email') return 'bg-info/10 text-info border-info/35'
+  if (type === 'whatsapp') return 'bg-succes/10 text-succes border-succes/35'
+  if (type === 'slack') return 'bg-muted text-foreground border-border'
+  if (type === 'telegram') return 'bg-info/10 text-info border-info/35'
+  return 'bg-muted text-foreground border-border'
 }
 
 function connectorForType(type: string) {
@@ -142,10 +142,10 @@ function connectorForType(type: string) {
 }
 
 function statusMeta(status?: ChannelItem['status']) {
-  if (status === 'ok') return { label: 'Actif', icon: CheckCircle2, cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
-  if (status === 'degraded') return { label: 'À configurer', icon: AlertTriangle, cls: 'bg-amber-50 text-amber-700 border-amber-200' }
-  if (status === 'disabled') return { label: 'Désactivé', icon: Circle, cls: 'bg-zinc-50 text-zinc-600 border-zinc-200' }
-  return { label: 'Erreur', icon: AlertCircle, cls: 'bg-red-50 text-red-700 border-red-200' }
+  if (status === 'ok') return { label: 'Actif', icon: CheckCircle2, cls: 'bg-succes/10 text-succes border-succes/35' }
+  if (status === 'degraded') return { label: 'À configurer', icon: AlertTriangle, cls: 'bg-alerte/10 text-alerte border-alerte/35' }
+  if (status === 'disabled') return { label: 'Désactivé', icon: Circle, cls: 'bg-muted text-muted-foreground border-border' }
+  return { label: 'Erreur', icon: AlertCircle, cls: 'bg-danger/10 text-danger border-danger/35' }
 }
 
 function formatDate(value?: string | null) {
@@ -350,9 +350,9 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
 
       <div className="grid gap-3 md:grid-cols-4">
         <Metric label="Canaux" value={channels.length} />
-        <Metric label="Actifs" value={summary.active} tone="text-emerald-600" />
-        <Metric label="À configurer" value={summary.degraded} tone="text-amber-600" />
-        <Metric label="Actions" value={data?.total_actions_count ?? pendingActions.length} tone="text-blue-600" />
+        <Metric label="Actifs" value={summary.active} tone="text-succes" />
+        <Metric label="À configurer" value={summary.degraded} tone="text-alerte" />
+        <Metric label="Actions" value={data?.total_actions_count ?? pendingActions.length} tone="text-info" />
       </div>
 
       {loading ? (
@@ -421,7 +421,7 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
                 </CardHeader>
                 <CardContent className="space-y-5 pt-5">
                   {selected.status && selected.status !== 'ok' && selected.reason ? (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <div className="rounded-lg border border-alerte/35 bg-alerte/10 px-3 py-2 text-sm text-alerte">
                       {humanizeReason(selected.reason)}
                     </div>
                   ) : null}
@@ -488,7 +488,7 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
                       {hermes?.config_present ? hermes.config_path : 'Config Hermes introuvable'}
                     </CardDescription>
                   </div>
-                  <span className={cn('rounded-md border px-2 py-1 text-xs font-medium', hermes?.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-zinc-50 text-zinc-600')}>
+                  <span className={cn('rounded-md border px-2 py-1 text-xs font-medium', hermes?.enabled ? 'border-succes/35 bg-succes/10 text-succes' : 'border-border bg-muted text-muted-foreground')}>
                     {hermes?.enabled ? 'enabled' : 'disabled'}
                   </span>
                 </div>
@@ -565,7 +565,7 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="Gmail Personnel"
-                className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                 required
               />
             </Field>
@@ -574,7 +574,7 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
                 <select
                   value={type}
                   onChange={(e) => setType(e.target.value as (typeof CHANNEL_TYPES)[number])}
-                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                 >
                   {CHANNEL_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
@@ -583,7 +583,7 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
                 <select
                   value={org}
                   onChange={(e) => setOrg(e.target.value)}
-                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                 >
                   <option value="personal">personal</option>
                   {orgs.map((item) => <option key={item.org} value={item.org}>{item.org}</option>)}
@@ -597,7 +597,7 @@ export function ChannelsView({ orgs = [], onRefreshStats, onOpenConnectorsConfig
                   value={emailAddress}
                   onChange={(e) => setEmailAddress(e.target.value)}
                   placeholder="mehdi@example.com"
-                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                  className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
                   required
                 />
               </Field>
@@ -689,7 +689,7 @@ function HermesChannel({ channel, toolsets, count }: { channel: ChannelItem; too
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
             <div className="truncate text-sm font-medium">{channel.label}</div>
-            <span className={cn('rounded-md border px-1.5 py-0.5 text-[11px]', channel.enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-50 text-zinc-600 border-zinc-200')}>
+            <span className={cn('rounded-md border px-1.5 py-0.5 text-[11px]', channel.enabled ? 'bg-succes/10 text-succes border-succes/35' : 'bg-muted text-muted-foreground border-border')}>
               {channel.enabled ? 'on' : 'off'}
             </span>
           </div>

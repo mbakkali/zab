@@ -31,10 +31,10 @@ type SourceHealthPayload = {
 }
 
 function statusTone(status: SourceStatus): string {
-  if (status === 'ok' || status === 'local_ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-  if (status === 'needs_auth' || status === 'stale' || status === 'not_verified') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
-  if (status === 'error') return 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300'
-  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+  if (status === 'ok' || status === 'local_ok') return 'border-succes/35 bg-succes/10 text-succes'
+  if (status === 'needs_auth' || status === 'stale' || status === 'not_verified') return 'border-alerte/35 bg-alerte/10 text-alerte'
+  if (status === 'error') return 'border-danger/35 bg-danger/10 text-danger'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function StatusIcon({ status }: { status: SourceStatus }) {
@@ -109,7 +109,7 @@ export function SourceHealthView() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Needs attention</CardDescription>
-            <CardTitle className="text-3xl text-amber-600" data-testid="source-health-attention">{payload ? needsAttention : '—'}</CardTitle>
+            <CardTitle className="text-3xl text-alerte" data-testid="source-health-attention">{payload ? needsAttention : '—'}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -161,7 +161,7 @@ export function SourceHealthView() {
                       <TableCell className="text-muted-foreground text-xs align-top">{source.last_success_at ?? '—'}</TableCell>
                       <TableCell className="text-muted-foreground max-w-md text-xs align-top">
                         <div>{source.safe_message}</div>
-                        {source.warnings.length ? <div className="mt-1 text-amber-700">{source.warnings.slice(0, 2).join(' · ')}</div> : null}
+                        {source.warnings.length ? <div className="mt-1 text-alerte">{source.warnings.slice(0, 2).join(' · ')}</div> : null}
                       </TableCell>
                     </TableRow>
                   ))}

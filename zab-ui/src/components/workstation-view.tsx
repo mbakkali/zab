@@ -54,17 +54,17 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 function statusClass(status?: string | null) {
   switch ((status || '').toUpperCase()) {
     case 'RUNNING':
-      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200'
+      return 'bg-succes/10 text-succes'
     case 'TERMINATED':
     case 'STOPPED':
-      return 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200'
+      return 'bg-muted text-foreground'
     case 'STARTING':
     case 'STOPPING':
     case 'PROVISIONING':
-      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200'
+      return 'bg-alerte/10 text-alerte'
     case 'ERROR':
     case 'NOT_FOUND':
-      return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200'
+      return 'bg-danger/10 text-danger'
     default:
       return 'bg-muted text-muted-foreground'
   }
@@ -279,7 +279,7 @@ function LegacyWorkstationSection() {
               </div>
             </div>
             {publicIpAllowed === false ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="rounded-lg border border-alerte/35 bg-alerte/10 p-2 text-xs text-alerte">
                 L’IP publique détectée ne correspond pas aux ranges autorisés. L’accès SSH peut échouer.
               </p>
             ) : null}
@@ -345,7 +345,7 @@ function LegacyWorkstationSection() {
         </Card>
       ) : null}
 
-      <details className="rounded-xl border border-zinc-200 bg-card p-4 text-xs dark:border-zinc-800">
+      <details className="rounded-xl border border-border bg-card p-4 text-xs">
         <summary className="cursor-pointer select-none font-medium">Payload brut</summary>
         <pre className="bg-muted mt-3 max-h-80 overflow-auto rounded-lg p-3">{JSON.stringify(status ?? {}, null, 2)}</pre>
       </details>

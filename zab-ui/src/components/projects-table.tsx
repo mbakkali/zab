@@ -116,7 +116,7 @@ export function ProjectsTable({
           <button
             type="button"
             onClick={() => onOpenOrg(getValue())}
-            className="bg-zinc-100 text-zinc-700 transition hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium"
+            className="bg-muted text-foreground transition hover:bg-muted inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium"
           >
             {getValue()}
           </button>
@@ -137,7 +137,7 @@ export function ProjectsTable({
                 <span
                   className={cn(
                     'inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-medium',
-                    'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100',
+                    'bg-succes/10 text-succes',
                   )}
                   title={p.origin_https || undefined}
                 >
@@ -218,7 +218,7 @@ export function ProjectsTable({
   })
 
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+    <div className="rounded-xl border border-border">
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((hg) => (
@@ -262,7 +262,7 @@ export function ProjectsTable({
                       className={cn(
                         cell.column.id === 'path' && 'whitespace-normal',
                         cell.column.id === 'actions' && 'whitespace-normal',
-                        activeProjectId && projectMatchesRoute(row.original, activeProjectId) && 'bg-zinc-50 dark:bg-zinc-950',
+                        activeProjectId && projectMatchesRoute(row.original, activeProjectId) && 'bg-muted',
                       )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -270,13 +270,13 @@ export function ProjectsTable({
                   ))}
                 </TableRow>
                 {row.getIsExpanded() ? (
-                  <TableRow className="bg-zinc-50/80 hover:bg-zinc-50/80 dark:bg-zinc-950/40">
+                  <TableRow className="bg-muted/80 hover:bg-muted/80">
                     <TableCell colSpan={columns.length} className="py-3 whitespace-normal">
                       <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {row.original.skills.map((s) => (
                           <li
                             key={s.path}
-                            className="rounded-md border border-zinc-200 bg-background px-2.5 py-2 dark:border-zinc-800"
+                            className="rounded-md border border-border bg-background px-2.5 py-2"
                           >
                             <button
                               type="button"

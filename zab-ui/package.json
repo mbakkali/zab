@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:e2e": "npm run build && playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "tokens": "python3 scripts/sync_tokens.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

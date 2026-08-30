@@ -1,0 +1,137 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Généré depuis la charte — ne pas éditer. Voir scripts/sync_tokens.py. */
+@import "./tokens.css";
+@import "./relief.css";
+@import "./verre.css";
+@import "./trame.css";
+@import "./icones.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================================
+   Le pont Tailwind. `@theme inline` expose les variables de tokens.css
+   comme utilitaires (`bg-card`, `text-muted-foreground`, `rounded-lg`…).
+
+   Piège hérité de flowstart, à ne pas répéter : une variable définie dans
+   `:root` mais absente de ce bloc ne génère AUCUNE règle. `bg-ink` rendait
+   un fond transparent sous un texte clair — badges invisibles sur huit
+   écrans, sans une erreur. Toute variable qu'on veut utiliser en classe
+   doit être déclarée ici.
+   ============================================================ */
+@theme inline {
+  --font-display: var(--font-family-display);
+  --font-sans: var(--font-family-body);
+  --font-mono: var(--font-family-data);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+
+  /* Statuts. Nommés par leur SENS, jamais par leur teinte : un « vert » se
+     renomme le jour où il devient bleu, un « succès » non. */
+  --color-succes: var(--signal-success);
+  --color-alerte: var(--signal-warning);
+  --color-danger: var(--signal-danger);
+  --color-info: var(--signal-info);
+
+  /* L'accent de FILIALE. Distinct de `--color-accent`, qui est la surface de
+     survol shadcn. Les confondre peindrait tous les survols en jaune FlowImmo. */
+  --color-unite: var(--color-accent);
+  --color-unite-texte: var(--color-accentText);
+  --color-unite-filet: var(--color-accentRule);
+  --color-unite-encre: var(--color-accentInk);
+  --color-unite-clair: var(--color-accentOnDark);
+
+  /* `--trace` : la valeur d'accent à utiliser pour un FILET, une PUCE ou une
+     icône — jamais `--color-accent`, qui est l'aplat. La charte impose 3:1 à
+     ce rôle, et le jaune FlowImmo ne tient que 1,82:1 en aplat : posé en
+     filet, il disparaît. `accentRule` est la valeur assombrie prévue pour ça.
+     En sombre, c'est `accentOnDark` qui prend le relais — l'inverse serait
+     illisible sur encre. */
+  --color-trace: var(--trace);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  :root, .light { --trace: var(--color-accentRule); }
+  .dark { --trace: var(--color-accentOnDark); }
+
+  * { @apply border-border outline-ring/50; }
+
+  /* Un panneau fermé vit hors de l'écran par `translate-x-full`. Sans cette
+     coupe, il agrandit la zone scrollable et produit exactement le débordement
+     horizontal que la charte refuse — invisible au premier coup d'œil sur un
+     grand écran, immédiat sur mobile. `clip` et non `hidden` : `hidden` sur
+     l'axe X force `auto` sur l'axe Y et casserait toute position sticky. */
+  html, body { overflow-x: clip; }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-family-body);
+    font-size: 15px;
+    line-height: var(--font-leading-normal);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-family-display);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--font-tracking-tight);
+    line-height: var(--font-leading-snug);
+  }
+
+  /* Tout chiffre est tabulaire. Sans ça, une colonne de montants danse d'une
+     ligne à l'autre et devient illisible dès qu'on la compare du regard. */
+  .tabular, td.num, .metric { font-variant-numeric: tabular-nums; }
+
+  /* Le focus clavier ne se supprime jamais — refus explicite de la charte. */
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+}
+
+@layer components {
+  /* Le seul « composant » de base : l'étiquette de charte. Space Grotesk,
+     capitales, interlettrage ouvert. Elle revient partout. */
+  .etiquette {
+    font-family: var(--font-family-data);
+    font-size: var(--font-size-label);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--font-tracking-label);
+    text-transform: uppercase;
+    @apply text-muted-foreground;
+  }
+  .metric {
+    font-family: var(--font-family-data);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--font-tracking-tight);
+    line-height: var(--font-leading-tight);
+  }
+}

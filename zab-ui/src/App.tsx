@@ -547,7 +547,7 @@ export default function App() {
                     {overview.skills_root.replace(/^\/Users\/[^/]+/, '~')}
                   </code>
                 ) : (
-                  <span className="text-amber-700 dark:text-amber-400 line-clamp-2 hidden text-right text-[10px] sm:inline sm:text-xs">
+                  <span className="text-alerte line-clamp-2 hidden text-right text-[10px] sm:inline sm:text-xs">
                     {t('app.skillsConfigMissing')}
                   </span>
                 )
@@ -689,12 +689,12 @@ function ViewFallback() {
 }
 
 function StatusIcon({ status }: { status: SystemCheckStatus }) {
-  if (status === 'ok') return <CheckCircle2 className="size-5 text-emerald-600" />
-  if (status === 'warn') return <AlertTriangle className="size-5 text-amber-500" />
-  if (status === 'fail') return <XCircle className="size-5 text-red-600" />
-  if (status === 'running') return <Loader2 className="size-5 animate-spin text-blue-500" />
+  if (status === 'ok') return <CheckCircle2 className="size-5 text-succes" />
+  if (status === 'warn') return <AlertTriangle className="size-5 text-alerte" />
+  if (status === 'fail') return <XCircle className="size-5 text-danger" />
+  if (status === 'running') return <Loader2 className="size-5 animate-spin text-info" />
   // pending — grisé
-  return <div className="size-5 rounded-full border-2 border-gray-300 bg-gray-100" />
+  return <div className="size-5 rounded-full border-2 border-border bg-muted" />
 }
 
 function statusLabel(status: SystemCheckStatus, t: (key: string) => string) {
@@ -862,7 +862,7 @@ function SystemCheckSection() {
   const liveScore = doneChecks.reduce((sum, c) => sum + (weights[c.status] ?? 0), 0)
   const percentage = totalChecks > 0 ? Math.round((liveScore / totalChecks) * 100) : 0
 
-  const meterClass = percentage >= 80 ? 'bg-emerald-500' : percentage >= 50 ? 'bg-amber-500' : 'bg-red-500'
+  const meterClass = percentage >= 80 ? 'bg-succes/10' : percentage >= 50 ? 'bg-alerte/10' : 'bg-danger/10'
 
   return (
     <div className="space-y-6">
@@ -914,7 +914,7 @@ function SystemCheckSection() {
               </p>
             </div>
           </div>
-          {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}
         </CardContent>
       </Card>
 
@@ -1019,28 +1019,28 @@ function OverviewSection({
       label: t('overview.stats.orgs'),
       value: overview.orgs.length,
       icon: Folder02Icon,
-      tone: 'bg-amber-100 text-amber-700',
+      tone: 'bg-muted text-foreground',
       target: 'orgs' as NavId,
     },
     {
       label: t('overview.stats.skills'),
       value: totalSkills,
       icon: SparklesIcon,
-      tone: 'bg-violet-100 text-violet-700',
+      tone: 'bg-muted text-foreground',
       target: 'skills' as NavId,
     },
     {
       label: t('overview.stats.connectors'),
       value: `${enabledConnectors}/${totalConnectors}`,
       icon: Plug02Icon,
-      tone: 'bg-blue-100 text-blue-700',
+      tone: 'bg-muted text-foreground',
       target: 'connectors' as NavId,
     },
     {
       label: t('overview.stats.plugins'),
       value: overview.plugin_bundles.length,
       icon: PuzzleIcon,
-      tone: 'bg-emerald-100 text-emerald-700',
+      tone: 'bg-muted text-foreground',
       target: 'plugins' as NavId,
     },
   ]
@@ -1053,7 +1053,7 @@ function OverviewSection({
       </header>
 
       {overview.dashboard_warning ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+        <div className="rounded-lg border border-alerte/35 bg-alerte/10 p-4 text-sm text-alerte">
           {overview.dashboard_warning}
         </div>
       ) : null}
@@ -1077,7 +1077,7 @@ function OverviewSection({
           <button
             key={s.label}
             onClick={() => onJump(s.target)}
-            className="group bg-card hover:border-zinc-300 hover:shadow-sm flex items-center gap-4 rounded-xl border border-zinc-200 p-5 text-left transition"
+            className="group bg-card hover:border-border hover:shadow-sm flex items-center gap-4 rounded-xl border border-border p-5 text-left transition"
           >
             <div className={cn('flex size-12 items-center justify-center rounded-xl', s.tone)}>
               <HugeiconsIcon icon={s.icon} size={24} strokeWidth={1.7} />
@@ -1093,7 +1093,7 @@ function OverviewSection({
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-foreground">
               <HugeiconsIcon icon={CodeFolderIcon} size={20} />
             </div>
             <div>
@@ -1110,7 +1110,7 @@ function OverviewSection({
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-foreground">
               <HugeiconsIcon icon={Database02Icon} size={20} />
             </div>
             <div>
@@ -1128,7 +1128,7 @@ function OverviewSection({
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-succes/10 text-succes">
             <HugeiconsIcon icon={Database02Icon} size={20} />
           </div>
           <div className="min-w-0 flex-1">
@@ -1156,7 +1156,7 @@ function OverviewSection({
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             {['skills', 'mcp_servers', 'connectors', 'code_tools', 'tools', 'memory_sources'].map((key) => (
-              <div key={key} className="rounded-lg border border-zinc-200 px-3 py-2">
+              <div key={key} className="rounded-lg border border-border px-3 py-2">
                 <p className="text-lg font-semibold">{stateSummary?.counts?.[key] ?? '—'}</p>
                 <p className="text-muted-foreground text-[11px]">{key}</p>
               </div>
@@ -1171,7 +1171,7 @@ function OverviewSection({
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-foreground">
             <HugeiconsIcon icon={CompassIcon} size={20} />
           </div>
           <div>
@@ -1238,10 +1238,10 @@ function QuickJump({
       onClick={() => void onClick()}
       disabled={disabled}
       type="button"
-      className="hover:bg-muted/60 flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50"
+      className="hover:bg-muted/60 flex items-center justify-between rounded-lg border border-border px-3 py-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50"
     >
       <span className="flex items-center gap-2.5 font-medium">
-        <HugeiconsIcon icon={icon} size={18} className="text-zinc-500" />
+        <HugeiconsIcon icon={icon} size={18} className="text-muted-foreground" />
         {label}
       </span>
       <span className="text-muted-foreground text-xs">→</span>
@@ -1295,9 +1295,9 @@ function OrgSkillsCard({
   }, [active])
   const toggle = useCallback(() => setExpanded((e) => !e), [])
   return (
-    <Card className={active ? 'border-zinc-900 ring-1 ring-zinc-900' : undefined}>
+    <Card className={active ? 'border-border ring-1 ring-ring/40' : undefined}>
       <CardHeader className="flex flex-row items-center gap-3 pb-2">
-        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-white">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
           <HugeiconsIcon icon={Folder02Icon} size={22} />
         </div>
         <div className="min-w-0 flex-1">
@@ -1309,7 +1309,7 @@ function OrgSkillsCard({
         <button
           type="button"
           onClick={toggle}
-          className="text-muted-foreground hover:bg-muted/80 flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200/80 px-2 py-1.5 text-xs font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+          className="text-muted-foreground hover:bg-muted/80 flex shrink-0 items-center gap-1 rounded-lg border border-border/80 px-2 py-1.5 text-xs font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           aria-expanded={expanded}
           aria-label={expanded ? t('orgs.collapseAria') : t('orgs.expandAria')}
         >
@@ -1333,7 +1333,7 @@ function OrgSkillsCard({
             {projectRows.length > 0 ? (
               <ul className="list-none space-y-1 pl-0 text-xs">
                 {projectRows.slice(0, 12).map((p) => (
-                  <li key={p.path || p.name} className="min-w-0 rounded-md border border-zinc-200/70 dark:border-zinc-800">
+                  <li key={p.path || p.name} className="min-w-0 rounded-md border border-border/70">
                     <button
                       type="button"
                       className="block w-full px-2 py-1.5 text-left transition hover:bg-muted/60"
@@ -1356,7 +1356,7 @@ function OrgSkillsCard({
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                       {p.org && p.org !== org ? <span className="rounded bg-muted px-1 py-0.5">{p.org}</span> : null}
                       {p.git_repo ? (
-                        <span className="rounded bg-emerald-100 px-1 py-0.5 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
+                        <span className="rounded bg-succes/10 px-1 py-0.5 text-succes">
                           git{p.git_branch ? ` · ${p.git_branch}` : ''}
                         </span>
                       ) : (
@@ -1383,10 +1383,10 @@ function OrgSkillsCard({
               const vsc = vscodeFileHrefForSkill(s.path, skillsRepoRoot, skillsRoot)
               return (
                 <li key={s.path} className="min-w-0 list-none">
-                  <div className="flex min-w-0 items-stretch gap-0 rounded-md border border-transparent transition hover:border-zinc-200/80 hover:bg-muted/50">
+                  <div className="flex min-w-0 items-stretch gap-0 rounded-md border border-transparent transition hover:border-border/80 hover:bg-muted/50">
                     <button
                       type="button"
-                      className="min-w-0 flex-1 px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+                      className="min-w-0 flex-1 px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                       onClick={() => onOpenSkill(s.path)}
                     >
                       <span className="text-primary block font-mono text-[11px] font-medium">{s.id}</span>
@@ -1493,10 +1493,10 @@ function PluginsSection({
         {overview.plugin_bundles.map((b) => (
           <div
             key={b.id}
-            className="bg-card flex flex-col gap-2 rounded-xl border border-zinc-200 p-4 transition hover:border-zinc-300 hover:shadow-sm"
+            className="bg-card flex flex-col gap-2 rounded-xl border border-border p-4 transition hover:border-border hover:shadow-sm"
           >
             <div className="flex items-center gap-3">
-              <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-succes/10 text-succes">
                 <HugeiconsIcon icon={PuzzleIcon} size={24} strokeWidth={1.7} />
               </div>
               <div className="min-w-0 flex-1">
@@ -1551,11 +1551,11 @@ function TestsSection({
 }) {
   const { t } = useI18n()
   const presets = [
-    { id: 'smoke_mcps', label: 'Smoke MCP', icon: TestTube02Icon, tone: 'bg-emerald-100 text-emerald-700' },
-    { id: 'gateway_pytest', label: 'Pytest gateway', icon: TestTube01Icon, tone: 'bg-blue-100 text-blue-700' },
-    { id: 'sync_mcps_litellm', label: 'Sync → Litellm', icon: CloudUploadIcon, tone: 'bg-violet-100 text-violet-700' },
-    { id: 'build_plugins', label: 'build-plugins.sh', icon: Hammer, tone: 'bg-amber-100 text-amber-700' },
-    { id: 'google_oauth_mehdi_context', label: 'OAuth Google', icon: GoogleIcon, tone: 'bg-rose-100 text-rose-700' },
+    { id: 'smoke_mcps', label: 'Smoke MCP', icon: TestTube02Icon, tone: 'bg-muted text-foreground' },
+    { id: 'gateway_pytest', label: 'Pytest gateway', icon: TestTube01Icon, tone: 'bg-muted text-foreground' },
+    { id: 'sync_mcps_litellm', label: 'Sync → Litellm', icon: CloudUploadIcon, tone: 'bg-muted text-foreground' },
+    { id: 'build_plugins', label: 'build-plugins.sh', icon: Hammer, tone: 'bg-muted text-foreground' },
+    { id: 'google_oauth_mehdi_context', label: 'OAuth Google', icon: GoogleIcon, tone: 'bg-muted text-foreground' },
   ]
   return (
     <div className="space-y-6">
@@ -1571,7 +1571,7 @@ function TestsSection({
             type="button"
             disabled={running}
             onClick={() => runPreset(p.id)}
-            className="group bg-card hover:border-zinc-300 hover:shadow-sm flex flex-col items-start gap-3 rounded-xl border border-zinc-200 p-4 text-left transition disabled:opacity-50"
+            className="group bg-card hover:border-border hover:shadow-sm flex flex-col items-start gap-3 rounded-xl border border-border p-4 text-left transition disabled:opacity-50"
           >
             <div className={cn('flex size-11 items-center justify-center rounded-xl', p.tone)}>
               <HugeiconsIcon icon={p.icon} size={22} strokeWidth={1.7} />
@@ -1595,7 +1595,7 @@ function TestsSection({
           <CardDescription>Flux SSE en direct</CardDescription>
         </CardHeader>
         <CardContent>
-          <pre className="max-h-[420px] overflow-auto rounded-lg bg-zinc-950 p-4 text-[11px] leading-5 whitespace-pre-wrap text-emerald-200">
+          <pre className="max-h-[420px] overflow-auto rounded-lg bg-primary p-4 text-[11px] leading-5 whitespace-pre-wrap text-succes">
             {lines.join('\n') || (running ? 'En attente de sortie…' : '— aucun log —')}
           </pre>
         </CardContent>
@@ -1750,6 +1750,10 @@ function DashlaneLogo({ className }: { className?: string }) {
   return (
     <span
       className={cn(
+        // Le teal est la MARQUE Dashlane, pas une couleur de charte : un hex de
+        // marque tierce reste légitime, il désigne un service. Le texte reste
+        // donc blanc en dur, et non `text-foreground` — sur ce fond sombre,
+        // l'encre de la charte serait illisible dans les deux thèmes.
         'relative inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-sm bg-[#0b6670] text-[9px] font-bold text-white',
         className,
       )}
@@ -1770,7 +1774,7 @@ function SecuritySyncPill({ sync }: { sync?: SecurityEnvSyncRow | null }) {
   }
   if (sync.status === 'synced') {
     return (
-      <span className="inline-flex max-w-[180px] items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 ring-1 ring-emerald-200">
+      <span className="inline-flex max-w-[180px] items-center gap-1.5 rounded-full bg-succes/10 px-2 py-1 text-[11px] font-medium text-succes ring-1 ring-succes/35">
         <DashlaneLogo />
         <span>Dashlane</span>
         {sync.reference_hint ? <span className="truncate font-mono opacity-70">{sync.reference_hint}</span> : null}
@@ -1778,7 +1782,7 @@ function SecuritySyncPill({ sync }: { sync?: SecurityEnvSyncRow | null }) {
     )
   }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 ring-1 ring-amber-200">
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-alerte/10 px-2 py-1 text-[11px] font-medium text-alerte ring-1 ring-alerte/35">
       <DashlaneLogo />
       <span>À créer</span>
     </span>
@@ -2092,35 +2096,35 @@ function SecuritySection({
       label: t('security.osvZab'),
       hint: t('security.osvZabHint'),
       icon: Search01Icon,
-      tone: 'bg-sky-100 text-sky-800',
+      tone: 'bg-info/10 text-info',
     },
     {
       id: 'security_npm_audit_zab_ui',
       label: t('security.npmAudit'),
       hint: t('security.npmAuditHint'),
       icon: CodeFolderIcon,
-      tone: 'bg-emerald-100 text-emerald-800',
+      tone: 'bg-succes/10 text-succes',
     },
     {
       id: 'security_gitleaks_zab',
       label: 'Gitleaks — zab',
       hint: 'Secrets dans l’historique Git du clone zab (binaire gitleaks sur le PATH)',
       icon: LockKeyIcon,
-      tone: 'bg-rose-100 text-rose-800',
+      tone: 'bg-danger/10 text-danger',
     },
     {
       id: 'security_osv_skills',
       label: t('security.osvSkills'),
       hint: t('security.osvSkillsHint'),
       icon: Search01Icon,
-      tone: 'bg-violet-100 text-violet-800',
+      tone: 'bg-muted text-foreground',
     },
     {
       id: 'security_pip_audit_zab',
       label: 'pip-audit — zab',
       hint: 'Audit PyPI de l’environnement projet via uv run --with pip-audit pip-audit',
       icon: CpuIcon,
-      tone: 'bg-amber-100 text-amber-900',
+      tone: 'bg-alerte/10 text-alerte',
     },
   ] as const
 
@@ -2164,12 +2168,12 @@ function SecuritySection({
               className={cn(
                 'rounded-lg border px-3 py-2 text-left transition',
                 selected
-                  ? 'border-zinc-950 bg-zinc-950 text-white shadow-sm dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-950'
-                  : 'border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-700',
+                  ? 'border-border bg-primary text-primary-foreground shadow-sm'
+                  : 'border-border bg-card text-foreground hover:border-border hover:bg-muted',
               )}
             >
               <span className="block text-sm font-semibold">{item.label}</span>
-              <span className={cn('mt-0.5 block text-[11px]', selected ? 'text-zinc-300 dark:text-zinc-600' : 'text-muted-foreground')}>
+              <span className={cn('mt-0.5 block text-[11px]', selected ? 'text-muted-foreground' : 'text-muted-foreground')}>
                 {item.hint}
               </span>
             </button>
@@ -2206,7 +2210,7 @@ function SecuritySection({
               {configuredFiles.map((f) => (
                 <li
                   key={f.path}
-                  className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
+                  className="rounded-lg border border-border p-3"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -2216,14 +2220,14 @@ function SecuritySection({
                           className={cn(
                             'inline-flex rounded-full px-2 py-0.5 ring-1',
                             f.exists
-                              ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
-                              : 'bg-zinc-100 text-zinc-600 ring-zinc-200',
+                              ? 'bg-succes/10 text-succes ring-succes/35'
+                              : 'bg-muted text-muted-foreground ring-ring/40',
                           )}
                         >
                           {f.exists ? 'présent' : 'absent'}
                         </span>
                         {f.configured ? (
-                          <span className="inline-flex rounded-full bg-sky-50 px-2 py-0.5 text-sky-800 ring-1 ring-sky-200">
+                          <span className="inline-flex rounded-full bg-info/10 px-2 py-0.5 text-info ring-1 ring-info/35">
                             configuré
                           </span>
                         ) : null}
@@ -2268,7 +2272,7 @@ function SecuritySection({
       {securitySubmenu === 'local_scans' ? (
       <Card>
         <CardHeader className="flex flex-row items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-muted text-foreground">
             <HugeiconsIcon icon={TestTube02Icon} size={20} />
           </div>
           <div className="min-w-0 flex-1">
@@ -2288,7 +2292,7 @@ function SecuritySection({
                 type="button"
                 disabled={running}
                 onClick={() => runPreset(p.id)}
-                className="group bg-card hover:border-zinc-300 hover:shadow-sm flex flex-col items-start gap-2 rounded-xl border border-zinc-200 p-4 text-left transition disabled:opacity-50"
+                className="group bg-card hover:border-border hover:shadow-sm flex flex-col items-start gap-2 rounded-xl border border-border p-4 text-left transition disabled:opacity-50"
               >
                 <div className={cn('flex size-10 items-center justify-center rounded-xl', p.tone)}>
                   <HugeiconsIcon icon={p.icon} size={20} strokeWidth={1.7} />
@@ -2311,7 +2315,7 @@ function SecuritySection({
           ) : null}
           <div>
             <p className="text-muted-foreground mb-2 text-[11px] font-medium uppercase">Sortie</p>
-            <pre className="max-h-[min(420px,50vh)] overflow-auto rounded-lg bg-zinc-950 p-4 text-[11px] leading-5 whitespace-pre-wrap text-emerald-200">
+            <pre className="max-h-[min(420px,50vh)] overflow-auto rounded-lg bg-primary p-4 text-[11px] leading-5 whitespace-pre-wrap text-succes">
               {jobLines.join('\n') || (running ? 'En attente de sortie…' : '— lancez un scan ci-dessus —')}
             </pre>
           </div>
@@ -2327,7 +2331,7 @@ function SecuritySection({
             ) : (
               <ul className="grid gap-2 sm:grid-cols-2">
                 {reports.slice(0, 6).map((r) => (
-                  <li key={r.key} className="rounded-md border border-zinc-200 p-2 text-xs dark:border-zinc-800">
+                  <li key={r.key} className="rounded-md border border-border p-2 text-xs">
                     <p className="font-mono">{r.key}</p>
                     <p className="text-muted-foreground">{new Date(r.updated_at_utc).toLocaleString()}</p>
                   </li>
@@ -2370,12 +2374,12 @@ function SecuritySection({
               const active = provider.enabled && provider.implemented
               const providerTone =
                 !active
-                  ? 'border-zinc-200 bg-zinc-50 opacity-60 dark:border-zinc-800 dark:bg-zinc-900/40'
+                  ? 'border-border bg-muted opacity-60'
                   : provider.status === 'ready'
-                    ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/60 dark:bg-emerald-950/20'
+                    ? 'border-succes/35 bg-succes/10'
                     : provider.status === 'login_required'
-                      ? 'border-amber-200 bg-amber-50/50 dark:border-amber-900/60 dark:bg-amber-950/20'
-                      : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/30'
+                      ? 'border-alerte/35 bg-alerte/10'
+                      : 'border-border bg-card'
               return (
                 <div
                   key={provider.id}
@@ -2386,7 +2390,7 @@ function SecuritySection({
                       {isDashlane ? (
                         <DashlaneLogo className="size-6 rounded-md" />
                       ) : (
-                        <span className="flex size-6 items-center justify-center rounded-md bg-zinc-200 text-[10px] font-semibold text-zinc-600">
+                        <span className="flex size-6 items-center justify-center rounded-md bg-muted text-[10px] font-semibold text-muted-foreground">
                           {provider.label.slice(0, 2).toUpperCase()}
                         </span>
                       )}
@@ -2399,10 +2403,10 @@ function SecuritySection({
                       className={cn(
                         'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
                         provider.status === 'ready'
-                          ? 'bg-emerald-100 text-emerald-800 ring-emerald-200'
+                          ? 'bg-succes/10 text-succes ring-succes/35'
                           : provider.status === 'login_required'
-                            ? 'bg-amber-100 text-amber-900 ring-amber-200'
-                            : 'bg-zinc-100 text-zinc-600 ring-zinc-200',
+                            ? 'bg-alerte/10 text-alerte ring-alerte/35'
+                            : 'bg-muted text-muted-foreground ring-ring/40',
                       )}
                     >
                       {provider.status_label}
@@ -2474,16 +2478,16 @@ function SecuritySection({
           </div>
 
           {pendingDashlaneRows.length > 0 ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
+            <div className="rounded-lg border border-alerte/35 bg-alerte/10 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Références Dashlane à poser</p>
-                <span className="text-[11px] text-amber-900/80 dark:text-amber-200/80">
+                <p className="text-sm font-semibold text-alerte">Références Dashlane à poser</p>
+                <span className="text-[11px] text-alerte/80">
                   {pendingDashlaneRows.length} variable(s)
                 </span>
               </div>
               <ul className="space-y-2">
                 {pendingDashlaneRows.slice(0, 6).map((row) => (
-                  <li key={row.name} className="rounded-md border border-amber-200 bg-white/70 p-2 dark:border-amber-900/50 dark:bg-zinc-950/30">
+                  <li key={row.name} className="rounded-md border border-alerte/35 bg-white/70 p-2">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="font-mono text-xs font-semibold">{row.name}</p>
@@ -2493,8 +2497,8 @@ function SecuritySection({
                           className={cn(
                             'mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
                             row.dashlane_match_status === 'matched'
-                              ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
-                              : 'bg-amber-50 text-amber-900 ring-amber-200',
+                              ? 'bg-succes/10 text-succes ring-succes/35'
+                              : 'bg-alerte/10 text-alerte ring-alerte/35',
                           )}
                         >
                           {row.dashlane_match_status === 'matched'
@@ -2541,11 +2545,11 @@ function SecuritySection({
           </DialogHeader>
 
           <div className="space-y-3 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3">
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
-                  className="size-4 rounded border-zinc-300"
+                  className="size-4 rounded border-border"
                   checked={dashlaneAllSelected}
                   disabled={dashlaneSyncRunning || selectableDashlaneRows.length === 0}
                   onChange={(event) => setDashlaneSelectionAll(event.currentTarget.checked)}
@@ -2558,7 +2562,7 @@ function SecuritySection({
             </div>
 
             {dashlaneAllSelected ? (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
+              <div className="rounded-lg border border-alerte/35 bg-alerte/10 p-3 text-alerte">
                 <div className="flex gap-2">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                   <div className="space-y-2">
@@ -2566,7 +2570,7 @@ function SecuritySection({
                     <label className="flex items-center gap-2 text-xs font-medium">
                       <input
                         type="checkbox"
-                        className="size-4 rounded border-amber-400"
+                        className="size-4 rounded border-alerte/35"
                         checked={dashlaneConfirmAll}
                         disabled={dashlaneSyncRunning}
                         onChange={(event) => setDashlaneConfirmAll(event.currentTarget.checked)}
@@ -2578,13 +2582,13 @@ function SecuritySection({
               </div>
             ) : null}
 
-            <div className="max-h-[48vh] overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <div className="max-h-[48vh] overflow-auto rounded-lg border border-border">
               {selectableDashlaneRows.length === 0 ? (
                 <p className="text-muted-foreground p-4 text-sm">
                   Aucune variable fichier en attente.
                 </p>
               ) : (
-                <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                <ul className="divide-y divide-border">
                   {selectableDashlaneRows.map((row) => {
                     const checked = dashlaneSelectedNames.has(row.name)
                     const result = dashlaneResults[row.name]
@@ -2602,7 +2606,7 @@ function SecuritySection({
                         <div className="flex items-start gap-3">
                           <input
                             type="checkbox"
-                            className="mt-1 size-4 rounded border-zinc-300"
+                            className="mt-1 size-4 rounded border-border"
                             checked={checked}
                             disabled={dashlaneSyncRunning}
                             onChange={(event) => toggleDashlaneSelection(row.name, event.currentTarget.checked)}
@@ -2611,22 +2615,22 @@ function SecuritySection({
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="font-mono text-xs font-semibold">{row.name}</p>
                               {active ? (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-800 ring-1 ring-sky-200">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info ring-1 ring-info/35">
                                   <Loader2 className="size-3 animate-spin" />
                                   en cours
                                 </span>
                               ) : synced ? (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800 ring-1 ring-emerald-200">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-succes/10 px-2 py-0.5 text-[10px] font-medium text-succes ring-1 ring-succes/35">
                                   <CheckCircle2 className="size-3" />
                                   {created ? 'créé + sync' : 'sync'}
                                 </span>
                               ) : failed ? (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-800 ring-1 ring-rose-200">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger ring-1 ring-danger/35">
                                   <XCircle className="size-3" />
                                   erreur
                                 </span>
                               ) : createRequired ? (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-alerte/10 px-2 py-0.5 text-[10px] font-medium text-alerte ring-1 ring-alerte/35">
                                   <AlertTriangle className="size-3" />
                                   à créer
                                 </span>
@@ -2639,12 +2643,12 @@ function SecuritySection({
                                 : `${row.name}=dl://…`}
                             </p>
                             {row.dashlane_match_status === 'matched' ? (
-                              <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-300">
+                              <p className="mt-2 text-[11px] text-succes">
                                 Secret existant : <span className="font-mono">{row.dashlane_title}</span>
                               </p>
                             ) : (
-                              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50/70 p-2 dark:border-amber-900/50 dark:bg-amber-950/20">
-                                <p className="min-w-0 flex-1 text-[11px] text-amber-900 dark:text-amber-100">
+                              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-alerte/35 bg-alerte/10 p-2">
+                                <p className="min-w-0 flex-1 text-[11px] text-alerte">
                                   {dashlaneProvider?.write_supported ? 'Sera créé dans Dashlane' : 'Création automatique à configurer'} :{' '}
                                   <span className="font-mono">{row.dashlane_title}</span>
                                 </p>
@@ -2666,13 +2670,13 @@ function SecuritySection({
                               </div>
                             )}
                             {resultReason ? (
-                              <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                              <p className="mt-1 text-[11px] text-alerte">
                                 {resultReason}
                                 {result?.hint ? <span className="ml-1">{result.hint}</span> : null}
                               </p>
                             ) : null}
                             {result?.changed_files?.length ? (
-                              <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                              <p className="mt-1 text-[11px] text-succes">
                                 {result.changed_files.length} fichier(s) mis à jour
                               </p>
                             ) : null}
@@ -3216,9 +3220,9 @@ function MemorySection({
             <div className="space-y-3">
               <p className="text-muted-foreground text-xs">{memorySearchResults.length} résultat(s). Cliquez sur “Voir la conversation” pour ouvrir les chunks du document.</p>
               {memorySearchResults.map((r, index) => (
-                <article key={`${r.document_id}:${r.chunk_id}:${r.chunk_index}:${index}`} className="rounded-xl border border-zinc-200 p-3 text-xs dark:border-zinc-800">
+                <article key={`${r.document_id}:${r.chunk_id}:${r.chunk_index}:${index}`} className="rounded-xl border border-border p-3 text-xs">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
+                    <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
                       {r.source}
                     </span>
                     <span className="text-muted-foreground">{r.wing ?? '—'} / {r.room ?? '—'}</span>
@@ -3249,14 +3253,14 @@ function MemorySection({
         </CardContent>
       </Card>
 
-      <details className="rounded-xl border border-zinc-200 bg-card dark:border-zinc-800" data-testid="memory-tools-details">
+      <details className="rounded-xl border border-border bg-card" data-testid="memory-tools-details">
         <summary className="cursor-pointer select-none px-5 py-4 text-sm font-medium">
           Outils techniques mémoire
           <span className="text-muted-foreground ml-2 font-normal">
             scan projet, config, MemPalace, état Postgres, import JSONL
           </span>
         </summary>
-        <div className="space-y-4 border-t border-zinc-200 p-5 dark:border-zinc-800">
+        <div className="space-y-4 border-t border-border p-5">
           <Card data-testid="memory-project-scan">
             <CardHeader>
               <CardTitle>Scan projet & contexte mémoire</CardTitle>
@@ -3398,12 +3402,12 @@ function MemorySection({
               Aucun projet détecté. Configurez <code className="font-mono">projects_roots</code> dans l’onglet Projets.
             </p>
           ) : (
-            <ul className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+            <ul className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-border p-3">
               {sortedProjects.map((p, index) => (
                 <li key={`${p.org}:${p.name}:${p.path}:${index}`} className="flex items-start gap-2 text-sm">
                   <input
                     type="checkbox"
-                    className="mt-1 size-4 shrink-0 rounded border-zinc-300"
+                    className="mt-1 size-4 shrink-0 rounded border-border"
                     checked={selectedMinePaths.has(p.path)}
                     disabled={memoryBusy}
                     onChange={() => toggleMinePath(p.path)}
@@ -3518,7 +3522,7 @@ function MemorySection({
                 </li>
               ) : null}
               {status.error ? (
-                <li className="text-amber-800 dark:text-amber-200">{status.error}</li>
+                <li className="text-alerte">{status.error}</li>
               ) : null}
             </ul>
           )}
@@ -3644,7 +3648,7 @@ function MemoryProjectScanSummary({ scan }: { scan: Record<string, unknown> }) {
   const skillCount = typeof scan.skill_md_count === 'number' ? scan.skill_md_count : 0
 
   return (
-    <div className="rounded-lg border border-zinc-200 p-3 text-xs dark:border-zinc-800">
+    <div className="rounded-lg border border-border p-3 text-xs">
       <div className="grid gap-2 md:grid-cols-2">
         <p className="text-muted-foreground">
           Racine scannée :{' '}
@@ -3681,7 +3685,7 @@ function MemoryProjectScanSummary({ scan }: { scan: Record<string, unknown> }) {
         </p>
       </div>
       {warnings.length > 0 ? (
-        <ul className="mt-3 space-y-1 text-amber-700 dark:text-amber-300">
+        <ul className="mt-3 space-y-1 text-alerte">
           {warnings.map((w) => (
             <li key={w}>{w}</li>
           ))}
@@ -3967,7 +3971,7 @@ function ProviderUsageCard({
   }
   if (payload.ok === false) {
     return (
-      <div className="text-rose-700 text-xs dark:text-rose-400">
+      <div className="text-danger text-xs">
         {String(payload.error ?? payload.stderr_preview ?? 'erreur')}
         {typeof payload.exit_code === 'number' ? ` (exit ${payload.exit_code})` : ''}
       </div>
@@ -4161,13 +4165,13 @@ function ModelsCodySection() {
           <div className="space-y-4">
             {agentsErr ? <p className="text-destructive text-sm">{agentsErr}</p> : null}
             {discoveryNotice ? (
-              <p className="text-amber-800 text-sm dark:text-amber-200">{discoveryNotice}</p>
+              <p className="text-alerte text-sm">{discoveryNotice}</p>
             ) : null}
             {discoveryPayload?.codexbar_error && discoveryPayload.codexbar_error !== 'codexbar_config_missing' ? (
-              <p className="text-amber-800 text-sm dark:text-amber-200">CodexBar : {discoveryPayload.codexbar_error}</p>
+              <p className="text-alerte text-sm">CodexBar : {discoveryPayload.codexbar_error}</p>
             ) : null}
             {discoveryPayload?.agentpipe_error ? (
-              <p className="text-amber-800 text-sm dark:text-amber-200">Agentpipe : {discoveryPayload.agentpipe_error}</p>
+              <p className="text-alerte text-sm">Agentpipe : {discoveryPayload.agentpipe_error}</p>
             ) : null}
             {!agentsLoading && discoveryPayload?.codexbar_error === 'codexbar_config_missing' ? (
               <p className="text-muted-foreground text-sm">
@@ -4278,7 +4282,7 @@ function SkillEditorPanel({
       <div className="bg-background flex h-full w-full max-w-3xl flex-col border-l shadow-2xl">
         <div className="flex items-center justify-between border-b px-5 py-3">
           <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-md bg-zinc-100">
+            <div className="flex size-8 items-center justify-center rounded-md bg-muted">
               <HugeiconsIcon icon={PencilEdit02Icon} size={16} />
             </div>
             <div>

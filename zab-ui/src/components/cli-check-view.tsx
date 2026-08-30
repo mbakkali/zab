@@ -56,10 +56,10 @@ type CliCheckConfigPayload = {
 }
 
 function statusTone(status: CliCheckStatus): string {
-  if (status === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-  if (status === 'warn') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
-  if (status === 'fail') return 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300'
-  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+  if (status === 'ok') return 'border-succes/35 bg-succes/10 text-succes'
+  if (status === 'warn') return 'border-alerte/35 bg-alerte/10 text-alerte'
+  if (status === 'fail') return 'border-danger/35 bg-danger/10 text-danger'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function StatusIcon({ status }: { status: CliCheckStatus }) {
@@ -378,19 +378,19 @@ export function CliCheckView() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>{t('common.ok')}</CardDescription>
-            <CardTitle className="text-3xl text-emerald-600">{summary.checked ? summary.ok : '—'}</CardTitle>
+            <CardTitle className="text-3xl text-succes">{summary.checked ? summary.ok : '—'}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>{t('common.warn')}</CardDescription>
-            <CardTitle className="text-3xl text-amber-600">{summary.checked ? summary.warn : '—'}</CardTitle>
+            <CardTitle className="text-3xl text-alerte">{summary.checked ? summary.warn : '—'}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>{t('common.fail')}</CardDescription>
-            <CardTitle className="text-3xl text-red-600">{summary.checked ? summary.fail : '—'}</CardTitle>
+            <CardTitle className="text-3xl text-danger">{summary.checked ? summary.fail : '—'}</CardTitle>
           </CardHeader>
         </Card>
       </div>
