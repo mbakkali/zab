@@ -1,101 +1,97 @@
-# React + TypeScript + Vite
+# zab-ui — le dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + TypeScript + Vite, bâti sur le socle **flowmetrik-whiteapp**
+(`~/projects/flowmetrik-whiteapp`, `github.com/flowmetrik/flowmetrik-whiteapp`).
 
-Currently, two official plugins are available:
+## La charte n'est pas dans ce dépôt
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-## Onglet Skills (registre)
-
-- Fichier source : `~/.config/zab/skills-registry.json` (voir `docs/skills-registry-migration.md` à la racine du dépôt zab).
-- Onglets **Adoptées / Candidats / Ignorées / Conflits / Toutes** filtrent l’index API (`GET /api/skills?status=…`).
-- **Mettre à jour Hermes** envoie `POST /api/skills/hermes-update` avec `{ "apply": true }` ; **Copier fragment Hermes** appelle `POST /api/skills/hermes-export` et place le YAML dans le presse-papiers.
-
-## Tests Playwright (dashboard Zab)
-
-Depuis `zab-ui`, après build :
+`src/styles/tokens.css` est **généré** depuis
+`flowmetrik-cowork/assets/brand/tokens/` :
 
 ```bash
-npm run build && npx playwright test
+npm run tokens            # régénère
+npm run tokens -- --check # échoue si le fichier a été édité à la main
 ```
 
-Le serveur API + assets statiques est démarré via `scripts/zab-e2e-dashboard.sh` (port `18742` par défaut, surcharge avec `ZAB_E2E_PORT`).
+Une couleur se corrige dans la charte, jamais ici. Deux conséquences :
 
-### Cibler une instance déjà déployée (prod / préprod)
-
-Sans lancer le serveur local :
+- **`assets/brand/dist/` n'est pas synchronisé** entre le Mac et la VM.
+  Reconstruire d'abord — `python3 assets/tools/build_css.py` dans le cowork —
+  sinon `sync_tokens.py` lit un CSS absent ou périmé et les couleurs sortent
+  fausses sans que rien ne le dise.
+- Aucune classe de palette Tailwind (`bg-zinc-100`, `text-emerald-700`) ne doit
+  réapparaître. Le contrôle :
 
 ```bash
-PLAYWRIGHT_BASE_URL=https://votre-hote-zab npm run build && npx playwright test
+python3 ~/projects/flowmetrik-whiteapp/scripts/audit_migration.py .
 ```
 
-Les scénarios **recherche conversations / détail / filtre provider** nécessitent Postgres configuré (`MEHDI_MEMORY_DATABASE_URL`) et des données synchronisées ; sinon ils sont ignorés (`test.skip`). Pour forcer un terme de recherche : `PLAYWRIGHT_CONVERSATIONS_SEARCH_TERM="..."`.
+Il doit rendre « 0 occurrences ». Le seul hex admis hors `styles/` est le teal
+Dashlane : une marque tierce désigne un service, pas une intention de design.
 
-Dry-run sync long (optionnel) : `PLAYWRIGHT_CONVERSATIONS_JOB=dry-run`.
+## Le vocabulaire
+
+| Rôle | Classe |
+|---|---|
+| surfaces | `bg-background`, `bg-card`, `bg-muted`, `bg-secondary` |
+| encre | `text-foreground`, `text-muted-foreground` |
+| aplat fort | `bg-primary` + `text-primary-foreground` |
+| statut | `bg-succes/10 text-succes`, idem `alerte`, `danger`, `info` |
+| filets | `border-border`, `ring-ring/40` |
+
+**Un statut se nomme par son sens, jamais par sa teinte.** `emerald` se renomme
+le jour où la charte change de vert ; `succes`, non.
+
+**Pas de variante `dark:` sur une couleur de charte.** Les tokens basculent
+seuls avec le thème ; en ajouter une produit deux règles concurrentes dont la
+seconde gagne, au hasard de l'ordre de compilation.
+
+**Une teinte sans état est une faute.** Un compteur « Plugins : 0 » peint en
+vert annonce un succès qui n'existe pas. Décoratif ⇒ `bg-muted`.
+
+`scripts/migration_charte.py` a fait la bascule de 1 424 occurrences le
+2026-08-30. Il est gardé pour que la transformation reste relisible ; il n'a
+pas vocation à resservir.
+
+## Servir le dashboard — Mac comme VM
+
+`zab dashboard` sert cette application **si elle est construite**, et c'est là
+que ça se joue. `zab_ui_dist_dir()` cherche dans l'ordre :
+
+1. `$ZAB_UI_DIST` ;
+2. le dossier frère `<dépôt zab>/zab-ui/dist` ;
+3. le `ui_dist` empaqueté dans le wheel.
+
+**Piège, identique sur les deux machines :** quand `zab` est installé en outil
+uv (`~/.local/share/uv/tools/zab`), le point 2 pointe vers `site-packages` et ne
+trouve rien, et le point 3 n'existe pas dans ce wheel. Le dashboard sert alors
+son API et **une page blanche**, sans une erreur. `dist/` n'étant pas
+synchronisé entre le Mac et la VM, chaque machine doit le construire.
+
+```bash
+npm ci && npm run build
+ZAB_UI_DIST="$PWD/dist" zab dashboard --port 8742 --no-open
+```
+
+Sur la VM, c'est ce que fait l'entrée `zab` de
+`flowmetrik-cowork/deploy/flowhub/apps.yaml` :
+
+- tailnet `https://cowork-linux.tailef30ea.ts.net:8464/`
+- nom : `https://zab.cowork.flowmetrik.com/`
+- service : `flowapp-zab.service`
+
+`public: false`, et c'est une décision : le dashboard expose la configuration,
+les journaux et les noms de variables du coffre. L'appartenance au tailnet tient
+lieu d'authentification.
+
+## Avant de livrer
+
+```bash
+npm run tokens -- --check
+npm run build          # compile aussi les types
+npm run lint
+```
+
+react-doctor reste à **38/100** sur cet arbre : composants géants, dépendances
+d'effet, accessibilité. C'est de la dette antérieure à la migration de charte —
+le score était identique avant — et un chantier distinct.
