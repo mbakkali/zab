@@ -92,11 +92,11 @@ async function apiPostJson<T>(path: string, body: Record<string, unknown>): Prom
 
 function sourceBadgeColor(label: string): string {
   const lower = label.toLowerCase()
-  if (lower.includes('gitlab')) return 'bg-orange-50 text-orange-800 ring-orange-200'
-  if (lower.includes('linear')) return 'bg-purple-50 text-purple-800 ring-purple-200'
-  if (lower.includes('notion')) return 'bg-gray-100 text-gray-700 ring-gray-200'
-  if (lower.includes('github')) return 'bg-slate-100 text-slate-700 ring-slate-200'
-  return 'bg-zinc-100 text-zinc-700 ring-zinc-200'
+  if (lower.includes('gitlab')) return 'bg-alerte/10 text-alerte ring-alerte/35'
+  if (lower.includes('linear')) return 'bg-muted text-foreground ring-ring/40'
+  if (lower.includes('notion')) return 'bg-muted text-foreground ring-ring/40'
+  if (lower.includes('github')) return 'bg-muted text-foreground ring-ring/40'
+  return 'bg-muted text-foreground ring-ring/40'
 }
 
 function formatTaskDate(iso: string, locale: string): string {
@@ -380,16 +380,16 @@ export function TasksInboxView({ onJump }: { onJump?: (id: NavId) => void } = {}
                             className={cn(
                               'inline-flex w-fit rounded-full px-2 py-0.5 text-[10px] font-medium ring-1',
                               src.status === 'ok'
-                                ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
+                                ? 'bg-succes/10 text-succes ring-succes/35'
                                 : src.status === 'skipped'
-                                  ? 'bg-zinc-100 text-zinc-700 ring-zinc-200'
-                                  : 'bg-rose-50 text-rose-800 ring-rose-200',
+                                  ? 'bg-muted text-foreground ring-ring/40'
+                                  : 'bg-danger/10 text-danger ring-danger/35',
                             )}
                           >
                             {src.status}
                           </span>
                           {src.reason && (
-                            <span className="text-[10px] text-red-600 truncate max-w-[180px]" title={src.reason}>
+                            <span className="text-[10px] text-danger truncate max-w-[180px]" title={src.reason}>
                               {src.reason}
                             </span>
                           )}
@@ -431,7 +431,7 @@ export function TasksInboxView({ onJump }: { onJump?: (id: NavId) => void } = {}
                                 size="sm"
                                 variant="ghost"
                                 onClick={() => onJump('security')}
-                                className="h-7 text-amber-700 hover:bg-amber-50 hover:text-amber-900"
+                                className="h-7 text-alerte hover:bg-alerte/10 hover:text-alerte"
                                 title={
                                   tokenAbsent
                                     ? t('tasks.setTokenTitle', { token: src.env_token })
@@ -467,7 +467,7 @@ export function TasksInboxView({ onJump }: { onJump?: (id: NavId) => void } = {}
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-800">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-info/10 text-info">
             <HugeiconsIcon icon={CheckListIcon} size={20} />
           </div>
           <div className="flex-1">
@@ -581,7 +581,7 @@ export function TasksInboxView({ onJump }: { onJump?: (id: NavId) => void } = {}
                   key={k}
                   className={cn(
                     'rounded-full px-2 py-0.5 font-mono text-[10px] ring-1',
-                    ok ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : 'bg-zinc-100 text-zinc-600 ring-zinc-200',
+                    ok ? 'bg-succes/10 text-succes ring-succes/35' : 'bg-muted text-muted-foreground ring-ring/40',
                   )}
                 >
                   {k}
@@ -595,7 +595,7 @@ export function TasksInboxView({ onJump }: { onJump?: (id: NavId) => void } = {}
       </Card>
 
       {data && data.parse_errors.length > 0 ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+        <div className="rounded-lg border border-alerte/35 bg-alerte/10 p-4 text-sm text-alerte">
           <p className="font-medium">Entrées task_sources ignorées</p>
           <ul className="mt-2 list-inside list-disc space-y-0.5">
             {data.parse_errors.map((e) => (

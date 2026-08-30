@@ -1,0 +1,189 @@
+/* ============================================================
+   Le mouvement des icônes.
+   Source des composants : src/components/brand/icones-animees.tsx
+
+   Toutes suivent la même règle : elles s'animent quand on les DÉCLENCHE
+   — survol, focus, ou classe `.joue` posée par la vitrine — jamais en
+   boucle. Une icône qui bouge en permanence dans une barre d'outils
+   attire l'œil quarante fois par heure pour ne rien dire.
+
+   Les deux exceptions sont `a-rotation` (un chargement, qui doit tourner
+   tant qu'on attend) et `a-flux` (une donnée qui circule, qui doit
+   circuler). Elles sont explicites, et elles s'arrêtent avec
+   `prefers-reduced-motion`.
+   ============================================================ */
+
+.fm-ico [class^='a-'] { transition: transform 260ms var(--motion-ease-out); }
+
+/* Le déclencheur : survol du parent, focus clavier, ou classe posée. */
+.fm-ico * { animation-play-state: paused; }
+.groupe-ico:hover .fm-ico *,
+.groupe-ico:focus-visible .fm-ico *,
+.fm-ico:hover *,
+.fm-ico.joue * { animation-play-state: running; }
+
+/* --- Actions ------------------------------------------------------------ */
+@keyframes a-descend { 0%,100% { transform: translateY(0) } 45% { transform: translateY(3px) } }
+@keyframes a-monte   { 0%,100% { transform: translateY(0) } 45% { transform: translateY(-3px) } }
+/* Chaque image-clé déclare TOUTES les propriétés qu'elle touche, 0 % compris.
+   Une propriété absente du 0 % laisse l'état de repos à la merci de
+   l'interpolation : l'avion se figeait à demi effacé, et l'icône était fausse
+   tant qu'on ne la survolait pas. */
+@keyframes a-part    { 0%   { transform: translate(0,0); opacity: 1 }
+                       45%  { transform: translate(4px,-4px); opacity: 0 }
+                       46%  { transform: translate(-4px,4px); opacity: 0 }
+                       100% { transform: translate(0,0); opacity: 1 } }
+@keyframes a-tourne  { to { transform: rotate(360deg) } }
+@keyframes a-tourne-45 { 0%,100% { transform: rotate(0) } 50% { transform: rotate(90deg) } }
+@keyframes a-balaie  { 0%,100% { transform: none } 30% { transform: translate(-2px,-1px) }
+                       65% { transform: translate(2px,1px) } }
+@keyframes a-glisse  { 0%,100% { transform: none } 50% { transform: translateX(5px) } }
+@keyframes a-glisse2 { 0%,100% { transform: none } 50% { transform: translateX(-4px) } }
+@keyframes a-monte-c { 0%,100% { transform: none } 50% { transform: translateY(-2px) } }
+@keyframes a-desc-c  { 0%,100% { transform: none } 50% { transform: translateY(2px) } }
+@keyframes a-couvercle { 0%,100% { transform: none } 45% { transform: translateY(-2.5px) rotate(-8deg) } }
+@keyframes a-ecrit   { 0%,100% { transform: none } 50% { transform: translate(1px,-1px) } }
+@keyframes a-decale  { 0%,100% { transform: none } 50% { transform: translate(1.5px,-1.5px) } }
+@keyframes a-noeud1  { 0%,100% { transform: none } 50% { transform: translate(1.5px,-1.5px) } }
+@keyframes a-noeud2  { 0%,100% { transform: none } 50% { transform: translate(1.5px,1.5px) } }
+
+.fm-ico .a-descend      { animation: a-descend 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-monte        { animation: a-monte 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-part         { animation: a-part 1100ms var(--motion-ease-out) infinite }
+.fm-ico .a-tourne       { animation: a-tourne 1100ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-tourne-45    { animation: a-tourne-45 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-balaie       { animation: a-balaie 1200ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-glisse       { animation: a-glisse 1200ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-glisse-2     { animation: a-glisse2 1200ms var(--motion-ease-in-out) infinite 120ms }
+.fm-ico .a-monte-court  { animation: a-monte-c 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-descend-court{ animation: a-desc-c 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-couvercle    { animation: a-couvercle 900ms var(--motion-ease-out) infinite;
+                          transform-origin: 20% 100% }
+.fm-ico .a-ecrit        { animation: a-ecrit 800ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-decale       { animation: a-decale 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-noeud-1      { animation: a-noeud1 1000ms var(--motion-ease-out) infinite }
+.fm-ico .a-noeud-2      { animation: a-noeud2 1000ms var(--motion-ease-out) infinite }
+
+/* --- États -------------------------------------------------------------- */
+/* La coche se DESSINE. `pathLength={100}` normalise la longueur du tracé :
+   sans lui il faudrait mesurer le chemin en JavaScript, et le chiffre
+   deviendrait faux à la première retouche du dessin. */
+@keyframes a-trace   { from { stroke-dashoffset: 100 } to { stroke-dashoffset: 0 } }
+@keyframes a-secoue  { 0%,100% { transform: none } 20% { transform: translateX(-1.5px) }
+                       40% { transform: translateX(1.5px) } 60% { transform: translateX(-1px) }
+                       80% { transform: translateX(1px) } }
+@keyframes a-clignote{ 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+@keyframes a-rotation{ to { transform: rotate(360deg) } }
+@keyframes a-sonne   { 0%,100% { transform: rotate(0) } 15% { transform: rotate(9deg) }
+                       35% { transform: rotate(-7deg) } 55% { transform: rotate(4deg) }
+                       75% { transform: rotate(-2deg) } }
+@keyframes a-anse    { 0%,100% { transform: none } 45% { transform: translateY(-2.5px) } }
+
+.fm-ico .a-trace   { stroke-dasharray: 100; animation: a-trace 620ms var(--motion-ease-out) infinite }
+.fm-ico .a-secoue  { animation: a-secoue 700ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-clignote{ animation: a-clignote 900ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-sonne   { animation: a-sonne 1100ms var(--motion-ease-out) infinite }
+.fm-ico .a-anse    { animation: a-anse 900ms var(--motion-ease-out) infinite }
+/* Le chargement tourne SANS déclencheur : c'est le seul cas où la boucle
+   est le sens même de l'icône. */
+.fm-ico .a-rotation { animation: a-rotation 900ms linear infinite; animation-play-state: running }
+
+/* --- Données ------------------------------------------------------------ */
+/* Le repos est la barre PLEINE : l'animation s'en écarte et y revient. Avec
+   `alternate` et un départ à scaleY(.2), les barres restaient écrasées tant
+   qu'on ne survolait pas — le dessin au repos était faux. */
+@keyframes a-pousse  { 0%,100% { transform: scaleY(1) } 50% { transform: scaleY(.3) } }
+@keyframes a-pointe  { 0%,100% { transform: none } 50% { transform: translate(1.5px,-1.5px) } }
+@keyframes a-couche  { 0%,100% { transform: none } 50% { transform: translateY(1.5px) } }
+@keyframes a-corne   { 0%,100% { transform: none } 50% { transform: translate(-1px,1px) } }
+@keyframes a-lignes  { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+@keyframes a-colonne { 0%,100% { transform: none } 50% { transform: translateY(1.5px) } }
+@keyframes a-epingle { 0%,100% { transform: none } 40% { transform: translateY(-3px) } }
+
+.fm-ico .a-pousse-1 { animation: a-pousse 1000ms var(--motion-ease-out) infinite;
+                      transform-origin: 7px 20px }
+.fm-ico .a-pousse-2 { animation: a-pousse 1000ms var(--motion-ease-out) infinite 120ms;
+                      transform-origin: 12px 20px }
+.fm-ico .a-pousse-3 { animation: a-pousse 1000ms var(--motion-ease-out) infinite 240ms;
+                      transform-origin: 17px 20px }
+.fm-ico .a-pointe   { animation: a-pointe 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-couche   { animation: a-couche 1000ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-corne    { animation: a-corne 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-lignes   { animation: a-lignes 1100ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-colonne  { animation: a-colonne 900ms var(--motion-ease-in-out) infinite }
+.fm-ico .a-epingle  { animation: a-epingle 800ms var(--motion-ease-out) infinite }
+
+/* --- Marque et agents ---------------------------------------------------- */
+@keyframes a-yeux     { 0%,92%,100% { transform: scaleY(1) } 96% { transform: scaleY(.1) } }
+@keyframes a-scintille{ 0%,100% { transform: scale(1); opacity: 1 }
+                        50% { transform: scale(1.12); opacity: .75 } }
+@keyframes a-flux     { to { stroke-dashoffset: -10 } }
+@keyframes a-branche  { 0%,100% { transform: none } 50% { transform: translate(1px,-1px) } }
+@keyframes a-branche2 { 0%,100% { transform: none } 50% { transform: translate(-1px,1px) } }
+@keyframes a-aig      { to { transform: rotate(360deg) } }
+@keyframes a-cercle   { 0%,100% { transform: scale(1) } 50% { transform: scale(.86) } }
+
+.fm-ico .a-yeux       { animation: a-yeux 2600ms steps(1,end) infinite;
+                        transform-origin: center 14px }
+.fm-ico .a-scintille  { animation: a-scintille 1100ms var(--motion-ease-in-out) infinite;
+                        transform-origin: 12px 10.6px }
+.fm-ico .a-scintille-2{ animation: a-scintille 1100ms var(--motion-ease-in-out) infinite 200ms;
+                        transform-origin: 19px 19px }
+/* Un flux circule sans déclencheur : c'est ce qu'il représente. */
+.fm-ico .a-flux       { animation: a-flux 900ms linear infinite; animation-play-state: running }
+.fm-ico .a-branche-1  { animation: a-branche 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-branche-2  { animation: a-branche2 900ms var(--motion-ease-out) infinite }
+.fm-ico .a-aiguille   { animation: a-aig 3000ms linear infinite }
+.fm-ico .a-aiguille-min { animation: a-aig 12000ms linear infinite }
+.fm-ico .a-cercle-1   { animation: a-cercle 1200ms var(--motion-ease-in-out) infinite;
+                        transform-origin: 12px 12px }
+.fm-ico .a-cercle-2   { animation: a-cercle 1200ms var(--motion-ease-in-out) infinite 140ms;
+                        transform-origin: 12px 12px }
+
+/* Le mouvement se coupe, le dessin reste. Une icône figée doit rester
+   lisible : on arrête l'animation, on ne la masque pas. */
+@media (prefers-reduced-motion: reduce) {
+  .fm-ico *, .fm-ico .a-rotation, .fm-ico .a-flux { animation: none !important }
+  .fm-ico .a-trace { stroke-dashoffset: 0 }
+}
+
+/* ============================================================
+   AG Grid — ce que l'API de thème ne couvre pas.
+   Composant : src/components/ui/grille.tsx
+   ============================================================ */
+
+/* Le focus de cellule. AG Grid le marque par une simple bordure d'encre, qui
+   se confond avec le filet de la grille sur une ligne survolée — et qui reste
+   invisible pour une sonde d'accessibilité comme pour un utilisateur pressé.
+   On lui pose l'anneau de focus de la charte, le même que partout ailleurs. */
+.ag-cell-focus:not(.ag-cell-range-selected) {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: -2px;
+}
+
+/* Les LIGNES et les en-têtes d'AG Grid portent un `tabindex` : ce sont des
+   conteneurs de focus, pas des cibles visibles — l'indicateur vit sur la
+   cellule. */
+.ag-row:focus-visible,
+.ag-header-row:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* Les CONTRÔLES d'AG Grid — boutons de pagination, sélecteur de taille de
+   page, boutons de menu de colonne — n'ont aucun anneau de focus par défaut.
+   Ce n'est pas un faux positif : ce sont de vraies cibles clavier, et sans
+   anneau l'utilisateur tabule à l'aveugle dans la barre de pagination.
+   La charte refuse le focus invisible ; la règle vaut aussi pour une
+   dépendance tierce. */
+.ag-button:focus-visible,
+.ag-paging-button:focus-visible,
+.ag-picker-field-wrapper:focus-within,
+.ag-header-cell-menu-button:focus-visible,
+.ag-header-icon:focus-visible,
+.ag-tab:focus-visible,
+.ag-input-field-input:focus-visible {
+  outline: 2px solid var(--ring) !important;
+  outline-offset: 2px;
+  border-radius: var(--mode-radius-control);
+}

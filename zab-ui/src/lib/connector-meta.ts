@@ -70,85 +70,85 @@ export type ConnectorMeta = {
 const fallback: ConnectorMeta = {
   label: 'MCP',
   icon: McpServerIcon,
-  tone: 'bg-zinc-100 text-zinc-700',
-  ringTone: 'ring-zinc-200',
+  tone: 'bg-muted text-foreground',
+  ringTone: 'ring-ring/40',
 }
 
 export function connectorMeta(rawName: string): ConnectorMeta {
   const name = rawName.toLowerCase().replace(/^_todo[-_]/, '').replace(/[-_]+/g, ' ').trim()
   const has = (...words: string[]) => words.some((w) => name.includes(w))
 
-  if (has('linear')) return { label: 'Linear', icon: LinearArrow01Icon, tone: 'bg-violet-100 text-violet-700', ringTone: 'ring-violet-200' }
-  if (has('notion')) return { label: 'Notion', icon: NotionIcon, tone: 'bg-zinc-100 text-zinc-900', ringTone: 'ring-zinc-200' }
-  if (has('gmail', 'mail')) return { label: 'Gmail', icon: GmailIcon, tone: 'bg-rose-100 text-rose-600', ringTone: 'ring-rose-200' }
-  if (has('drive', 'gdrive')) return { label: 'Google Drive', icon: GoogleDriveIcon, tone: 'bg-emerald-100 text-emerald-700', ringTone: 'ring-emerald-200' }
-  if (has('calendar', 'gcal')) return { label: 'Google Calendar', icon: Calendar03Icon, tone: 'bg-sky-100 text-sky-700', ringTone: 'ring-sky-200' }
-  if (has('google')) return { label: 'Google', icon: GoogleIcon, tone: 'bg-amber-100 text-amber-700', ringTone: 'ring-amber-200' }
-  if (has('github')) return { label: 'GitHub', icon: GithubIcon, tone: 'bg-zinc-900 text-white', ringTone: 'ring-zinc-300' }
-  if (has('gitlab')) return { label: 'GitLab', icon: GitlabIcon, tone: 'bg-orange-100 text-orange-700', ringTone: 'ring-orange-200' }
-  if (has('slack')) return { label: 'Slack', icon: SlackIcon, tone: 'bg-fuchsia-100 text-fuchsia-700', ringTone: 'ring-fuchsia-200' }
-  if (has('figma')) return { label: 'Figma', icon: FigmaIcon, tone: 'bg-rose-100 text-rose-600', ringTone: 'ring-rose-200' }
-  if (has('whatsapp business')) return { label: 'WhatsApp Business', icon: WhatsappBusinessIcon, tone: 'bg-emerald-100 text-emerald-700', ringTone: 'ring-emerald-200' }
-  if (has('whatsapp', 'evolution')) return { label: 'WhatsApp', icon: WhatsappIcon, tone: 'bg-emerald-100 text-emerald-700', ringTone: 'ring-emerald-200' }
-  if (has('hubspot')) return { label: 'HubSpot', icon: HubspotIcon, tone: 'bg-orange-100 text-orange-700', ringTone: 'ring-orange-200' }
-  if (has('spotify')) return { label: 'Spotify', icon: SpotifyIcon, tone: 'bg-emerald-100 text-emerald-700', ringTone: 'ring-emerald-200' }
-  if (has('fireflies', 'transcript')) return { label: 'Fireflies', icon: Mic01Icon, tone: 'bg-amber-100 text-amber-700', ringTone: 'ring-amber-200' }
-  if (has('gamma')) return { label: 'Gamma', icon: Sparkles01Icon, tone: 'bg-fuchsia-100 text-fuchsia-700', ringTone: 'ring-fuchsia-200' }
-  if (has('apify', 'scrape', 'crawl')) return { label: 'Apify', icon: GlobeIcon, tone: 'bg-emerald-100 text-emerald-700', ringTone: 'ring-emerald-200' }
-  if (has('hugeicon', 'icons')) return { label: 'HugeIcons', icon: PaintBucketIcon, tone: 'bg-violet-100 text-violet-700', ringTone: 'ring-violet-200' }
-  if (has('qonto', 'banking', 'bank')) return { label: rawName.includes('qonto') ? 'Qonto' : 'Banque', icon: Bank01Icon, tone: 'bg-indigo-100 text-indigo-700', ringTone: 'ring-indigo-200' }
-  if (has('pennylane', 'compta', 'invoice', 'facture')) return { label: rawName.includes('pennylane') ? 'Pennylane' : 'Comptabilité', icon: ReceiptDollarIcon, tone: 'bg-amber-100 text-amber-700', ringTone: 'ring-amber-200' }
-  if (has('pexels', 'image', 'photo')) return { label: 'Pexels', icon: Image01Icon, tone: 'bg-teal-100 text-teal-700', ringTone: 'ring-teal-200' }
-  if (has('supabase', 'database', 'postgres', 'sql')) return { label: rawName.includes('supabase') ? 'Supabase' : 'Database', icon: Database02Icon, tone: 'bg-emerald-100 text-emerald-700', ringTone: 'ring-emerald-200' }
-  if (has('flowmetrik', 'gateway')) return { label: 'Flowmetrik', icon: WorkflowSquare03Icon, tone: 'bg-blue-100 text-blue-700', ringTone: 'ring-blue-200' }
-  if (has('cowork')) return { label: 'Cowork', icon: Brain02Icon, tone: 'bg-violet-100 text-violet-700', ringTone: 'ring-violet-200' }
-  if (has('clay', 'enrich', 'prospect', 'mipim')) return { label: 'Prospection', icon: ChartIcon, tone: 'bg-orange-100 text-orange-700', ringTone: 'ring-orange-200' }
-  if (has('memory')) return { label: 'Memory', icon: Brain02Icon, tone: 'bg-fuchsia-100 text-fuchsia-700', ringTone: 'ring-fuchsia-200' }
-  if (has('http', 'api', 'webhook')) return { label: 'HTTP/API', icon: ApiIcon, tone: 'bg-sky-100 text-sky-700', ringTone: 'ring-sky-200' }
+  if (has('linear')) return { label: 'Linear', icon: LinearArrow01Icon, tone: 'bg-muted text-foreground', ringTone: 'ring-ring/40' }
+  if (has('notion')) return { label: 'Notion', icon: NotionIcon, tone: 'bg-muted text-foreground', ringTone: 'ring-ring/40' }
+  if (has('gmail', 'mail')) return { label: 'Gmail', icon: GmailIcon, tone: 'bg-danger/10 text-danger', ringTone: 'ring-danger/35' }
+  if (has('drive', 'gdrive')) return { label: 'Google Drive', icon: GoogleDriveIcon, tone: 'bg-succes/10 text-succes', ringTone: 'ring-succes/35' }
+  if (has('calendar', 'gcal')) return { label: 'Google Calendar', icon: Calendar03Icon, tone: 'bg-info/10 text-info', ringTone: 'ring-info/35' }
+  if (has('google')) return { label: 'Google', icon: GoogleIcon, tone: 'bg-alerte/10 text-alerte', ringTone: 'ring-alerte/35' }
+  if (has('github')) return { label: 'GitHub', icon: GithubIcon, tone: 'bg-primary text-primary-foreground', ringTone: 'ring-ring/40' }
+  if (has('gitlab')) return { label: 'GitLab', icon: GitlabIcon, tone: 'bg-alerte/10 text-alerte', ringTone: 'ring-alerte/35' }
+  if (has('slack')) return { label: 'Slack', icon: SlackIcon, tone: 'bg-muted text-foreground', ringTone: 'ring-ring/40' }
+  if (has('figma')) return { label: 'Figma', icon: FigmaIcon, tone: 'bg-danger/10 text-danger', ringTone: 'ring-danger/35' }
+  if (has('whatsapp business')) return { label: 'WhatsApp Business', icon: WhatsappBusinessIcon, tone: 'bg-succes/10 text-succes', ringTone: 'ring-succes/35' }
+  if (has('whatsapp', 'evolution')) return { label: 'WhatsApp', icon: WhatsappIcon, tone: 'bg-succes/10 text-succes', ringTone: 'ring-succes/35' }
+  if (has('hubspot')) return { label: 'HubSpot', icon: HubspotIcon, tone: 'bg-alerte/10 text-alerte', ringTone: 'ring-alerte/35' }
+  if (has('spotify')) return { label: 'Spotify', icon: SpotifyIcon, tone: 'bg-succes/10 text-succes', ringTone: 'ring-succes/35' }
+  if (has('fireflies', 'transcript')) return { label: 'Fireflies', icon: Mic01Icon, tone: 'bg-alerte/10 text-alerte', ringTone: 'ring-alerte/35' }
+  if (has('gamma')) return { label: 'Gamma', icon: Sparkles01Icon, tone: 'bg-muted text-foreground', ringTone: 'ring-ring/40' }
+  if (has('apify', 'scrape', 'crawl')) return { label: 'Apify', icon: GlobeIcon, tone: 'bg-succes/10 text-succes', ringTone: 'ring-succes/35' }
+  if (has('hugeicon', 'icons')) return { label: 'HugeIcons', icon: PaintBucketIcon, tone: 'bg-muted text-foreground', ringTone: 'ring-ring/40' }
+  if (has('qonto', 'banking', 'bank')) return { label: rawName.includes('qonto') ? 'Qonto' : 'Banque', icon: Bank01Icon, tone: 'bg-info/10 text-info', ringTone: 'ring-info/35' }
+  if (has('pennylane', 'compta', 'invoice', 'facture')) return { label: rawName.includes('pennylane') ? 'Pennylane' : 'Comptabilité', icon: ReceiptDollarIcon, tone: 'bg-alerte/10 text-alerte', ringTone: 'ring-alerte/35' }
+  if (has('pexels', 'image', 'photo')) return { label: 'Pexels', icon: Image01Icon, tone: 'bg-succes/10 text-succes', ringTone: 'ring-succes/35' }
+  if (has('supabase', 'database', 'postgres', 'sql')) return { label: rawName.includes('supabase') ? 'Supabase' : 'Database', icon: Database02Icon, tone: 'bg-succes/10 text-succes', ringTone: 'ring-succes/35' }
+  if (has('flowmetrik', 'gateway')) return { label: 'Flowmetrik', icon: WorkflowSquare03Icon, tone: 'bg-info/10 text-info', ringTone: 'ring-info/35' }
+  if (has('cowork')) return { label: 'Cowork', icon: Brain02Icon, tone: 'bg-muted text-foreground', ringTone: 'ring-ring/40' }
+  if (has('clay', 'enrich', 'prospect', 'mipim')) return { label: 'Prospection', icon: ChartIcon, tone: 'bg-alerte/10 text-alerte', ringTone: 'ring-alerte/35' }
+  if (has('memory')) return { label: 'Memory', icon: Brain02Icon, tone: 'bg-muted text-foreground', ringTone: 'ring-ring/40' }
+  if (has('http', 'api', 'webhook')) return { label: 'HTTP/API', icon: ApiIcon, tone: 'bg-info/10 text-info', ringTone: 'ring-info/35' }
   return fallback
 }
 
 export function kindMeta(kind: string): { icon: IconSvgElement; tone: string; label: string } {
   switch (kind) {
     case 'stdio':
-      return { icon: CodeFolderIcon, tone: 'bg-zinc-100 text-zinc-700', label: 'stdio' }
+      return { icon: CodeFolderIcon, tone: 'bg-muted text-foreground', label: 'stdio' }
     case 'http':
-      return { icon: CloudServerIcon, tone: 'bg-sky-100 text-sky-700', label: 'http' }
+      return { icon: CloudServerIcon, tone: 'bg-info/10 text-info', label: 'http' }
     case 'sse':
-      return { icon: DataflowDownIcon, tone: 'bg-violet-100 text-violet-700', label: 'sse' }
+      return { icon: DataflowDownIcon, tone: 'bg-muted text-foreground', label: 'sse' }
     case 'composio':
-      return { icon: Plug02Icon, tone: 'bg-fuchsia-100 text-fuchsia-700', label: 'composio' }
+      return { icon: Plug02Icon, tone: 'bg-muted text-foreground', label: 'composio' }
     default:
-      return { icon: Plug02Icon, tone: 'bg-zinc-100 text-zinc-500', label: kind || '—' }
+      return { icon: Plug02Icon, tone: 'bg-muted text-muted-foreground', label: kind || '—' }
   }
 }
 
 export const skillOrgIcon: Record<string, { icon: IconSvgElement; tone: string }> = {
-  flowmetrik: { icon: WorkflowSquare03Icon, tone: 'bg-blue-100 text-blue-700' },
-  carrefour: { icon: Building01Icon, tone: 'bg-rose-100 text-rose-700' },
-  upfund: { icon: CodeFolderIcon, tone: 'bg-amber-100 text-amber-800' },
-  'hors-org': { icon: GlobeIcon, tone: 'bg-zinc-100 text-zinc-600' },
-  celeste: { icon: Sparkles01Icon, tone: 'bg-fuchsia-100 text-fuchsia-700' },
-  'arp-astrance': { icon: Building01Icon, tone: 'bg-amber-100 text-amber-700' },
-  tara: { icon: Sparkles01Icon, tone: 'bg-pink-100 text-pink-700' },
-  'mehdi-hub': { icon: Brain02Icon, tone: 'bg-violet-100 text-violet-700' },
-  perso: { icon: Brain02Icon, tone: 'bg-emerald-100 text-emerald-700' },
+  flowmetrik: { icon: WorkflowSquare03Icon, tone: 'bg-info/10 text-info' },
+  carrefour: { icon: Building01Icon, tone: 'bg-danger/10 text-danger' },
+  upfund: { icon: CodeFolderIcon, tone: 'bg-alerte/10 text-alerte' },
+  'hors-org': { icon: GlobeIcon, tone: 'bg-muted text-muted-foreground' },
+  celeste: { icon: Sparkles01Icon, tone: 'bg-muted text-foreground' },
+  'arp-astrance': { icon: Building01Icon, tone: 'bg-alerte/10 text-alerte' },
+  tara: { icon: Sparkles01Icon, tone: 'bg-muted text-foreground' },
+  'mehdi-hub': { icon: Brain02Icon, tone: 'bg-muted text-foreground' },
+  perso: { icon: Brain02Icon, tone: 'bg-succes/10 text-succes' },
 }
 
 export function skillIconFor(orgName: string, skillId: string): { icon: IconSvgElement; tone: string } {
   const id = skillId.toLowerCase()
-  if (id.includes('whatsapp')) return { icon: WhatsappIcon, tone: 'bg-emerald-100 text-emerald-700' }
-  if (id.includes('calendar') || id.includes('vcard')) return { icon: CalendarBlock01Icon, tone: 'bg-sky-100 text-sky-700' }
-  if (id.includes('mail') || id.includes('email')) return { icon: Mail01Icon, tone: 'bg-rose-100 text-rose-700' }
-  if (id.includes('bank') || id.includes('qonto')) return { icon: Bank01Icon, tone: 'bg-indigo-100 text-indigo-700' }
-  if (id.includes('compta') || id.includes('pennylane') || id.includes('facture')) return { icon: ReceiptDollarIcon, tone: 'bg-amber-100 text-amber-700' }
-  if (id.includes('outils') || id.includes('tools')) return { icon: Tools01Icon, tone: 'bg-zinc-100 text-zinc-700' }
-  if (id.includes('plaquette') || id.includes('docx') || id.includes('pptx')) return { icon: ClapperBoardIcon, tone: 'bg-fuchsia-100 text-fuchsia-700' }
-  if (id.includes('prospect') || id.includes('mipim') || id.includes('outreach')) return { icon: ChartIcon, tone: 'bg-orange-100 text-orange-700' }
-  if (id.includes('cockpit') || id.includes('router')) return { icon: WorkflowSquare03Icon, tone: 'bg-blue-100 text-blue-700' }
-  if (id.includes('branding')) return { icon: PaintBucketIcon, tone: 'bg-pink-100 text-pink-700' }
-  if (id.includes('context') || id.endsWith('-base')) return { icon: Brain02Icon, tone: 'bg-violet-100 text-violet-700' }
-  return skillOrgIcon[orgName] ?? { icon: Sparkles01Icon, tone: 'bg-zinc-100 text-zinc-700' }
+  if (id.includes('whatsapp')) return { icon: WhatsappIcon, tone: 'bg-succes/10 text-succes' }
+  if (id.includes('calendar') || id.includes('vcard')) return { icon: CalendarBlock01Icon, tone: 'bg-info/10 text-info' }
+  if (id.includes('mail') || id.includes('email')) return { icon: Mail01Icon, tone: 'bg-danger/10 text-danger' }
+  if (id.includes('bank') || id.includes('qonto')) return { icon: Bank01Icon, tone: 'bg-info/10 text-info' }
+  if (id.includes('compta') || id.includes('pennylane') || id.includes('facture')) return { icon: ReceiptDollarIcon, tone: 'bg-alerte/10 text-alerte' }
+  if (id.includes('outils') || id.includes('tools')) return { icon: Tools01Icon, tone: 'bg-muted text-foreground' }
+  if (id.includes('plaquette') || id.includes('docx') || id.includes('pptx')) return { icon: ClapperBoardIcon, tone: 'bg-muted text-foreground' }
+  if (id.includes('prospect') || id.includes('mipim') || id.includes('outreach')) return { icon: ChartIcon, tone: 'bg-alerte/10 text-alerte' }
+  if (id.includes('cockpit') || id.includes('router')) return { icon: WorkflowSquare03Icon, tone: 'bg-info/10 text-info' }
+  if (id.includes('branding')) return { icon: PaintBucketIcon, tone: 'bg-muted text-foreground' }
+  if (id.includes('context') || id.endsWith('-base')) return { icon: Brain02Icon, tone: 'bg-muted text-foreground' }
+  return skillOrgIcon[orgName] ?? { icon: Sparkles01Icon, tone: 'bg-muted text-foreground' }
 }
 
 export const ExternalIcon = ExternalLink04Icon

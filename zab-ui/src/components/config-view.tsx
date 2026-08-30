@@ -235,8 +235,8 @@ function ConfigSyncBadge({
       className={cn(
         'inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
         hasDate
-          ? 'border-sky-200 bg-sky-50 text-sky-800'
-          : 'border-zinc-200 bg-muted/60 text-muted-foreground',
+          ? 'border-info/35 bg-info/10 text-info'
+          : 'border-border bg-muted/60 text-muted-foreground',
         compact ? 'max-w-full px-1.5' : 'shrink-0',
       )}
       title={title}
@@ -372,7 +372,7 @@ function StringField({
       value={value}
       readOnly={readOnly}
       onChange={(e) => onChange(e.target.value)}
-      className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm font-mono outline-none transition focus:ring-2 focus:ring-zinc-300"
+      className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm font-mono outline-none transition focus:ring-2 focus:ring-ring/40"
     />
   )
 }
@@ -394,13 +394,13 @@ function BoolField({
       className={cn(
         'inline-flex h-6 w-11 items-center rounded-full border transition',
         value
-          ? 'border-emerald-300 bg-emerald-500 justify-end'
-          : 'border-zinc-300 bg-zinc-200 justify-start',
+          ? 'border-succes/35 bg-succes/10 justify-end'
+          : 'border-border bg-muted justify-start',
         readOnly && 'opacity-60 cursor-not-allowed',
       )}
       aria-pressed={value}
     >
-      <span className="mx-0.5 size-5 rounded-full bg-white shadow" />
+      <span className="mx-0.5 size-5 rounded-full bg-card shadow" />
     </button>
   )
 }
@@ -423,7 +423,7 @@ function NumberField({
         const n = Number(e.target.value)
         onChange(Number.isFinite(n) ? n : 0)
       }}
-      className="border-input bg-background w-40 rounded-lg border px-3 py-2 text-sm font-mono outline-none transition focus:ring-2 focus:ring-zinc-300"
+      className="border-input bg-background w-40 rounded-lg border px-3 py-2 text-sm font-mono outline-none transition focus:ring-2 focus:ring-ring/40"
     />
   )
 }
@@ -552,7 +552,7 @@ function StringListField({
                 }
               }}
               placeholder={t('config.ui.addItem')}
-              className="border-input bg-background flex-1 rounded-lg border px-3 py-1.5 text-xs font-mono outline-none transition focus:ring-2 focus:ring-zinc-300"
+              className="border-input bg-background flex-1 rounded-lg border px-3 py-1.5 text-xs font-mono outline-none transition focus:ring-2 focus:ring-ring/40"
             />
             <Button size="sm" variant="outline" onClick={add}>
               <Plus size={13} />
@@ -605,7 +605,7 @@ function StringListField({
               }
             }}
             placeholder={t('config.ui.addItemEnter')}
-            className="border-input bg-background flex-1 rounded-lg border px-3 py-1.5 text-xs outline-none transition focus:ring-2 focus:ring-zinc-300"
+            className="border-input bg-background flex-1 rounded-lg border px-3 py-1.5 text-xs outline-none transition focus:ring-2 focus:ring-ring/40"
           />
           <Button size="sm" variant="outline" onClick={add}>
             <Plus size={13} />
@@ -658,7 +658,7 @@ function EnvTokenSourceHint({
 
   if (hint.status === 'file' && hint.path && hint.path_display) {
     return (
-      <div className="mt-1 space-y-1.5 rounded-md border border-emerald-200/80 bg-emerald-50/50 px-2.5 py-2 text-[10px] leading-snug text-emerald-900">
+      <div className="mt-1 space-y-1.5 rounded-md border border-succes/35 bg-succes/10 px-2.5 py-2 text-[10px] leading-snug text-succes">
         <p>
           <span className="font-medium">Secret trouvé</span> dans{' '}
           <code className="font-mono">{hint.path_display}</code>
@@ -669,14 +669,14 @@ function EnvTokenSourceHint({
             type="button"
             size="xs"
             variant="outline"
-            className="h-6 border-emerald-300 text-emerald-900 hover:bg-emerald-100"
+            className="h-6 border-succes/35 text-succes hover:bg-succes/10"
             onClick={() => void openInEditor(hint.path!, hint.line, hint.key_used ?? hint.env_token)}
           >
             Ouvrir le .env
           </Button>
           <a
             href={vscodeFileHref(hint.path, hint.line)}
-            className={cn(buttonVariants({ variant: 'ghost', size: 'xs' }), 'h-6 text-emerald-800')}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'xs' }), 'h-6 text-succes')}
           >
             <ExternalLink size={11} className="mr-1 inline" />
             Cursor / VS Code
@@ -688,7 +688,7 @@ function EnvTokenSourceHint({
 
   if (hint.status === 'process') {
     return (
-      <p className="mt-1 rounded-md border border-amber-200/80 bg-amber-50/60 px-2.5 py-2 text-[10px] leading-snug text-amber-900">
+      <p className="mt-1 rounded-md border border-alerte/35 bg-alerte/10 px-2.5 py-2 text-[10px] leading-snug text-alerte">
         Variable <code className="font-mono">{keyLabel}</code> présente dans le processus du dashboard, mais
         introuvable dans les fichiers <code className="font-mono">.env</code> scannés. Pour la versionner,
         ajoutez-la dans <code className="font-mono">~/.config/zab/.env</code>.
@@ -697,13 +697,13 @@ function EnvTokenSourceHint({
   }
 
   return (
-    <div className="mt-1 space-y-1 rounded-md border border-rose-200/80 bg-rose-50/50 px-2.5 py-2 text-[10px] leading-snug text-rose-900">
+    <div className="mt-1 space-y-1 rounded-md border border-danger/35 bg-danger/10 px-2.5 py-2 text-[10px] leading-snug text-danger">
       <p>
         <span className="font-medium">Secret absent</span> — aucune valeur pour <code className="font-mono">{keyLabel}</code>{' '}
         dans les .env parcourus.
       </p>
       {hint.suggested_paths && hint.suggested_paths.length > 0 ? (
-        <p className="text-rose-800/90">
+        <p className="text-danger/90">
           Fichiers à renseigner :{' '}
           {hint.suggested_paths.map((p, i) => (
             <span key={p}>
@@ -1206,8 +1206,8 @@ export function ConfigView() {
           className={cn(
             'rounded-xl border px-4 py-3 text-sm whitespace-pre-wrap',
             backendNeedsRestart
-              ? 'text-destructive border-red-200 bg-red-50/90'
-              : 'text-amber-900 border-amber-200 bg-amber-50',
+              ? 'text-destructive border-danger/35 bg-danger/10'
+              : 'text-alerte border-alerte/35 bg-alerte/10',
           )}
         >
           {banner}
@@ -1223,10 +1223,10 @@ export function ConfigView() {
               {(() => {
                 const row = (busy ? CONFIG_FILE_ROW_FALLBACK : rows[0]) ?? CONFIG_FILE_ROW_FALLBACK
                 return (
-                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-900 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground">
                     <span>config.yaml</span>
                     {!row.exists && (
-                      <span className="rounded-full bg-amber-200/60 px-1.5 py-0.5 text-[9px] font-semibold text-amber-900">
+                      <span className="rounded-full bg-alerte/10 px-1.5 py-0.5 text-[9px] font-semibold text-alerte">
                         {t('config.file.absent')}
                       </span>
                     )}
@@ -1244,7 +1244,7 @@ export function ConfigView() {
                 className={cn(
                   'inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition',
                   viewMode === 'form'
-                    ? 'bg-zinc-900 text-white shadow-sm'
+                    ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -1257,7 +1257,7 @@ export function ConfigView() {
                 className={cn(
                   'inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition',
                   viewMode === 'yaml'
-                    ? 'bg-zinc-900 text-white shadow-sm'
+                    ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -1291,7 +1291,7 @@ export function ConfigView() {
               {meta.path_display}
             </code>
             {!meta.exists && (
-              <span className="text-amber-900">{t('config.file.missingHint')}</span>
+              <span className="text-alerte">{t('config.file.missingHint')}</span>
             )}
             <a
               href={`vscode://file/${meta.path_display}`}
@@ -1329,14 +1329,14 @@ export function ConfigView() {
             </button>
             <span className="ml-auto inline-flex items-center gap-1">
               {autoSaving ? (
-                <span className="text-zinc-600 inline-flex items-center gap-1">
+                <span className="text-muted-foreground inline-flex items-center gap-1">
                   <Loader2 size={12} className="animate-spin" />
                   {t('config.ui.autosave')}
                 </span>
               ) : dirty ? (
-                <span className="text-amber-700">{t('config.ui.unsaved')}</span>
+                <span className="text-alerte">{t('config.ui.unsaved')}</span>
               ) : (
-                <span className="text-emerald-700 inline-flex items-center gap-1">
+                <span className="text-succes inline-flex items-center gap-1">
                   <Check size={12} />
                   {t('config.ui.upToDate')}
                 </span>
@@ -1346,19 +1346,19 @@ export function ConfigView() {
         )}
 
         {meta?.truncate_note && (
-          <p className="border-border bg-amber-50 border-b px-4 py-1.5 text-[11px] text-amber-800">
+          <p className="border-border bg-alerte/10 border-b px-4 py-1.5 text-[11px] text-alerte">
             {t('config.ui.truncated', { note: meta.truncate_note })}
           </p>
         )}
 
         {viewMode === 'form' && !parsed.ok && (
-          <div className="text-destructive border-border bg-red-50 border-b px-4 py-2 text-xs">
+          <div className="text-destructive border-border bg-danger/10 border-b px-4 py-2 text-xs">
             {t('config.ui.invalidYaml', { error: parsed.error })}
           </div>
         )}
 
         {viewMode === 'form' && parsed.ok && yamlHasComments && dirty && (
-          <p className="border-border bg-amber-50 border-b px-4 py-1.5 text-[11px] text-amber-800">
+          <p className="border-border bg-alerte/10 border-b px-4 py-1.5 text-[11px] text-alerte">
             {t('config.ui.commentsWarning')}
           </p>
         )}
@@ -1389,7 +1389,7 @@ export function ConfigView() {
                                 className={cn(
                                   'flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition',
                                   active
-                                    ? 'bg-zinc-900 text-white'
+                                    ? 'bg-primary text-primary-foreground'
                                     : 'text-foreground hover:bg-muted',
                                 )}
                               >
@@ -1399,7 +1399,7 @@ export function ConfigView() {
                                     <span
                                       className={cn(
                                         'block truncate text-[10px]',
-                                        active ? 'text-white/65' : 'text-muted-foreground',
+                                        active ? 'text-primary-foreground/65' : 'text-muted-foreground',
                                       )}
                                     >
                                       {configSyncLabel(syncStatus, intlLocale, t, true)}
@@ -1410,7 +1410,7 @@ export function ConfigView() {
                                   <span
                                     className={cn(
                                       'ml-2 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold',
-                                      active ? 'bg-white/15 text-white' : 'bg-muted text-muted-foreground',
+                                      active ? 'bg-white/15 text-foreground' : 'bg-muted text-muted-foreground',
                                     )}
                                   >
                                     {count}

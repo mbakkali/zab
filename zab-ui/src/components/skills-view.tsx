@@ -301,7 +301,7 @@ export function SkillsView({
         <p className="text-muted-foreground max-w-3xl text-xs">
           Zab lit le registre local, affiche toutes les skills connues, puis permet d’adopter, ignorer ou synchroniser les entrées utiles.
         </p>
-        {indexError ? <p className="text-xs text-amber-700">Index indisponible, fallback overview: {indexError}</p> : null}
+        {indexError ? <p className="text-xs text-alerte">Index indisponible, fallback overview: {indexError}</p> : null}
         <div className="flex flex-wrap gap-2 pt-1" role="tablist" aria-label="Filtrer par statut registre">
           {(
             [
@@ -320,8 +320,8 @@ export function SkillsView({
               className={cn(
                 'rounded-full border px-3 py-1 text-xs font-medium transition',
                 registryTab === id
-                  ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
-                  : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200',
+                  ? 'border-border bg-primary text-primary-foreground'
+                  : 'border-border bg-card text-foreground hover:bg-muted',
               )}
             >
               {label}
@@ -505,11 +505,11 @@ export function SkillsView({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Rechercher une skill, un tag, un projet…"
-            className="border-input bg-background w-full rounded-lg border py-2 pr-3 pl-9 text-sm outline-none transition focus:ring-2 focus:ring-zinc-300"
+            className="border-input bg-background w-full rounded-lg border py-2 pr-3 pl-9 text-sm outline-none transition focus:ring-2 focus:ring-ring/40"
           />
         </div>
         <div className="text-muted-foreground text-xs">
-          {filtered.length} / {visibleRows.length} skills affichées · filtre actif : <span className="font-medium text-zinc-700 dark:text-zinc-200">{filterLabel}</span>
+          {filtered.length} / {visibleRows.length} skills affichées · filtre actif : <span className="font-medium text-foreground">{filterLabel}</span>
         </div>
       </div>
 
@@ -525,17 +525,17 @@ export function SkillsView({
         />
 
         <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <div className="flex items-center justify-between rounded-xl border border-border bg-muted px-4 py-2">
             <div className="flex items-center gap-2">
-              <HugeiconsIcon icon={Layers01Icon} size={16} className="text-zinc-500" />
+              <HugeiconsIcon icon={Layers01Icon} size={16} className="text-muted-foreground" />
               <span className="text-sm font-semibold tracking-tight">{filterLabel}</span>
             </div>
-            <span className="rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+            <span className="rounded-full border border-border bg-card px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-foreground">
               {filtered.length} skills
             </span>
           </div>
 
-          <div className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
             {filtered.map((row, index) => (
               <SkillRow
                 key={`${row.org}:${row.skill.id}:${row.skill.path}:${index}`}
@@ -556,7 +556,7 @@ export function SkillsView({
                   <p className="text-xs leading-relaxed">
                     {syncStatus.projects.workspace_skill_md_count} SKILL.md ont été détectés dans vos projets mais ne sont
                     pas encore dans l’index affiché (souvent déjà copiés dans le miroir). Lancez{' '}
-                    <span className="font-medium text-zinc-700 dark:text-zinc-200">Sync auto</span> en haut de page pour
+                    <span className="font-medium text-foreground">Sync auto</span> en haut de page pour
                     les importer, mettre à jour Hermes et rafraîchir l’index.
                   </p>
                 ) : null}
@@ -571,36 +571,36 @@ export function SkillsView({
 
 function SkillSyncPills({ hint }: { hint: SkillSyncHint }) {
   const gh = hint.github
-  let ghTone = 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+  let ghTone = 'bg-muted text-muted-foreground'
   let ghLabel = 'GH —'
   let ghTitle = 'GitHub : hors dépôt global'
   if (gh?.applicable) {
     if (gh.pushed_hint) {
-      ghTone = 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+      ghTone = 'bg-succes/10 text-succes'
       ghLabel = 'GH ✓'
       ghTitle = 'GitHub : suivi Git, fichier propre, branche à jour avec le remote'
     } else if (gh.tracked && gh.file_clean === false) {
-      ghTone = 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
+      ghTone = 'bg-alerte/10 text-alerte'
       ghLabel = 'GH ~'
       ghTitle = 'GitHub : modifications locales ou index non commit'
     } else if (gh.tracked && (gh.repo_ahead_commits ?? 0) > 0) {
-      ghTone = 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
+      ghTone = 'bg-alerte/10 text-alerte'
       ghLabel = 'GH ↑'
       ghTitle = `GitHub : ${gh.repo_ahead_commits} commit(s) en avance sur le remote (non poussés)`
     } else if (gh.tracked) {
-      ghTone = 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'
+      ghTone = 'bg-muted text-foreground'
       ghLabel = 'GH ·'
       ghTitle = 'GitHub : suivi Git (état remote incomplet ou non vérifié)'
     } else {
-      ghTone = 'bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-200'
+      ghTone = 'bg-danger/10 text-danger'
       ghLabel = 'GH ?'
       ghTitle = 'GitHub : fichier non suivi dans le dépôt skills'
     }
   }
 
   const hermesTone = hint.hermes_external_dir
-    ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
-    : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+    ? 'bg-succes/10 text-succes'
+    : 'bg-muted text-muted-foreground'
   const hermesTitle = hint.hermes_external_dir
     ? 'Hermes : SKILL.md sous un répertoire listé dans external_dirs'
     : 'Hermes : pas sous external_dirs (mettre à jour Hermes ou config)'
@@ -608,10 +608,10 @@ function SkillSyncPills({ hint }: { hint: SkillSyncHint }) {
   const cursorLinked =
     hint.cursor_global_path || hint.cursor_global_slug_parallel
   const cursorTone = hint.cursor_global_path
-    ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+    ? 'bg-succes/10 text-succes'
     : hint.cursor_global_slug_parallel
-      ? 'bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-200'
-      : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+      ? 'bg-info/10 text-info'
+      : 'bg-muted text-muted-foreground'
   const cursorTitle = hint.cursor_global_path
     ? 'Cursor global : ce fichier est sous ~/.cursor/skills'
     : hint.cursor_global_slug_parallel
@@ -621,10 +621,10 @@ function SkillSyncPills({ hint }: { hint: SkillSyncHint }) {
   const claudeLinked =
     hint.claude_global_path || hint.claude_global_slug_parallel
   const claudeTone = hint.claude_global_path
-    ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+    ? 'bg-succes/10 text-succes'
     : hint.claude_global_slug_parallel
-      ? 'bg-violet-50 text-violet-900 dark:bg-violet-950/40 dark:text-violet-200'
-      : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+      ? 'bg-muted text-foreground'
+      : 'bg-muted text-muted-foreground'
   const claudeTitle = hint.claude_global_path
     ? 'Claude global : ce fichier est sous ~/.claude/skills'
     : hint.claude_global_slug_parallel
@@ -634,10 +634,10 @@ function SkillSyncPills({ hint }: { hint: SkillSyncHint }) {
   const kimiLinked =
     hint.kimi_global_path || hint.kimi_global_slug_parallel
   const kimiTone = hint.kimi_global_path
-    ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+    ? 'bg-succes/10 text-succes'
     : hint.kimi_global_slug_parallel
-      ? 'bg-fuchsia-50 text-fuchsia-900 dark:bg-fuchsia-950/40 dark:text-fuchsia-200'
-      : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+      ? 'bg-muted text-foreground'
+      : 'bg-muted text-muted-foreground'
   const kimiTitle = hint.kimi_global_path
     ? 'Kimi global : ce fichier est sous ~/.kimi/skills'
     : hint.kimi_global_slug_parallel
@@ -645,8 +645,8 @@ function SkillSyncPills({ hint }: { hint: SkillSyncHint }) {
       : 'Kimi global : pas de copie détectée'
 
   const repoTone = hint.global_repo
-    ? 'bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100'
-    : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+    ? 'bg-muted text-foreground'
+    : 'bg-muted text-muted-foreground'
   const repoTitle = hint.global_repo
     ? 'Dépôt skills global (skills_sync.repo_root)'
     : 'Hors dépôt global (skill projet ou autre emplacement)'
@@ -739,7 +739,7 @@ function SkillRow({
           onEdit()
         }
       }}
-      className="group flex cursor-pointer items-start gap-3 px-4 py-3 transition hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:outline-none dark:hover:bg-zinc-900/40 dark:focus-visible:bg-zinc-900/40"
+      className="group flex cursor-pointer items-start gap-3 px-4 py-3 transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
     >
       <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-lg', meta.tone)}>
         <HugeiconsIcon icon={meta.icon} size={22} strokeWidth={1.6} />
@@ -750,21 +750,21 @@ function SkillRow({
           <span
             className={cn(
               'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide',
-              orgMeta?.tone ?? 'bg-zinc-100 text-zinc-600',
+              orgMeta?.tone ?? 'bg-muted text-muted-foreground',
             )}
           >
             {org}
           </span>
           {project ? (
-            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground">
               <HugeiconsIcon icon={FolderLibraryIcon} size={10} className="mr-1" /> {project}
             </span>
           ) : null}
-          <span className="inline-flex items-center rounded-full bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
             {sourceLabel(source)}
           </span>
           {registryStatus ? (
-            <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+            <span className="inline-flex items-center rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
               {registryStatus}
             </span>
           ) : null}
@@ -781,19 +781,19 @@ function SkillRow({
                 e.stopPropagation()
                 onTagClick(tag)
               }}
-              className="inline-flex items-center rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+              className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:bg-muted"
             >
               <HugeiconsIcon icon={Tag01Icon} size={9} className="mr-1" />
               {tag}
             </button>
           ))}
           {skill.uses_connectors?.slice(0, 3).map((x) => (
-            <span key={`c-${x}`} className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-200">
+            <span key={`c-${x}`} className="rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">
               {x}
             </span>
           ))}
           {skill.uses_models?.slice(0, 2).map((x) => (
-            <span key={`m-${x}`} className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
+            <span key={`m-${x}`} className="rounded bg-succes/10 px-1.5 py-0.5 text-[10px] font-medium text-succes">
               {x}
             </span>
           ))}
@@ -811,7 +811,7 @@ function SkillRow({
               <button
                 type="button"
                 data-testid="skill-registry-adopt"
-                className="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200"
+                className="rounded border border-succes/35 bg-succes/10 px-2 py-0.5 text-[10px] font-semibold text-succes"
                 onClick={() => void runRegistry(`/api/skills/registry/adopt?key=${encodeURIComponent(regKey)}`)}
               >
                 Adopter
@@ -821,7 +821,7 @@ function SkillRow({
               <button
                 type="button"
                 data-testid="skill-registry-unadopt"
-                className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                className="rounded border border-border bg-card px-2 py-0.5 text-[10px] font-semibold text-foreground"
                 onClick={() => void runRegistry(`/api/skills/registry/unadopt?key=${encodeURIComponent(regKey)}`)}
               >
                 Désadopter
@@ -830,7 +830,7 @@ function SkillRow({
             {st === 'ignored' ? (
               <button
                 type="button"
-                className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                className="rounded border border-border bg-card px-2 py-0.5 text-[10px] font-semibold text-foreground"
                 onClick={() => void runRegistry(`/api/skills/registry/unignore?key=${encodeURIComponent(regKey)}`)}
               >
                 Réactiver
@@ -840,7 +840,7 @@ function SkillRow({
               <button
                 type="button"
                 data-testid="skill-registry-ignore"
-                className="rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                className="rounded border border-alerte/35 bg-alerte/10 px-2 py-0.5 text-[10px] font-semibold text-alerte"
                 onClick={() => void runRegistry(`/api/skills/registry/ignore?key=${encodeURIComponent(regKey)}`)}
               >
                 Ignorer
@@ -850,7 +850,7 @@ function SkillRow({
               <button
                 type="button"
                 data-testid="skill-registry-resolve"
-                className="rounded border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-950 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-200"
+                className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold text-foreground"
                 onClick={() =>
                   void runRegistry(`/api/skills/registry/resolve-conflict?key=${encodeURIComponent(regKey)}`, {
                     keep_path: skill.path,
@@ -866,7 +866,7 @@ function SkillRow({
         {vsc ? (
           <a
             href={vsc}
-            className="text-[11px] font-medium text-zinc-600 underline opacity-0 transition group-hover:opacity-100 dark:text-zinc-300"
+            className="text-[11px] font-medium text-muted-foreground underline opacity-0 transition group-hover:opacity-100"
             onClick={(e) => e.stopPropagation()}
           >
             IDE →
@@ -897,9 +897,9 @@ function SkillsFilterSidebar({
   return (
     <aside
       data-testid="skills-filter-sidebar"
-      className="self-start rounded-xl border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-950"
+      className="self-start rounded-xl border border-border bg-card p-3 text-sm"
     >
-      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
         <HugeiconsIcon icon={Layers01Icon} size={12} /> Filtres
       </div>
       <SidebarItem
@@ -977,12 +977,12 @@ function SidebarSection({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-[11px] font-semibold tracking-wide text-zinc-500 uppercase hover:bg-zinc-50 dark:text-zinc-400 dark:hover:bg-zinc-900"
+        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase hover:bg-muted"
       >
         <span className="flex items-center gap-2">
           <HugeiconsIcon icon={icon} size={12} /> {label}
         </span>
-        <span className="flex items-center gap-1 text-[10px] font-medium text-zinc-400 normal-case">
+        <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground normal-case">
           {items.length}
           <HugeiconsIcon icon={open ? ArrowDown01Icon : ArrowRight01Icon} size={12} />
         </span>
@@ -1012,8 +1012,8 @@ function SidebarItem({
       className={cn(
         'flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-[12px] transition',
         active
-          ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-          : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-900',
+          ? 'bg-primary text-primary-foreground'
+          : 'text-foreground hover:bg-muted',
         bold ? 'font-semibold' : 'font-medium',
       )}
     >
@@ -1021,7 +1021,7 @@ function SidebarItem({
       <span
         className={cn(
           'shrink-0 rounded-full px-1.5 py-0.5 text-[10px]',
-          active ? 'bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+          active ? 'bg-white/20 text-foreground' : 'bg-muted text-muted-foreground',
         )}
       >
         {count}
@@ -1156,7 +1156,7 @@ function SkillsSyncPanel({
   return (
     <section
       data-testid="skills-sync-panel"
-      className="space-y-4 rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/40"
+      className="space-y-4 rounded-xl border border-border bg-muted/60 p-4"
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -1209,25 +1209,25 @@ function SkillsSyncPanel({
       </div>
 
       {statusError ? (
-        <p className="text-xs text-amber-700 dark:text-amber-300">
+        <p className="text-xs text-alerte">
           <span className="font-medium">Statut sync indisponible.</span> {statusError}
         </p>
       ) : null}
       {autoSyncReport ? (
         <div
           data-testid="skills-auto-sync-report"
-          className="flex items-start justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-xs dark:border-emerald-900 dark:bg-emerald-950/40"
+          className="flex items-start justify-between gap-2 rounded-lg border border-succes/35 bg-succes/10 px-3 py-2 text-xs"
         >
           <span className="font-mono text-[11px] break-all">{autoSyncReport}</span>
-          <button type="button" className="shrink-0 text-zinc-500 underline" onClick={onAutoSyncReportClear}>
+          <button type="button" className="shrink-0 text-muted-foreground underline" onClick={onAutoSyncReportClear}>
             Fermer
           </button>
         </div>
       ) : null}
       {scanReport ? (
-        <div className="flex items-start justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-950">
+        <div className="flex items-start justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs">
           <span className="font-mono text-[11px] break-all">{scanReport}</span>
-          <button type="button" className="shrink-0 text-zinc-500 underline" onClick={onScanReportClear}>
+          <button type="button" className="shrink-0 text-muted-foreground underline" onClick={onScanReportClear}>
             Fermer
           </button>
         </div>
@@ -1243,8 +1243,8 @@ function SkillsSyncPanel({
         <span>{gr ? `${gr.skill_md_count} dans le miroir` : null}</span>
       </div>
 
-      <details className="rounded-lg border border-zinc-200 bg-white p-3 text-xs dark:border-zinc-800 dark:bg-zinc-950">
-        <summary className="cursor-pointer font-medium text-zinc-700 dark:text-zinc-200">{t('skills.sync.details')}</summary>
+      <details className="rounded-lg border border-border bg-card p-3 text-xs">
+        <summary className="cursor-pointer font-medium text-foreground">{t('skills.sync.details')}</summary>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <SyncCard
             title={t('skills.sync.mirrorTitle')}
@@ -1309,7 +1309,7 @@ function SyncCard({
   return (
     <div
       className={cn(
-        'flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950',
+        'flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-sm',
         className,
       )}
     >
@@ -1318,7 +1318,7 @@ function SyncCard({
         {badges.map((b) => (
           <span
             key={b}
-            className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+            className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
           >
             {b}
           </span>
@@ -1360,8 +1360,8 @@ function SyncActionButton({
       className={cn(
         'rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-50',
         variant === 'secondary'
-          ? 'border border-zinc-200 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100'
-          : 'bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white',
+          ? 'border border-border bg-card text-foreground hover:bg-muted'
+          : 'bg-primary text-primary-foreground hover:bg-primary',
       )}
     >
       {busy ? '…' : label}

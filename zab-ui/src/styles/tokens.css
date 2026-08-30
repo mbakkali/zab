@@ -1,0 +1,286 @@
+/* ============================================================
+   Whiteapp Flowmetrik — CSS GÉNÉRÉ. Ne pas éditer à la main.
+   Source     : flowmetrik-cowork/assets/brand/tokens/
+   Générateur : scripts/sync_tokens.py
+   Gate       : python3 scripts/sync_tokens.py --check
+
+   Trois couches, dans cet ordre :
+     1. les variables de charte, recopiées sans retouche depuis le CSS généré ;
+     2. la traduction vers le vocabulaire shadcn — la seule chose inventée ici ;
+     3. les accents de filiale, qui ne surchargent QUE des accents.
+   ============================================================ */
+
+/* --- 1. Charte, verbatim ------------------------------------------------- */
+:root {
+  --color-neutral-0: #FFFFFF;
+  --color-neutral-50: #F6F6F5;
+  --color-neutral-100: #F0F0F0;
+  --color-neutral-200: #E3E6E6;
+  --color-neutral-300: #D6D6D6;
+  --color-neutral-400: #AEB2B4;
+  --color-neutral-500: #777B7E;
+  --color-neutral-550: #6B6E71;
+  --color-neutral-600: #5B5E62;
+  --color-neutral-700: #3D3E3E;
+  --color-neutral-800: #1A1A1A;
+  --color-neutral-900: #111111;
+  --color-neutral-1000: #050505;
+  --color-signal-success: #0A6B45;
+  --color-signal-warning: #8F6400;
+  --color-signal-danger: #B01018;
+  --color-signal-info: #1449AB;
+  --color-heritage-flowTeal: #02BCBC;
+  --color-heritage-deepTeal: #1A5969;
+  --font-family-display: Poppins, 'Arial Black', system-ui, sans-serif;
+  --font-family-body: Nunito, Arial, system-ui, sans-serif;
+  --font-family-data: 'Space Grotesk', ui-monospace, monospace;
+  --font-weight-regular: 400;
+  --font-weight-medium: 600;
+  --font-weight-bold: 700;
+  --font-weight-black: 800;
+  --font-size-display1: clamp(44px, 6.4vw, 88px);
+  --font-size-display2: clamp(34px, 4.4vw, 60px);
+  --font-size-title: clamp(26px, 2.6vw, 36px);
+  --font-size-subtitle: clamp(19px, 1.6vw, 23px);
+  --font-size-body: 17px;
+  --font-size-small: 15px;
+  --font-size-label: 11px;
+  --font-size-metric: clamp(38px, 4.6vw, 62px);
+  --font-tracking-tight: -0.03em;
+  --font-tracking-normal: 0;
+  --font-tracking-label: 0.1em;
+  --font-leading-tight: 1.04;
+  --font-leading-snug: 1.2;
+  --font-leading-normal: 1.5;
+  --font-leading-loose: 1.65;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+  --space-10: 128px;
+  --radius-sharp: 0;
+  --radius-soft: 6px;
+  --radius-pill: 999px;
+  --motion-duration-instant: 120ms;
+  --motion-duration-short: 220ms;
+  --motion-duration-reveal: 620ms;
+  --motion-duration-flow: 2400ms;
+  --motion-easing-out: 0.23, 1, 0.32, 1;
+  --motion-easing-linear: 0, 0, 1, 1;
+  --layout-shell: 1280px;
+  --layout-measure: 68ch;
+  --layout-slideWidth: 1920px;
+  --layout-slideHeight: 1080px;
+  --layout-slideMargin: 88px;
+  --color-text-primary: #111111;
+  --color-text-secondary: #3D3E3E;
+  --color-text-muted: #6B6E71;
+  --color-text-onDark: #FFFFFF;
+  --color-text-accent: #111111;
+  --color-surface-page: #FFFFFF;
+  --color-surface-sunken: #F6F6F5;
+  --color-surface-raised: #FFFFFF;
+  --color-surface-inverted: #111111;
+  --color-surface-premium: #1A1A1A;
+  --color-border-hairline: #E3E6E6;
+  --color-border-strong: #111111;
+  --color-border-onDark: rgba(255,255,255,0.18);
+  --color-signal-success: #0A6B45;
+  --color-signal-warning: #8F6400;
+  --color-signal-danger: #B01018;
+  --color-signal-info: #1449AB;
+  --color-focus: #111111;
+  --typography-display-fontFamily: Poppins, 'Arial Black', system-ui, sans-serif;
+  --typography-display-fontWeight: 700;
+  --typography-display-fontSize: clamp(44px, 6.4vw, 88px);
+  --typography-display-lineHeight: 1.04;
+  --typography-display-letterSpacing: -0.03em;
+  --typography-title-fontFamily: Poppins, 'Arial Black', system-ui, sans-serif;
+  --typography-title-fontWeight: 700;
+  --typography-title-fontSize: clamp(26px, 2.6vw, 36px);
+  --typography-title-lineHeight: 1.2;
+  --typography-title-letterSpacing: -0.03em;
+  --typography-body-fontFamily: Nunito, Arial, system-ui, sans-serif;
+  --typography-body-fontWeight: 400;
+  --typography-body-fontSize: 17px;
+  --typography-body-lineHeight: 1.5;
+  --typography-body-letterSpacing: 0;
+  --typography-metric-fontFamily: 'Space Grotesk', ui-monospace, monospace;
+  --typography-metric-fontWeight: 600;
+  --typography-metric-fontSize: clamp(38px, 4.6vw, 62px);
+  --typography-metric-lineHeight: 1.04;
+  --typography-metric-letterSpacing: -0.03em;
+  --typography-label-fontFamily: 'Space Grotesk', ui-monospace, monospace;
+  --typography-label-fontWeight: 700;
+  --typography-label-fontSize: 11px;
+  --typography-label-lineHeight: 1.2;
+  --typography-label-letterSpacing: 0.1em;
+  --elevation-flat: none;
+  --elevation-floating: 0 4px 20px rgba(0,0,0,0.04);
+  --mode-radius-control: 0;
+  --mode-radius-container: 0;
+  --mode-radius-badge: 999px;
+  --mode-density-sectionGap: 96px;
+  --mode-density-blockGap: 32px;
+  --mode-density-controlPadY: 14px;
+  --mode-density-controlPadX: 24px;
+  --mode-motion-interaction: 120ms;
+  --mode-motion-entrance: 620ms;
+  --color-accent: #111111;
+  --color-accentTextOn: paper;
+  --color-accentRule: #111111;
+  --color-accentInk: #111111;
+  --color-accentOnDark: #FFFFFF;
+  --color-accentText: #FFFFFF;
+}
+
+/* --- 2. Traduction vers shadcn ------------------------------------------- */
+/* shadcn raisonne en paires surface / `-foreground`. La charte nomme des rôles.
+   Cette table est le pont : elle laisse `npx shadcn add <x>` tomber juste. */
+:root, .light {
+  --radius: var(--radius-soft);
+  --background: var(--color-surface-sunken);
+  --foreground: var(--color-text-primary);
+  --card: var(--color-surface-raised);
+  --card-foreground: var(--color-text-primary);
+  --popover: var(--color-surface-raised);
+  --popover-foreground: var(--color-text-primary);
+  --primary: var(--color-text-primary);
+  --primary-foreground: var(--color-surface-page);
+  --secondary: var(--color-surface-sunken);
+  --secondary-foreground: var(--color-text-primary);
+  --muted: var(--color-surface-sunken);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-surface-sunken);
+  --accent-foreground: var(--color-text-primary);
+  --destructive: var(--color-signal-danger);
+  --destructive-foreground: var(--color-surface-page);
+  --border: var(--color-border-hairline);
+  --input: var(--color-border-hairline);
+  --ring: var(--color-focus);
+  --sidebar: var(--color-surface-sunken);
+  --sidebar-foreground: var(--color-text-secondary);
+  --sidebar-primary: var(--color-text-primary);
+  --sidebar-primary-foreground: var(--color-surface-page);
+  --sidebar-accent: var(--color-surface-page);
+  --sidebar-accent-foreground: var(--color-text-primary);
+  --sidebar-border: var(--color-border-hairline);
+  --sidebar-ring: var(--color-focus);
+  --signal-success: var(--color-signal-success);
+  --signal-warning: var(--color-signal-warning);
+  --signal-danger: var(--color-signal-danger);
+  --signal-info: var(--color-signal-info);
+}
+
+.dark {
+  --background: #0B0B0C;
+  --foreground: #F2F2F2;
+  --card: #141416;
+  --card-foreground: #F2F2F2;
+  --popover: #1A1A1D;
+  --popover-foreground: #F2F2F2;
+  --primary: #FFFFFF;
+  --primary-foreground: #111112;
+  --secondary: #1A1A1D;
+  --secondary-foreground: #F2F2F2;
+  --muted: #1A1A1D;
+  --muted-foreground: #8A8A90;
+  --accent: #212124;
+  --accent-foreground: #F2F2F2;
+  --destructive: #FF8080;
+  --destructive-foreground: #111112;
+  --border: rgba(255,255,255,0.12);
+  --input: rgba(255,255,255,0.18);
+  --ring: #FFFFFF;
+  --sidebar: #0F0F11;
+  --sidebar-foreground: #C7C7CC;
+  --sidebar-primary: #FFFFFF;
+  --sidebar-primary-foreground: #111112;
+  --sidebar-accent: #1A1A1D;
+  --sidebar-accent-foreground: #F2F2F2;
+  --sidebar-border: rgba(255,255,255,0.10);
+  --sidebar-ring: #FFFFFF;
+  --signal-success: #4FD69B;
+  --signal-warning: #E3B341;
+  --signal-danger: #FF8080;
+  --signal-info: #6FA1FF;
+}
+
+/* --- 3. Filiales : un data-unit ne surcharge QUE les accents -------------- */
+/* FlowBank */
+[data-unit="flowbank"] {
+  --color-accent: #6D28D9;
+  --color-accentTextOn: paper;
+  --color-accentRule: #6D28D9;
+  --color-accentInk: #5B21B6;
+  --color-accentOnDark: #AE8BFF;
+  --color-accentText: #FFFFFF;
+}
+
+/* FlowEnergy */
+[data-unit="flowenergy"] {
+  --color-accent: #16A46A;
+  --color-accentTextOn: ink;
+  --color-accentRule: #16A46A;
+  --color-accentInk: #0A6B45;
+  --color-accentOnDark: #4FD69B;
+  --color-accentText: #111111;
+}
+
+/* FlowGov */
+[data-unit="flowgov"] {
+  --color-accent: #8B1881;
+  --color-accentTextOn: paper;
+  --color-accentRule: #8B1881;
+  --color-accentInk: #6F2068;
+  --color-accentOnDark: #DE8AD6;
+  --color-accentText: #FFFFFF;
+}
+
+/* FlowImmo */
+[data-unit="flowimmo"] {
+  --color-accent: #F2B705;
+  --color-accentTextOn: ink;
+  --color-accentRule: #B57F00;
+  --color-accentInk: #7A5300;
+  --color-accentOnDark: #FFC933;
+  --color-accentText: #111111;
+}
+
+/* FlowRetail */
+[data-unit="flowretail"] {
+  --color-accent: #E02020;
+  --color-accentTextOn: paper;
+  --color-accentRule: #E02020;
+  --color-accentInk: #B01018;
+  --color-accentOnDark: #FF8080;
+  --color-accentText: #FFFFFF;
+}
+
+/* FlowSpend */
+[data-unit="flowspend"] {
+  --color-accent: #1B5FE0;
+  --color-accentTextOn: paper;
+  --color-accentRule: #1B5FE0;
+  --color-accentInk: #1449AB;
+  --color-accentOnDark: #6FA1FF;
+  --color-accentText: #FFFFFF;
+}
+
+/* Le mode `operate` est le défaut d'une application : densité forte, rayon 6px. */
+:root {
+  --mode-radius-control: 6px;
+  --mode-radius-container: 6px;
+  --mode-radius-badge: 999px;
+  --mode-density-sectionGap: 32px;
+  --mode-density-blockGap: 16px;
+  --mode-density-controlPadY: 9px;
+  --mode-density-controlPadX: 14px;
+  --mode-motion-interaction: 120ms;
+  --mode-motion-entrance: 220ms;
+}

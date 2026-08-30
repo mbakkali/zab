@@ -1,0 +1,250 @@
+/* ============================================================
+   Couche RELIEF — la grammaire de surface de la whiteapp.
+   Décision : assets/decisions/2026-08-28-whiteapp-relief.md
+
+   La charte pose `elevation.flat` en défaut : « la profondeur vient du
+   décalage de surface, pas de l'ombre ». Le relief est l'exception validée
+   pour les applications — et une exception se borne, sinon elle redevient
+   la règle. Trois bornes, tenues par ce fichier :
+
+     1. le relief s'applique aux CONTRÔLES et aux CARTES, jamais au texte,
+        jamais à une section entière, jamais à un fond de page ;
+     2. la lumière vient du haut et ne s'inverse PAS avec le thème — l'objet
+        est censé être physique, or une lumière ne change pas de sens quand
+        on éteint la pièce ;
+     3. l'ombre ne porte aucune couleur de marque. Un relief teinté redevient
+        une décoration, et la charte refuse la décoration.
+   ============================================================ */
+
+:root {
+  /* Éclairage. Identique en clair et en sombre — voir borne 2. */
+  --relief-lumiere: rgba(255, 255, 255, 0.18);
+  --relief-creux: rgba(0, 0, 0, 0.34);
+
+  /* Trois profondeurs, et pas une de plus. Au-delà, personne ne sait plus
+     laquelle veut dire quoi. */
+  --relief-pose: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px -12px rgba(0, 0, 0, 0.18);
+  --relief-souleve: 0 2px 4px rgba(0, 0, 0, 0.07), 0 14px 34px -14px rgba(0, 0, 0, 0.24);
+  --relief-flottant: 0 8px 12px rgba(0, 0, 0, 0.10), 0 28px 60px -20px rgba(0, 0, 0, 0.34);
+
+  /* Vocabulaire de mouvement, hérité de flowstart. Toute animation ajoutée
+     ensuite pioche ici plutôt que d'inventer sa valeur. */
+  --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --motion-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --motion-presse: 160ms;
+  --motion-rapide: 200ms;
+  --motion-entree: 220ms;
+}
+
+.dark {
+  /* En sombre, l'ombre noire ne se voit plus contre un fond noir : c'est le
+     LISERÉ de lumière qui porte seul le relief. Les ombres sont conservées
+     pour le détachement des modales, mais durcies. */
+  --relief-pose: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 var(--relief-lumiere);
+  --relief-souleve: 0 4px 12px rgba(0, 0, 0, 0.5), inset 0 1px 0 var(--relief-lumiere);
+  --relief-flottant: 0 24px 64px -12px rgba(0, 0, 0, 0.72), inset 0 1px 0 var(--relief-lumiere);
+}
+
+@layer components {
+  /* --- Surfaces ---------------------------------------------------------- */
+  .relief-pose      { box-shadow: var(--relief-pose); }
+  .relief-souleve   { box-shadow: var(--relief-souleve); }
+  .relief-flottant  { box-shadow: var(--relief-flottant); }
+
+  /* --- Contrôle en relief ------------------------------------------------
+     Le dégradé est un ÉCLAIRAGE, pas une couleur : il part de la couleur du
+     contrôle et l'éclaircit de 10 % vers le haut. Changer `--primary` suffit
+     donc à rhabiller le bouton — il n'y a aucune teinte écrite ici. */
+  .relief-controle {
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in srgb, currentColor 0%, transparent) 0%,
+      color-mix(in srgb, #000 8%, transparent) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 var(--relief-lumiere),
+      0 1px 2px rgba(0, 0, 0, 0.28),
+      0 4px 12px -6px rgba(0, 0, 0, 0.40);
+    /* Jamais `transition: all` — la charte le refuse explicitement, et il
+       anime des propriétés de layout qui font sauter la page. */
+    transition: transform var(--motion-presse) var(--motion-ease-out),
+                box-shadow var(--motion-presse) var(--motion-ease-out);
+  }
+  .relief-controle:active {
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 2px var(--relief-creux), 0 1px 1px rgba(0, 0, 0, 0.2);
+  }
+
+  /* --- Creux : champs de saisie, pistes de slider, fonds de piste --------- */
+  .relief-creux {
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.10);
+  }
+  .dark .relief-creux {
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
+  }
+
+  /* --- Liseré de lumière en tête de carte --------------------------------
+     C'est ce qui fait lire une carte comme un objet éclairé plutôt que comme
+     un rectangle. Invisible en clair, structurant en sombre. */
+  .relief-liseré { position: relative; overflow: hidden; }
+  .relief-liseré::after {
+    content: "";
+    position: absolute; inset: 0 0 auto 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--relief-lumiere), transparent);
+    pointer-events: none;
+  }
+}
+
+/* --- Mouvement ------------------------------------------------------------
+   Les entrées sont courtes et ne se rejouent pas : la charte interdit une
+   animation d'entrée sur une interaction répétée plus de dix fois par session. */
+@keyframes fm-monte {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes fm-fondu { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fm-onde {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@layer components {
+  .anim-monte  { animation: fm-monte var(--motion-entree) var(--motion-ease-out) both; }
+  .anim-fondu  { animation: fm-fondu var(--motion-entree) var(--motion-ease-out) both; }
+  /* Chargement : une onde qui traverse, écho du logo animé de la marque. */
+  .anim-onde   { position: relative; overflow: hidden; }
+  .anim-onde::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent,
+                color-mix(in srgb, currentColor 12%, transparent), transparent);
+    animation: fm-onde 1400ms var(--motion-ease-in-out) infinite;
+  }
+}
+
+/* Respect de la préférence système. Non négociable : c'est une exigence
+   d'accessibilité, pas une option de confort. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   Révélations au défilement — portées du site Flowmetrik.
+
+   Tenues en CSS pur : le JavaScript ne fait qu'ajouter une classe. Une
+   bibliothèque d'animation au défilement pèse plus lourd que la page
+   qu'elle anime, et elle rend la page dépendante d'elle.
+   ============================================================ */
+
+.reveler,
+.reveler-cascade > * {
+  /* Deux propriétés nommées, jamais `all` : `all` animerait aussi la
+     disposition, et la page sauterait pendant le défilement. */
+  transition: opacity 600ms ease, transform 600ms ease;
+}
+
+/* `scripting: enabled` — LE point à ne pas perdre. Le contenu n'est masqué
+   que si le JavaScript tourne. Sans cette requête, un script qui échoue, un
+   moteur d'indexation ou un navigateur sans JS voient une page blanche : ce
+   n'est plus une animation, c'est une panne. */
+@media (scripting: enabled) {
+  .reveler:not(.est-entre) { opacity: 0; transform: translateY(14px); }
+  .reveler-cascade:not(.est-entre) > * { opacity: 0; transform: translateY(16px); }
+}
+
+.reveler.est-entre { opacity: 1; transform: none; }
+.reveler-cascade.est-entre > * { opacity: 1; transform: none; }
+
+/* La cascade. 70 ms d'écart : en dessous elle ne se perçoit pas, au-dessus
+   le dernier élément se fait attendre. Six enfants au maximum — au-delà,
+   l'attente cumulée dépasse la demi-seconde et devient une lenteur. */
+.reveler-cascade.est-entre > *:nth-child(1) { transition-delay: 20ms; }
+.reveler-cascade.est-entre > *:nth-child(2) { transition-delay: 90ms; }
+.reveler-cascade.est-entre > *:nth-child(3) { transition-delay: 160ms; }
+.reveler-cascade.est-entre > *:nth-child(4) { transition-delay: 230ms; }
+.reveler-cascade.est-entre > *:nth-child(5) { transition-delay: 300ms; }
+.reveler-cascade.est-entre > *:nth-child(6) { transition-delay: 370ms; }
+
+/* Le survol qui soulève. Il ne déplace QUE l'élément survolé : la ligne
+   suivante ne bouge pas, donc le clic ne rate pas sa cible. */
+@layer components {
+  .souleve {
+    transition: transform 250ms var(--motion-ease-out), box-shadow 250ms var(--motion-ease-out);
+  }
+  .souleve:hover { transform: translateY(-3px); box-shadow: var(--relief-souleve); }
+}
+
+/* Ken Burns — la lente dérive d'échelle sur une photo de couverture.
+   20 secondes et 6 % : au-delà, le mouvement se voit et distrait ; en
+   dessous, il ne se perçoit pas et ne sert à rien. `forwards` : elle ne
+   boucle pas, sinon le saut de retour est visible. */
+@keyframes fm-kenburns { from { transform: scale(1); } to { transform: scale(1.06); } }
+@layer components {
+  .kenburns { animation: fm-kenburns 20s ease-out forwards; will-change: transform; }
+}
+
+/* ============================================================
+   Mode éditorial — les animations d'une page d'atterrissage.
+   Composants : src/features/landing.tsx
+   ============================================================ */
+
+/* La ligne de titre remonte depuis son propre masque. `both` : elle reste en
+   place à la fin, et elle est déjà masquée avant de démarrer — sans quoi le
+   texte apparaît une image en clair puis saute. */
+@keyframes fm-ligne { from { transform: translateY(105%) } to { transform: translateY(0) } }
+@layer components {
+  .anim-ligne { animation: fm-ligne 760ms var(--motion-ease-out) both; }
+}
+
+/* L'objet qui vole. Il part de l'extérieur du cadre, en rotation, et se pose.
+   Tout se joue en `transform` et `opacity` : deux propriétés composées par le
+   GPU, aucune n'entraîne de calcul de disposition. */
+@keyframes fm-vole {
+  from { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(.92) }
+  to   { opacity: 1; transform: translate(0, 0) rotate(0) scale(1) }
+}
+@layer components {
+  .anim-vole { animation: fm-vole 900ms var(--motion-ease-out) both; will-change: transform, opacity; }
+}
+
+/* La lumière balayante. Une bande claire en diagonale qui traverse le fond.
+   En `background-position` : aucun nœud de plus, et elle ne peut pas produire
+   de débordement horizontal — ce qu'un élément déplacé fait presque toujours. */
+@keyframes fm-balaye { from { background-position: -160% 0 } to { background-position: 260% 0 } }
+@layer components {
+  .lumiere-balayante {
+    background-image: linear-gradient(
+      104deg,
+      transparent 38%,
+      color-mix(in srgb, var(--foreground) 5%, transparent) 47%,
+      color-mix(in srgb, var(--foreground) 8%, transparent) 50%,
+      color-mix(in srgb, var(--foreground) 5%, transparent) 53%,
+      transparent 62%
+    );
+    background-size: 220% 100%;
+    animation: fm-balaye 9s linear infinite;
+  }
+  /* En sombre, la lumière s'inverse : c'est un reflet, et un reflet éclaircit. */
+  .dark .lumiere-balayante {
+    background-image: linear-gradient(
+      104deg, transparent 38%,
+      rgba(255,255,255,.045) 47%, rgba(255,255,255,.075) 50%, rgba(255,255,255,.045) 53%,
+      transparent 62%);
+  }
+}
+
+/* Le mode éditorial d'une section : rayon nul, respiration large. C'est le
+   régime du site, pas celui de l'application — les deux coexistent dans la
+   même page de vitrine, et c'est voulu. */
+@layer components {
+  .mode-editorial {
+    --mode-radius-control: 0;
+    --mode-radius-container: 0;
+    --mode-density-controlPadY: 14px;
+    --mode-density-controlPadX: 24px;
+  }
+}

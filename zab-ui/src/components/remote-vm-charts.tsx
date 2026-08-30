@@ -12,10 +12,10 @@ export type CostDay = {
 }
 
 const CATEGORY_META = [
-  { key: 'compute', label: 'Calcul', fill: 'fill-sky-500', chip: 'bg-sky-500' },
-  { key: 'storage', label: 'Stockage', fill: 'fill-violet-500', chip: 'bg-violet-500' },
-  { key: 'network', label: 'Réseau', fill: 'fill-teal-500', chip: 'bg-teal-500' },
-  { key: 'other', label: 'Autre', fill: 'fill-zinc-400', chip: 'bg-zinc-400' },
+  { key: 'compute', label: 'Calcul', fill: 'fill-info', chip: 'bg-info/10' },
+  { key: 'storage', label: 'Stockage', fill: 'fill-muted-foreground', chip: 'bg-secondary' },
+  { key: 'network', label: 'Réseau', fill: 'fill-succes', chip: 'bg-succes/10' },
+  { key: 'other', label: 'Autre', fill: 'fill-muted-foreground', chip: 'bg-secondary' },
 ] as const
 
 const W = 720
@@ -78,7 +78,7 @@ export function CostChart({ days, currency }: { days: CostDay[]; currency: strin
             </span>
           ))}
           <span className="text-muted-foreground flex items-center gap-1.5">
-            <span className="bg-amber-500 h-0.5 w-4 rounded-full" aria-hidden />
+            <span className="bg-alerte/10 h-0.5 w-4 rounded-full" aria-hidden />
             Heures allumée
           </span>
         </div>
@@ -89,7 +89,7 @@ export function CostChart({ days, currency }: { days: CostDay[]; currency: strin
               <span className="text-muted-foreground"> · </span>
               {money.format(active.net_cost)}
               <span className="text-muted-foreground"> · </span>
-              <span className="text-amber-600 dark:text-amber-400">{active.hours.toFixed(2)} h</span>
+              <span className="text-alerte">{active.hours.toFixed(2)} h</span>
             </>
           ) : (
             <span className="text-muted-foreground">Survole une journée pour le détail</span>
@@ -126,7 +126,7 @@ export function CostChart({ days, currency }: { days: CostDay[]; currency: strin
               <text x={PAD_L - 6} y={y + 3} textAnchor="end" className="fill-muted-foreground text-[9px] tabular-nums">
                 {(maxCost * step).toFixed(maxCost < 2 ? 2 : 1)}
               </text>
-              <text x={W - PAD_R + 6} y={y + 3} className="fill-amber-600/80 dark:fill-amber-400/80 text-[9px] tabular-nums">
+              <text x={W - PAD_R + 6} y={y + 3} className="fill-alerte/80 text-[9px] tabular-nums">
                 {Math.round(maxHours * step)}h
               </text>
             </g>
@@ -159,10 +159,10 @@ export function CostChart({ days, currency }: { days: CostDay[]; currency: strin
             )
           })}
 
-          <path d={hoursPath} fill="none" className="stroke-amber-500" strokeWidth={1.75} strokeLinejoin="round" />
+          <path d={hoursPath} fill="none" className="stroke-alerte" strokeWidth={1.75} strokeLinejoin="round" />
           {days.map((d, i) =>
             d.hours > 0 ? (
-              <circle key={d.day} cx={x(i)} cy={yHours(d.hours)} r={hover === i ? 3.5 : 2} className="fill-amber-500" />
+              <circle key={d.day} cx={x(i)} cy={yHours(d.hours)} r={hover === i ? 3.5 : 2} className="fill-alerte" />
             ) : null,
           )}
         </g>
@@ -209,8 +209,8 @@ export function Sparkline({ values, tone = 'sky' }: { values: number[]; tone?: '
   const max = Math.max(...values, 0.0001)
   const step = values.length > 1 ? w / (values.length - 1) : w
   const points = values.map((v, i) => `${(i * step).toFixed(1)},${(h - (v / max) * h).toFixed(1)}`)
-  const stroke = { sky: 'stroke-sky-500', amber: 'stroke-amber-500', emerald: 'stroke-emerald-500' }[tone]
-  const fill = { sky: 'fill-sky-500/15', amber: 'fill-amber-500/15', emerald: 'fill-emerald-500/15' }[tone]
+  const stroke = { sky: 'stroke-info', amber: 'stroke-alerte', emerald: 'stroke-succes' }[tone]
+  const fill = { sky: 'fill-info/15', amber: 'fill-alerte/15', emerald: 'fill-succes/15' }[tone]
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className="h-7 w-full" aria-hidden preserveAspectRatio="none">
       <polygon points={`0,${h} ${points.join(' ')} ${w},${h}`} className={fill} />
@@ -234,7 +234,7 @@ export function Ring({
   const r = 26
   const c = 2 * Math.PI * r
   const ratio = total > 0 ? Math.min(1, value / total) : 0
-  const stroke = { emerald: 'stroke-emerald-500', amber: 'stroke-amber-500', zinc: 'stroke-zinc-400' }[tone]
+  const stroke = { emerald: 'stroke-succes', amber: 'stroke-alerte', zinc: 'stroke-muted-foreground' }[tone]
   return (
     <div className="flex items-center gap-3">
       <svg viewBox="0 0 64 64" className="size-16 -rotate-90" aria-label={label}>

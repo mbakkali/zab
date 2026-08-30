@@ -134,21 +134,21 @@ function formatDate(value?: string): string {
 function statusTone(status?: string): string {
   const normalized = String(status || '').toLowerCase()
   if (['ok', 'done', 'running', 'queued'].includes(normalized)) {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+    return 'border-succes/35 bg-succes/10 text-succes'
   }
   if (['cancelled', 'warning', 'warn'].includes(normalized)) {
-    return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
+    return 'border-alerte/35 bg-alerte/10 text-alerte'
   }
   if (['error', 'fail', 'failed'].includes(normalized)) {
-    return 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300'
+    return 'border-danger/35 bg-danger/10 text-danger'
   }
-  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function levelTone(level?: string): string {
   const normalized = String(level || '').toUpperCase()
-  if (normalized === 'ERROR' || normalized === 'CRITICAL') return 'text-red-600'
-  if (normalized === 'WARNING') return 'text-amber-600'
+  if (normalized === 'ERROR' || normalized === 'CRITICAL') return 'text-danger'
+  if (normalized === 'WARNING') return 'text-alerte'
   if (normalized === 'DEBUG') return 'text-muted-foreground'
   return 'text-foreground'
 }
@@ -358,7 +358,7 @@ export function LogsView() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Errors</CardDescription>
-            <CardTitle className="text-3xl text-red-600" data-testid="logs-errors">{errorCount}</CardTitle>
+            <CardTitle className="text-3xl text-danger" data-testid="logs-errors">{errorCount}</CardTitle>
           </CardHeader>
         </Card>
         <Card>

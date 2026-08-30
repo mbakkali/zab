@@ -83,7 +83,7 @@ function ProjectCard({
   const remote = (p.remote_host || '') as string
 
   return (
-    <Card className={active ? 'border-zinc-900 ring-1 ring-zinc-900' : undefined}>
+    <Card className={active ? 'border-border ring-1 ring-ring/40' : undefined}>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{p.name}</CardTitle>
         <CardDescription>
@@ -93,7 +93,7 @@ function ProjectCard({
               onClick={() => onOpenOrg(p.org)}
               className={cn(
                 'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                'bg-zinc-100 text-zinc-700 transition hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200',
+                'bg-muted text-foreground transition hover:bg-muted',
               )}
             >
               {p.org}
@@ -105,7 +105,7 @@ function ProjectCard({
               <span
                 className={cn(
                   'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                  'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100',
+                  'bg-succes/10 text-succes',
                 )}
                 title={p.origin_https || undefined}
               >
@@ -146,11 +146,11 @@ function ProjectCard({
           onRunSecurityScan={onRunSecurityScan}
         />
         <p className="text-muted-foreground font-mono text-[10px] break-all">{sh(p.path)}</p>
-        <details className="rounded-md border border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-950/40">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">
+        <details className="rounded-md border border-border bg-muted/80">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-foreground">
             {t('projects.card.skillsExpand', { count: String(p.skills.length) })}
           </summary>
-          <div className="max-h-[min(50vh,28rem)] overflow-y-auto border-t border-zinc-200 px-2 pb-2 pt-1 dark:border-zinc-800">
+          <div className="max-h-[min(50vh,28rem)] overflow-y-auto border-t border-border px-2 pb-2 pt-1">
             <ul className="space-y-1.5 text-xs">
               {p.skills.map((s) => (
                 <li key={s.path} className="flex flex-col gap-0.5">
@@ -341,7 +341,7 @@ export function ProjectsView({
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-alerte/10 text-alerte">
               <HugeiconsIcon icon={Folder02Icon} size={20} />
             </div>
             <div>

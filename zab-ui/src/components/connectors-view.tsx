@@ -251,7 +251,7 @@ function McpSyncPanel({
               </div>
             ) : null}
             {status.conflict_slugs && status.conflict_slugs.length > 0 ? (
-              <div className="sm:col-span-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+              <div className="sm:col-span-2 rounded-md border border-alerte/35 bg-alerte/10 px-3 py-2 text-xs text-alerte">
                 {t('connectors.mcpSync.conflictsList')} : {status.conflict_slugs.join(', ')}
               </div>
             ) : null}
@@ -327,30 +327,30 @@ function connectorOriginLabel(row: ConnectorSummary): { label: string; tone: str
   if (isComposioConnector(row)) {
     return {
       label: 'Composio',
-      tone: 'bg-fuchsia-50 text-fuchsia-700 ring-1 ring-fuchsia-200',
+      tone: 'bg-muted text-foreground ring-1 ring-ring/40',
     }
   }
   if (isLocalMcpConnector(row)) {
     return {
       label: 'MCP local',
-      tone: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+      tone: 'bg-alerte/10 text-alerte ring-1 ring-alerte/35',
     }
   }
   if (row.kind_badges.includes('mcp') && row.transport_badges.some((t) => t === 'http' || t === 'sse')) {
     return {
       label: 'MCP distant',
-      tone: 'bg-blue-50 text-blue-700 ring-1 ring-blue-200',
+      tone: 'bg-info/10 text-info ring-1 ring-info/35',
     }
   }
   return null
 }
 
 function CheckStatusIcon({ status }: { status: CheckStatus }) {
-  if (status === 'ok') return <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-  if (status === 'warn') return <AlertTriangle className="size-4 shrink-0 text-amber-500" />
-  if (status === 'fail') return <XCircle className="size-4 shrink-0 text-red-600" />
-  if (status === 'running') return <Loader2 className="size-4 shrink-0 animate-spin text-zinc-500" />
-  return <span className="inline-block size-4 shrink-0 rounded-full border border-zinc-300" />
+  if (status === 'ok') return <CheckCircle2 className="size-4 shrink-0 text-succes" />
+  if (status === 'warn') return <AlertTriangle className="size-4 shrink-0 text-alerte" />
+  if (status === 'fail') return <XCircle className="size-4 shrink-0 text-danger" />
+  if (status === 'running') return <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+  return <span className="inline-block size-4 shrink-0 rounded-full border border-border" />
 }
 
 function checkStatusLabel(status: CheckStatus): string {
@@ -540,7 +540,7 @@ export function ConnectorsView() {
         <div
           role="alert"
           data-testid="connectors-stale-backend-notice"
-          className="text-destructive space-y-2 rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm whitespace-pre-wrap"
+          className="text-destructive space-y-2 rounded-xl border border-danger/35 bg-danger/10 px-4 py-3 text-sm whitespace-pre-wrap"
         >
           {loadError}
         </div>
@@ -558,7 +558,7 @@ export function ConnectorsView() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('connectors.searchPlaceholder')}
             aria-label={t('connectors.searchAria')}
-            className="border-input bg-background w-full rounded-lg border py-2 pr-3 pl-9 text-sm outline-none transition focus:ring-2 focus:ring-zinc-300"
+            className="border-input bg-background w-full rounded-lg border py-2 pr-3 pl-9 text-sm outline-none transition focus:ring-2 focus:ring-ring/40"
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -595,7 +595,7 @@ export function ConnectorsView() {
 
       {loading && list.length === 0 ? <LoadingState compact label={t('common.loading')} /> : null}
       {loadError && !backendNeedsRestartForAggregators && (
-        <div className="text-destructive space-y-2 rounded-xl border border-red-200 bg-red-50/80 px-4 py-3 text-sm whitespace-pre-wrap">
+        <div className="text-destructive space-y-2 rounded-xl border border-danger/35 bg-danger/10 px-4 py-3 text-sm whitespace-pre-wrap">
           <p role="alert" data-testid="connectors-load-error">
             {loadError}
           </p>
@@ -795,8 +795,8 @@ export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStal
   }
 
   return (
-    <Card data-testid="connectors-config-panel" size="sm" className="border-zinc-200">
-      <CardHeader className="border-b border-zinc-100 pb-4">
+    <Card data-testid="connectors-config-panel" size="sm" className="border-border">
+      <CardHeader className="border-b border-border pb-4">
         <CardTitle>Configuration zab</CardTitle>
         <CardDescription>
           Édition de <code className="text-xs">{USER_CONFIG_PATH}</code>. Ajoutez des binaires dans{' '}
@@ -869,7 +869,7 @@ export function ConnectorsConfigFilesPanel({ aggregatorStale }: { aggregatorStal
           </div>
         )}
         {meta?.truncate_note && (
-          <p className="text-amber-800 text-[11px]">Aperçu tronqué : {meta.truncate_note}</p>
+          <p className="text-alerte text-[11px]">Aperçu tronqué : {meta.truncate_note}</p>
         )}
         {editable ? (
           <Textarea
@@ -908,8 +908,8 @@ function KindChip({
       className={cn(
         'rounded-full border px-3 py-1 text-xs font-medium transition',
         active
-          ? 'border-zinc-900 bg-zinc-900 text-white'
-          : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300',
+          ? 'border-border bg-primary text-primary-foreground'
+          : 'border-border bg-card text-muted-foreground hover:border-border',
       )}
     >
       {children}
@@ -925,7 +925,7 @@ function ConnectorCard({ row, onDetail }: { row: ConnectorSummary; onDetail: () 
   const origin = connectorOriginLabel(row)
 
   return (
-    <div className="group bg-card hover:border-zinc-300 hover:shadow-sm relative flex flex-col gap-4 rounded-xl border border-zinc-200 p-5 transition">
+    <div className="group bg-card hover:border-border hover:shadow-sm relative flex flex-col gap-4 rounded-xl border border-border p-5 transition">
       <div className="flex items-start justify-between gap-3">
         <div
           className={cn(
@@ -968,14 +968,14 @@ function ConnectorCard({ row, onDetail }: { row: ConnectorSummary; onDetail: () 
           {primaryTransport || '—'}
         </span>
         {row.form_count > 1 && (
-          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200">
+          <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-ring/40">
             {row.form_count} {row.kind_badges.includes('composio') && row.kind_badges.length === 1 ? 'comptes' : 'formes'}
           </span>
         )}
         {(row.tags ?? []).map((t) => (
           <span
             key={t}
-            className="inline-flex rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-medium text-fuchsia-700 ring-1 ring-fuchsia-200 capitalize"
+            className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-ring/40 capitalize"
           >
             {t}
           </span>
@@ -996,7 +996,7 @@ function ConnectorCard({ row, onDetail }: { row: ConnectorSummary; onDetail: () 
                 .then(() => toast.success('Cible copiée'))
                 .catch(() => toast.error('Impossible de copier'))
             }}
-            className="absolute top-1.5 right-1.5 rounded-md p-1 text-zinc-500 opacity-0 transition hover:bg-white hover:text-zinc-900 group-hover:opacity-100"
+            className="absolute top-1.5 right-1.5 rounded-md p-1 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
           >
             <HugeiconsIcon icon={Copy01Icon} size={14} />
           </button>
@@ -1021,14 +1021,14 @@ function SummaryStatus({ enabled }: { enabled: boolean }) {
   const { t } = useI18n()
   if (enabled) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+      <span className="inline-flex items-center gap-1 rounded-full bg-succes/10 px-2 py-1 text-[11px] font-medium text-succes ring-1 ring-succes/35">
         <HugeiconsIcon icon={Tick02Icon} size={12} strokeWidth={2} />
         {t('connectors.status.active')}
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-medium text-zinc-600 ring-1 ring-zinc-200">
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[11px] font-medium text-muted-foreground ring-1 ring-ring/40">
       {t('connectors.status.disabled')}
     </span>
   )
@@ -1066,13 +1066,13 @@ function ConnectorDetailDialog({
             {slug && open ? <ConnectorCheckPanel slug={slug} /> : null}
             <div className="space-y-4 pt-2" data-testid="connector-forms-list">
               {detail.forms.map((f) => (
-                <div key={f.id} className="space-y-2 rounded-lg border border-zinc-100 bg-zinc-50/80 p-3">
+                <div key={f.id} className="space-y-2 rounded-lg border border-border bg-muted/80 p-3">
                   <div className="flex flex-wrap gap-2 text-[11px] font-medium capitalize">
                     <span className="bg-background rounded-full px-2 py-0.5 ring-1">{f.kind}</span>
                     <span className="bg-background rounded-full px-2 py-0.5 ring-1">{f.transport_kind}</span>
-                    <span className={f.enabled ? 'text-emerald-700' : 'text-zinc-500'}>{f.enabled ? 'activé' : 'désactivé'}</span>
+                    <span className={f.enabled ? 'text-succes' : 'text-muted-foreground'}>{f.enabled ? 'activé' : 'désactivé'}</span>
                     {f.kind === 'composio' ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-medium text-fuchsia-700 ring-1 ring-fuchsia-200">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground ring-1 ring-ring/40">
                         Composio
                       </span>
                     ) : (
@@ -1080,8 +1080,8 @@ function ConnectorDetailDialog({
                         className={cn(
                           'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
                           f.transport_kind === 'stdio'
-                            ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
-                            : 'bg-blue-50 text-blue-700 ring-1 ring-blue-200',
+                            ? 'bg-alerte/10 text-alerte ring-1 ring-alerte/35'
+                            : 'bg-info/10 text-info ring-1 ring-info/35',
                         )}
                       >
                         {f.transport_kind === 'stdio' ? 'MCP local' : 'MCP distant'}
@@ -1114,7 +1114,7 @@ function ConnectorDetailDialog({
                     <div data-testid="connector-form-source">
                       <p className="text-muted-foreground text-[11px] font-medium uppercase">Source</p>
                       <p className="text-xs">{f.source_label}</p>
-                      {f.source_ref && <p className="font-mono text-[11px] text-zinc-500">{f.source_ref}</p>}
+                      {f.source_ref && <p className="font-mono text-[11px] text-muted-foreground">{f.source_ref}</p>}
                     </div>
                   )}
                   <SourceOpenRow path={f.config_path ?? undefined} />
@@ -1346,7 +1346,7 @@ function ConnectorsGlobalCheckDialog({
             return (
               <div
                 key={entry.slug}
-                className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2"
+                className="rounded-lg border border-border bg-muted/80 px-3 py-2"
                 data-testid={`connector-global-check-${entry.slug}`}
               >
                 <div className="flex items-start gap-2">
@@ -1354,13 +1354,13 @@ function ConnectorsGlobalCheckDialog({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <p className="text-sm font-medium">{entry.display_name}</p>
-                      <span className="font-mono text-[11px] text-zinc-500">{entry.slug}</span>
+                      <span className="font-mono text-[11px] text-muted-foreground">{entry.slug}</span>
                       {payload ? (
-                        <span className="text-[11px] text-zinc-600">
+                        <span className="text-[11px] text-muted-foreground">
                           {ok} OK · {warn} à surveiller · {fail} KO
                         </span>
                       ) : pending ? (
-                        <span className="text-[11px] text-zinc-500">Vérification…</span>
+                        <span className="text-[11px] text-muted-foreground">Vérification…</span>
                       ) : null}
                     </div>
                     {payload && payload.checks.length > 0 ? (
@@ -1485,7 +1485,7 @@ function ConnectorCheckPanel({ slug }: { slug: string }) {
 
   return (
     <div
-      className="space-y-3 rounded-lg border border-zinc-200 bg-white p-3"
+      className="space-y-3 rounded-lg border border-border bg-card p-3"
       data-testid="connector-check-panel"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1517,7 +1517,7 @@ function ConnectorCheckPanel({ slug }: { slug: string }) {
       {checkList.length > 0 ? (
         <ul className="space-y-2">
           {checkList.map((chk) => (
-            <li key={chk.id} className="flex items-start gap-2 rounded-md bg-zinc-50 px-2 py-1.5 text-xs">
+            <li key={chk.id} className="flex items-start gap-2 rounded-md bg-muted px-2 py-1.5 text-xs">
               <CheckStatusIcon status={chk.status} />
               <div className="min-w-0 flex-1">
                 <p className="font-medium">{chk.label}</p>

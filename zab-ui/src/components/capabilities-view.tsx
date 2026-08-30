@@ -50,9 +50,9 @@ const SURFACE_LABELS: { key: keyof Pick<Capability, 'core' | 'cli' | 'mcp' | 'ap
 ]
 
 function statusTone(status: CapabilityStatus): string {
-  if (status === 'complete') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-  if (status === 'partial') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
-  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+  if (status === 'complete') return 'border-succes/35 bg-succes/10 text-succes'
+  if (status === 'partial') return 'border-alerte/35 bg-alerte/10 text-alerte'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function StatusIcon({ status }: { status: CapabilityStatus }) {
@@ -155,7 +155,7 @@ export function CapabilitiesView() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Complete</CardDescription>
-            <CardTitle className="text-3xl text-emerald-600" data-testid="capabilities-complete">
+            <CardTitle className="text-3xl text-succes" data-testid="capabilities-complete">
               {countFor(manifest, 'complete')}
             </CardTitle>
           </CardHeader>
@@ -163,7 +163,7 @@ export function CapabilitiesView() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Partial</CardDescription>
-            <CardTitle className="text-3xl text-amber-600" data-testid="capabilities-partial">
+            <CardTitle className="text-3xl text-alerte" data-testid="capabilities-partial">
               {countFor(manifest, 'partial')}
             </CardTitle>
           </CardHeader>

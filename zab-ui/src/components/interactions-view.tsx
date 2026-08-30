@@ -71,46 +71,46 @@ const SOURCE_META: Record<string, SourceMeta> = {
   gmail: {
     label: 'Gmail',
     icon: Mail,
-    badge: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300',
-    dot: 'bg-red-500',
+    badge: 'border-danger/35 bg-danger/10 text-danger',
+    dot: 'bg-danger/10',
   },
   calendar: {
     label: 'Calendar',
     icon: CalendarClock,
-    badge: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300',
-    dot: 'bg-blue-500',
+    badge: 'border-info/35 bg-info/10 text-info',
+    dot: 'bg-info/10',
   },
   fireflies: {
     label: 'Fireflies',
     icon: Mic,
-    badge: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950 dark:text-orange-300',
-    dot: 'bg-orange-500',
+    badge: 'border-alerte/35 bg-alerte/10 text-alerte',
+    dot: 'bg-alerte/10',
   },
   whatsapp: {
     label: 'WhatsApp',
     icon: MessageCircle,
-    badge: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300',
-    dot: 'bg-emerald-500',
+    badge: 'border-succes/35 bg-succes/10 text-succes',
+    dot: 'bg-succes/10',
   },
   ios_messages: {
     label: 'iMessage',
     icon: Smartphone,
-    badge: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300',
-    dot: 'bg-sky-500',
+    badge: 'border-info/35 bg-info/10 text-info',
+    dot: 'bg-info/10',
   },
   attio: {
     label: 'Attio',
     icon: Contact,
-    badge: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-300',
-    dot: 'bg-violet-500',
+    badge: 'border-border bg-muted text-foreground',
+    dot: 'bg-secondary',
   },
 }
 
 const DEFAULT_META: SourceMeta = {
   label: 'Autre',
   icon: MessagesSquare,
-  badge: 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300',
-  dot: 'bg-slate-400',
+  badge: 'border-border bg-muted text-muted-foreground',
+  dot: 'bg-secondary',
 }
 
 const SNIPPET_LIMIT = 600
@@ -144,10 +144,10 @@ async function apiJson<T>(path: string): Promise<T> {
 }
 
 function statusTone(status?: string): string {
-  if (status === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-  if (status === 'degraded') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
-  if (status === 'error') return 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300'
-  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+  if (status === 'ok') return 'border-succes/35 bg-succes/10 text-succes'
+  if (status === 'degraded') return 'border-alerte/35 bg-alerte/10 text-alerte'
+  if (status === 'error') return 'border-danger/35 bg-danger/10 text-danger'
+  return 'border-border bg-muted text-muted-foreground'
 }
 
 function cleanActor(name?: string): string {
@@ -416,7 +416,7 @@ export function InteractionsView({ onOpenTool }: InteractionsViewProps) {
                 value={orgQuery}
                 onChange={(e) => setOrgQuery(e.target.value)}
                 placeholder="Rechercher une entreprise…"
-                className="border-input bg-background rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-300"
+                className="border-input bg-background rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
               />
               <div className="max-h-[560px] space-y-1 overflow-y-auto pr-1">
                 {filteredOrgs.map((org) => {

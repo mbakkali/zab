@@ -25,13 +25,13 @@ export function conversationProviderLabel(id: string): string {
 
 export function conversationProviderBadgeClass(id: string): string {
   const lower = id.toLowerCase()
-  if (lower === 'cursor') return 'bg-sky-50 text-sky-900 ring-sky-200'
-  if (lower === 'claude') return 'bg-amber-50 text-amber-900 ring-amber-200'
-  if (lower === 'codex') return 'bg-emerald-50 text-emerald-900 ring-emerald-200'
-  if (lower === 'hermes') return 'bg-violet-50 text-violet-900 ring-violet-200'
-  if (lower === 'gemini') return 'bg-blue-50 text-blue-900 ring-blue-200'
-  if (lower === 'kimi') return 'bg-rose-50 text-rose-900 ring-rose-200'
-  return 'bg-zinc-100 text-zinc-700 ring-zinc-200'
+  if (lower === 'cursor') return 'bg-info/10 text-info ring-info/35'
+  if (lower === 'claude') return 'bg-alerte/10 text-alerte ring-alerte/35'
+  if (lower === 'codex') return 'bg-succes/10 text-succes ring-succes/35'
+  if (lower === 'hermes') return 'bg-muted text-foreground ring-ring/40'
+  if (lower === 'gemini') return 'bg-info/10 text-info ring-info/35'
+  if (lower === 'kimi') return 'bg-danger/10 text-danger ring-danger/35'
+  return 'bg-muted text-foreground ring-ring/40'
 }
 
 const STATUS_KEYS: Record<string, string> = {

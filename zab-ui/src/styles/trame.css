@@ -1,0 +1,194 @@
+/* ============================================================
+   Couche TRAME — les fonds à motif de la whiteapp.
+
+   Pourquoi elle existe : le système savait faire des SURFACES
+   (`--color-surface-*`) et du RELIEF, mais un fond était toujours un aplat.
+   `grep -E 'pattern|trame|motif' src/styles/` ne renvoyait rien. Or les grands
+   aplats blancs de la vitrine sont précisément ce qui fait dire « c'est trop
+   compact, pas assez aéré » — le vide n'est pas le problème, c'est le vide
+   INHABITÉ qui l'est.
+
+   D'où vient le dessin : il existait déjà, dans `src/features/circuit.tsx` —
+   pistes gravées, pastilles, modules. Il y est construit comme un objet de
+   PREMIER PLAN : en relief, animé, avec un tiret d'accent qui circule. Cette
+   couche en extrait la variante de FOND : même vocabulaire graphique, sans
+   relief, sans mouvement, sans accent, et à un contraste dix fois plus bas.
+
+   Trois bornes :
+
+     1. ÉCART DE VALEUR DE 2 À 4 %, jamais plus. Au-delà, le motif cesse d'être
+        une texture et devient un contenu — il entre en concurrence avec le
+        texte, et la page devient bruyante ;
+     2. AUCUN ACCENT, AUCUN MOUVEMENT. L'accent appartient à ce qui est vivant
+        (voir `circuit.tsx`, où le tiret désigne la donnée qui circule). Un
+        fond n'est pas vivant. Un fond qui bouge est une distraction permanente ;
+     3. UNE ÉCHELLE, UN DESSIN. Un motif tracé pour 1600 px de large, recadré
+        dans une carte de 400 px, ne montre plus qu'un fragment illisible qu'on
+        prend pour une salissure. Les trois usages ont donc trois dessins
+        distincts — voir `src/features/trame.tsx` pour les deux dessins
+        vectoriels, et `.trame-quadrillee` ci-dessous pour le troisième.
+   ============================================================ */
+
+:root {
+  /* L'encre de la trame. Elle dérive de la bordure, donc du thème : aucune
+     couleur écrite ici, et un changement de charte l'emporte avec lui.
+
+     Les trois valeurs sont les trois échelles, pas trois intensités au choix.
+     Elles ne se déduisent pas les unes des autres : à opacité égale, un
+     quadrillage continu couvre bien plus de surface qu'un réseau de tracés
+     espacés, donc il paraît plus foncé et sa valeur doit descendre.
+
+     Écarts de valeur MESURÉS le 2026-08-28 sur la page `#trame`, capture
+     Chromium, luminance Rec. 709 — la borne de 2 à 4 % est vérifiée, pas
+     estimée :
+
+       section  2,44 %   ·   carte  2,44 %   ·   inversé  3,53 %
+
+     Toute retouche de ces trois valeurs se re-mesure. Les régler à l'œil, sur
+     un seul écran, est exactement la façon dont une trame finit à 8 %. */
+  --trame-encre-section: color-mix(in srgb, var(--color-border-hairline, currentColor) 50%, transparent);
+  --trame-encre-carte: color-mix(in srgb, var(--color-border-hairline, currentColor) 46%, transparent);
+  --trame-encre-quadrillage: color-mix(in srgb, var(--color-border-hairline, currentColor) 40%, transparent);
+
+  /* Le pas des deux trames géométriques. Fixé ici et nulle part ailleurs :
+     deux blocs voisins dont la trame n'a pas le même pas se lisent comme une
+     erreur d'alignement. */
+  --trame-pas-points: 28px;
+  --trame-pas-quadrillage: 32px;
+}
+
+/* Un trait clair sur fond sombre paraît nettement plus fort que le trait sombre
+   équivalent sur fond clair — le même phénomène que pour le verre. Les valeurs
+   descendent donc, elles ne se recopient pas.
+
+   C'est le piège qui rend un mode sombre bruyant sans qu'on comprenne pourquoi :
+   la trame passe inaperçue en clair, et crève l'écran en sombre. */
+.dark,
+.trame-inversee {
+  --trame-encre-section: rgba(255, 255, 255, 0.045);
+  --trame-encre-carte: rgba(255, 255, 255, 0.06);
+  --trame-encre-quadrillage: rgba(255, 255, 255, 0.038);
+}
+
+/* `.trame-inversee` — et pourquoi elle ne peut pas être déduite du thème.
+   Un bloc sombre posé DANS une page claire (le motif des blocs noirs de
+   `moodboard/16-b.jpg`) n'est pas en thème sombre : `.dark` n'est nulle part
+   au-dessus de lui. La trame y prend donc les valeurs CLAIRES — un gris pâle,
+   qui sur du noir ne se voit pas discrètement : il crève l'écran.
+
+   C'est exactement le piège documenté juste au-dessus, et il se produit sans
+   qu'aucun thème ne soit en cause. D'où cette classe : elle dit « cette
+   surface est inversée », indépendamment du thème de la page. */
+
+@layer components {
+  /* --- L'hôte -------------------------------------------------------------
+     Toute trame se pose en couche absolue dans un conteneur positionné, et ne
+     reçoit jamais d'événement. Sans `isolation`, une trame en fond passe
+     au-dessus d'un enfant à z-index négatif d'un autre empilement. */
+  .trame-hote {
+    position: relative;
+    isolation: isolate;
+  }
+  .trame-hote > .trame-couche {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+  /* Le contenu passe DEVANT sans qu'on ait à le dire à chaque fois. */
+  .trame-hote > :not(.trame-couche) {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* --- Trame pointillée ---------------------------------------------------
+     La plus discrète des trois : une pastille par maille, comme la grille
+     gravée d'une carte de circuit. Exprimable en CSS pur, donc gratuite —
+     aucun fichier, aucun nœud SVG.
+
+     Usage : fond de section large, derrière un héros ou un bandeau. */
+  .trame-pointillee {
+    background-image: radial-gradient(
+      circle at 1.5px 1.5px,
+      var(--trame-encre-section) 1px,
+      transparent 0
+    );
+    background-size: var(--trame-pas-points) var(--trame-pas-points);
+  }
+
+  /* --- Trame quadrillée ---------------------------------------------------
+     Le troisième dessin, celui des blocs SOMBRES : un quadrillage fin, comme
+     sur les blocs noirs de `moodboard/16-b.jpg`. Un motif de points disparaît
+     sur fond noir ; une ligne continue tient.
+
+     Elle ne s'emploie QUE sur une surface inversée — sur fond clair, elle
+     ressemble à du papier millimétré. */
+  .trame-quadrillee {
+    background-image:
+      linear-gradient(to right, var(--trame-encre-quadrillage) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--trame-encre-quadrillage) 1px, transparent 1px);
+    background-size: var(--trame-pas-quadrillage) var(--trame-pas-quadrillage);
+  }
+
+  /* --- L'estompe ----------------------------------------------------------
+     Une trame qui s'arrête net au bord d'une section se lit comme un
+     rectangle collé. Estomper les bords la fait appartenir à la page.
+
+     `mask-image` et son préfixe : Safari < 15.4 ne connaît que la version
+     préfixée, et sans elle le masque est simplement ignoré — la trame
+     s'affiche alors jusqu'au bord, sans erreur. */
+  .trame-estompe {
+    -webkit-mask-image: radial-gradient(120% 90% at 50% 40%, #000 35%, transparent 100%);
+    mask-image: radial-gradient(120% 90% at 50% 40%, #000 35%, transparent 100%);
+  }
+  .trame-estompe-haut {
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  }
+
+  /* --- La diagonale de lumière -------------------------------------------
+     La troisième couche du fond de `moodboard/17-fond-tech.png` : une bande
+     claire très large qui traverse la zone. Elle ne dessine rien ; elle
+     empêche le fond d'être plat, et donne une direction au regard.
+
+     Encore plus basse en contraste que la trame : c'est un éclairage. */
+  .trame-diagonale {
+    background-image: linear-gradient(
+      116deg,
+      transparent 30%,
+      color-mix(in srgb, var(--color-neutral-0, #fff) 55%, transparent) 46%,
+      color-mix(in srgb, var(--color-neutral-0, #fff) 70%, transparent) 50%,
+      color-mix(in srgb, var(--color-neutral-0, #fff) 55%, transparent) 54%,
+      transparent 70%
+    );
+  }
+  .dark .trame-diagonale {
+    background-image: linear-gradient(
+      116deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.03) 46%,
+      rgba(255, 255, 255, 0.05) 50%,
+      rgba(255, 255, 255, 0.03) 54%,
+      transparent 70%
+    );
+  }
+}
+
+/* --- Impression -----------------------------------------------------------
+   Une trame à 3 % de contraste à l'écran ne s'imprime pas : selon le pilote,
+   elle disparaît, ou elle sort en aplat gris sale qui mange le texte. Aucun des
+   deux résultats n'est voulu, donc on la retire. */
+@media print {
+  .trame-pointillee,
+  .trame-quadrillee,
+  .trame-diagonale { background-image: none; }
+}
+
+/* --- Contraste renforcé ---------------------------------------------------
+   L'utilisateur qui demande un contraste élevé demande MOINS de bruit, pas
+   plus : la trame est du bruit décoratif, elle disparaît. */
+@media (prefers-contrast: more) {
+  .trame-pointillee,
+  .trame-quadrillee,
+  .trame-diagonale { background-image: none; }
+}
