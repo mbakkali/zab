@@ -36,6 +36,14 @@ TABLES = (
     "brain_entities",
     "brain_edges",
     "brain_ingest_runs",
+    # Le Conversation Ledger. Absentes de cette liste jusqu'au 2026-09-04,
+    # `zab db status` affichait 18 tables et taisait 4 929 interactions,
+    # 220 work packets et 9 organisations restées côté SQLite.
+    "ledger_events",
+    "ledger_workpackets",
+    "ledger_projection_states",
+    "ledger_organizations",
+    "ledger_workstreams",
 )
 
 
@@ -496,6 +504,12 @@ def _pgvector_ready(cur: Any) -> bool:
 
 
 def status() -> dict[str, Any]:
+    # Deux zab partagent cette base. Sans le nom de la machine, deux sorties
+    # côte à côte sont indiscernables, et on répare la mauvaise.
+    from zab.services.machine import get_machine
+
+    machine = get_machine().get("hote")
+
     if not resolve_postgres_dsn():
         from zab.services import local_db as sqlite_store
 
@@ -503,9 +517,13 @@ def status() -> dict[str, Any]:
         payload["database"] = "sqlite"
         payload["schema"] = None
         payload["configured"] = True
+        payload["machine"] = machine
+        payload["shared"] = False
         return payload
     payload: dict[str, Any] = {
         "database": "postgres",
+        "machine": machine,
+        "shared": True,
         "schema": SCHEMA,
         "configured": bool(resolve_postgres_dsn()),
         "connected": False,
@@ -1381,7 +1399,25 @@ def import_legacy() -> dict[str, Any]:
     migrate_schema()
     _import_legacy_sqlite(result)
     _import_legacy_files(result)
+    _import_legacy_ledger(result)
     return result
+
+
+def _import_legacy_ledger(result: dict[str, Any]) -> None:
+    """Reprend aussi le Conversation Ledger, que la reprise oubliait.
+
+    L'import local ne connaissait que les registres et l'état ; les tables
+    `ledger_*` restaient dans le SQLite, invisibles du magasin canonique.
+    """
+    from zab.services import ledger_db  # importé ici : ledger_db dépend de ce module
+
+    try:
+        rapport = ledger_db.import_sqlite(apply=True)
+    except Exception as souci:
+        result["errors"].append({"source": "ledger", "error": str(souci)})
+        return
+    for table, detail in (rapport.get("tables") or {}).items():
+        result["imported"][table] = detail.get("importees", 0)
 
 
 def _import_legacy_sqlite(result: dict[str, Any]) -> None:

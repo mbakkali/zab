@@ -165,9 +165,9 @@ def enrich_events_content(
             enriched.append(updated)
 
     if persist:
-        from zab.services import local_db
+        from zab.services import ledger_db
 
-        with local_db.transaction() as conn:
+        with ledger_db.transaction() as conn:
             _process(events, conn)
     else:
         _process(events, None)
@@ -182,10 +182,10 @@ def enrich_organization_content(
     max_fetch: int | None = None,
 ) -> dict[str, Any]:
     """Backfill Gmail bodies for all events linked to an organization."""
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import list_events
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, organization_id=organization_id, limit=limit)
     enriched, stats = enrich_events_content(events, persist=True, max_fetch=max_fetch)
     with_body = sum(1 for e in enriched if e.get("body"))

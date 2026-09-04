@@ -1,4 +1,10 @@
-"""SQLite + JSONL persistence for Conversation Ledger."""
+"""Persistance du Conversation Ledger — Postgres partagé, plus journal JSONL.
+
+Le magasin est `zab.services.ledger_db` : Postgres par défaut, SQLite en repli
+explicite. Les primitives ci-dessous reçoivent la connexion et ne savent pas
+lequel des deux répond — le SQL est le même, seuls les marqueurs de paramètre
+changeaient, et l'adaptateur s'en charge.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from zab.paths import data_dir
-from zab.services import local_db
+from zab.services import ledger_db
 from zab.services.conversation_ledger.schemas import (
     CONTRACT_VERSION,
     INTERACTION_EVENT_CONTRACT,
@@ -23,6 +29,9 @@ from zab.services.conversation_ledger.schemas import (
     validate_workpacket_canonical,
 )
 
+# Conservée pour la reprise de l'ancienne clé globale : voir
+# `ledger_db.get_source_cursors`, qui la relit une fois avant de basculer sur
+# la clé par machine.
 CURSORS_KEY = "ledger.source_cursors"
 
 
@@ -37,7 +46,13 @@ def ledger_dir() -> Path:
 
 
 def events_jsonl_path() -> Path:
-    return ledger_dir() / "events.jsonl"
+    """Le journal d'appoint, propre à la machine.
+
+    Postgres est la vérité ; ce fichier n'est qu'une trace locale rejouable.
+    Un seul `events.jsonl` partagé entre le Mac et la VM mêlerait deux flux
+    d'écriture que rien ne réconcilierait — d'où le suffixe de machine.
+    """
+    return ledger_dir() / f"events-{ledger_db.machine_id()}.jsonl"
 
 
 def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
@@ -56,7 +71,7 @@ def compact_events_jsonl(
     """Rewrite the append journal from canonical rows, with an optional gzip backup."""
     path = events_jsonl_path()
     current_bytes = path.stat().st_size if path.exists() else 0
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         rows = conn.execute(
             "SELECT payload_json FROM ledger_events ORDER BY timestamp, event_id"
         ).fetchall()
@@ -375,27 +390,27 @@ def list_projections(
     return [json.loads(r[0]) for r in rows]
 
 
-def get_source_cursors(conn: sqlite3.Connection) -> dict[str, Any]:
-    row = conn.execute(
-        "SELECT value_json FROM sync_meta WHERE key = ?", (CURSORS_KEY,)
-    ).fetchone()
-    if not row:
-        return {}
-    return json.loads(row[0])
+def get_source_cursors(conn: Any = None) -> dict[str, Any]:
+    """L'avancement de lecture des canaux, **pour cette machine**.
+
+    `conn` n'est plus utilisé : la clé vit dans la méta partagée, et la colonne
+    qui la porte ne s'appelle pas pareil des deux côtés (`value_json` en SQLite,
+    `value` en Postgres). Le paramètre reste dans la signature pour ne pas
+    casser la dizaine d'appelants.
+    """
+    return ledger_db.get_source_cursors()
 
 
 def set_source_cursor(
-    conn: sqlite3.Connection, channel_id: str, cursor: dict[str, Any]
+    conn: Any, channel_id: str, cursor: dict[str, Any]
 ) -> None:
-    cursors = get_source_cursors(conn)
-    cursors[channel_id] = {**cursor, "updated_at": utc_now()}
-    conn.execute(
-        """
-        INSERT INTO sync_meta (key, value_json, updated_at) VALUES (?, ?, ?)
-        ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
-        """,
-        (CURSORS_KEY, json.dumps(cursors, ensure_ascii=False), utc_now()),
-    )
+    """Enregistre l'avancement d'un canal, marqué de la machine qui l'a lu.
+
+    Une clé unique et partagée faisait que la dernière machine à synchroniser
+    effaçait l'avancement de l'autre : chacune reprenait alors la lecture là où
+    l'autre l'avait laissée, et sautait ce qui était arrivé entre-temps.
+    """
+    ledger_db.set_source_cursor(channel_id, cursor)
 
 
 def new_workpacket_id() -> str:

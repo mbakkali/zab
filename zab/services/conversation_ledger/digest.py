@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from zab.services import local_db
+from zab.services import ledger_db
 from zab.services.conversation_ledger.channel_bindings import list_channels
 from zab.services.conversation_ledger.store import list_events, list_workpackets
 
@@ -19,7 +19,7 @@ def build_daily_digest(*, since: str = "1d") -> str:
     if since == "yesterday":
         since_dt = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, since=since_dt, limit=100)
         packets = list_workpackets(conn, limit=50)
     channels = list_channels(check=True)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Any
 
-from zab.services import local_db
+from zab.services import ledger_db
 from zab.services.conversation_ledger.store import get_workpacket, list_events, upsert_projection
 
 
@@ -67,7 +67,7 @@ def build_linear_description(packet: dict[str, Any], *, events: list[dict[str, A
 
 
 def project_linear(workpacket_id: str, *, dry_run: bool = True) -> dict[str, Any]:
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         packet = get_workpacket(conn, workpacket_id)
         if not packet:
             raise ValueError(f"workpacket not found: {workpacket_id}")

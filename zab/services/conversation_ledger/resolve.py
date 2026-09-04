@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from zab.services import local_db
+from zab.services import ledger_db
 from zab.services.conversation_ledger.clustering import cluster_events
 from zab.services.conversation_ledger.entity_resolver import (
     DEFAULT_ORGANIZATIONS,
@@ -38,7 +38,7 @@ def _match_workstream(client_workstream: str) -> tuple[str | None, str | None]:
 
 
 def list_unclassified(*, since: str | None = None, limit: int = 100) -> dict[str, Any]:
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, limit=limit * 3)
     ambiguous = []
     for event in events:
@@ -76,7 +76,7 @@ def resolve_preview(
     ws_id, ws_label = (None, None)
     if client_workstream:
         ws_id, ws_label = _match_workstream(client_workstream)
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, organization_id=org_id, client_workstream_id=ws_id, since=since, limit=500)
     clusters = cluster_events(events, organization_id=org_id or "org_unknown")
     return {
@@ -108,7 +108,7 @@ def link_event(
     ws_id, ws_label = _match_workstream(client_workstream)
     if not org_id or not ws_id:
         raise ValueError("organization or client_workstream not recognized")
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         event = get_event(conn, event_id)
         if not event:
             raise ValueError(f"event not found: {event_id}")

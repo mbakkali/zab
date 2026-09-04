@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from zab.services import local_db
+from zab.services import ledger_db
 from zab.services.conversation_ledger.channel_bindings import (
     check_channel_binding,
     list_channels,
@@ -33,7 +33,11 @@ from zab.services.conversation_ledger.normalizers import (
     normalize_imessage_message,
     normalize_whatsapp_message,
 )
-from zab.services.conversation_ledger.store import set_source_cursor, upsert_event
+from zab.services.conversation_ledger.store import (
+    get_source_cursors,
+    set_source_cursor,
+    upsert_event,
+)
 from zab.services.dotenv_locate import load_standard_dotenvs_once
 
 
@@ -339,7 +343,7 @@ def _infer_from_history(
 
 def reindex_entity_links(*, limit: int | None = None) -> dict[str, Any]:
     """Re-run direct and history-assisted entity resolution on indexed events."""
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         from zab.services.conversation_ledger.entity_registry import (
             ensure_entity_registry,
         )
@@ -412,7 +416,7 @@ def sync_organization(
     ]
     created = 0
     channel_reports: list[dict[str, Any]] = []
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         from zab.services.conversation_ledger.entity_registry import (
             ensure_entity_registry,
         )
@@ -463,6 +467,22 @@ def sync_organization(
     }
 
 
+def _marquer_echec(conn: Any, channel_id: str, raison: str) -> None:
+    """Garde la trace d'un canal en échec, et compte les échecs consécutifs."""
+    precedent = (get_source_cursors(conn) or {}).get(channel_id) or {}
+    set_source_cursor(
+        conn,
+        channel_id,
+        {
+            **precedent,
+            "last_seen": _now(),
+            "last_error": raison,
+            "last_error_at": _now(),
+            "consecutive_failures": int(precedent.get("consecutive_failures") or 0) + 1,
+        },
+    )
+
+
 def sync_channels(
     *,
     since: str = "90d",
@@ -490,7 +510,7 @@ def sync_channels(
     degraded: list[str] = []
     channel_reports: list[dict[str, Any]] = []
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         from zab.services.conversation_ledger.entity_registry import (
             ensure_entity_registry,
         )
@@ -504,6 +524,16 @@ def sync_channels(
             raw_items: list[dict[str, Any]] = []
             ctype = str(channel.get("channel_type"))
             if status == "error":
+                # L'échec s'écrit dans le curseur, pas seulement dans le
+                # rapport de la passe. Sans cela, un canal qui tombe ne laisse
+                # qu'un trou dans `ledger_events` : on ne peut plus dire *quand*
+                # ni *pourquoi* il s'est arrêté sans rejouer une synchro.
+                if not dry_run:
+                    _marquer_echec(
+                        conn,
+                        str(channel.get("channel_id")),
+                        str(checked.get("last_check_reason") or "erreur inconnue"),
+                    )
                 channel_reports.append(
                     {
                         "channel_id": channel.get("channel_id"),
@@ -581,17 +611,24 @@ def sync_channels(
                 upsert_event(conn, event)
                 stored += 1
             if not dry_run:
-                set_source_cursor(
-                    conn,
-                    str(channel.get("channel_id")),
-                    {
-                        "last_seen": _now(),
-                        "last_success": _now(),
-                        "since": since_date,
-                        "until": until,
-                        "stored": stored,
-                    },
-                )
+                curseur = {
+                    "last_seen": _now(),
+                    "last_success": _now(),
+                    "since": since_date,
+                    "until": until,
+                    "stored": stored,
+                    "fetched": len(raw_items),
+                    "last_error": None,
+                    "last_error_at": None,
+                    "consecutive_failures": 0,
+                }
+                # Un canal peut répondre sans rien rendre : c'est le cas de
+                # WhatsApp et de Calendar, qui « marchent » depuis des semaines
+                # sans qu'un seul événement neuf n'entre. Le distinguer d'une
+                # panne évite de chercher une réparation là où il n'y en a pas.
+                if not raw_items:
+                    curseur["last_empty_at"] = _now()
+                set_source_cursor(conn, str(channel.get("channel_id")), curseur)
             created += stored
             channel_reports.append(
                 {
@@ -648,7 +685,7 @@ def build_timeline_markdown(
                 ws_id = wid
                 break
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         from zab.services.conversation_ledger.store import (
             list_events as ledger_list_events,
         )

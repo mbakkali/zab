@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from zab.services import local_db
+from zab.services import ledger_db
 from zab.services.conversation_ledger.entity_registry import list_organizations
 from zab.services.conversation_ledger.org_profiles import INTERNAL_DOMAINS
 from zab.services.conversation_ledger.store import list_workpackets
@@ -22,7 +22,7 @@ from zab.services.workspace_projects import discover_projects
 
 
 def _load() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         organizations = list_organizations(conn)
         events = [
             json.loads(row[0])

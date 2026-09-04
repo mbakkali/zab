@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from zab.services import local_db
+from zab.services import ledger_db
 from zab.services.conversation_ledger.clustering import cluster_events
 from zab.services.conversation_ledger.store import (
     find_workpacket,
@@ -84,7 +84,7 @@ def discover_workpackets(
 ) -> dict[str, Any]:
     candidate_limit = max(1, min(int(limit), 100))
     resolved_since = parse_since(since) if since else None
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, since=resolved_since, limit=5000)
     org_ids = sorted(
         {str(e.get("organization_id")) for e in events if e.get("organization_id")}
@@ -114,7 +114,7 @@ def discover_workpackets(
         discovered.append(packet)
 
     existing_keys: set[tuple[str, str]] = set()
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         for packet in discovered:
             org_id = str(packet.get("organization_id") or "")
             workstream_id = str(packet.get("client_workstream_id") or "")
@@ -148,7 +148,7 @@ def discover_workpackets(
     created_count = 0
     updated_count = 0
     if not dry_run:
-        with local_db.transaction() as conn:
+        with ledger_db.transaction() as conn:
             for packet in candidates:
                 existing = find_workpacket(
                     conn,
@@ -310,7 +310,7 @@ def discover_workpackets_from_intent(
     created = updated = 0
     stored: list[dict[str, Any]] = []
     if not dry_run:
-        with local_db.transaction() as conn:
+        with ledger_db.transaction() as conn:
             by_key = {
                 str((p.get("metadata") or {}).get("intent_key")): p
                 for p in list_workpackets(conn, limit=1000)
@@ -393,7 +393,7 @@ def backfill_workpackets(*, dry_run: bool = True, limit: int = 200) -> dict[str,
     from zab.services.entity_graph import key_people_for, link_projects, people_from_events
     from zab.services.workspace_projects import discover_projects
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         packets = list_workpackets(conn, limit=limit)
         organizations = list_organizations(conn)
         all_events = [
@@ -411,7 +411,7 @@ def backfill_workpackets(*, dry_run: bool = True, limit: int = 200) -> dict[str,
     changed: list[dict[str, Any]] = []
     for packet in packets:
         organization_id = str(packet.get("organization_id") or "")
-        with local_db.transaction() as conn:
+        with ledger_db.transaction() as conn:
             events = list_events(
                 conn,
                 organization_id=organization_id or None,
@@ -439,7 +439,7 @@ def backfill_workpackets(*, dry_run: bool = True, limit: int = 200) -> dict[str,
         if changes:
             changed.append(entry)
             if not dry_run:
-                with local_db.transaction() as conn:
+                with ledger_db.transaction() as conn:
                     upsert_workpacket(conn, updated)
 
     return {
@@ -481,13 +481,13 @@ def reconstruct_seed_candidates(*, dry_run: bool = True) -> dict[str, Any]:
     """Build 10 seed WorkPackets from indexed events or minimal placeholders."""
     from zab.paths import data_dir
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, limit=2000)
     all_clusters = cluster_events(events, organization_id="mixed")
     by_ws = {c.get("client_workstream_id"): c for c in all_clusters}
     results: list[dict[str, Any]] = []
     markdown_sections: list[str] = ["# WorkPacket reconstruction report", ""]
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         for idx, seed in enumerate(SEED_CANDIDATES, start=1):
             cluster = by_ws.get(seed["client_workstream_id"])
             if cluster:
