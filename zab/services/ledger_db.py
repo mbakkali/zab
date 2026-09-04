@@ -122,6 +122,36 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class LedgerLocalRefuse(RuntimeError):
+    """Cette machine exige Postgres, et aucun DSN ne répond."""
+
+
+def require_postgres() -> bool:
+    """Cette machine doit-elle refuser d'écrire en local ?
+
+    Le repli silencieux est confortable et c'est exactement ce qui a produit
+    deux magasins séparés : le jour où le DSN ne se charge pas — un timer
+    systemd à l'environnement minimal, un `.env` non lu — zab se remet à écrire
+    dans un SQLite que personne ne regarde, et la divergence recommence sans un
+    mot. Sur une machine de travail, mieux vaut un échec bruyant.
+
+    Le drapeau vit dans `config.yaml`, pas dans le `.env` : si c'était le même
+    fichier que le DSN, il disparaîtrait avec lui, et la garde ne servirait
+    jamais au seul moment où elle compte.
+    """
+    force = (os.environ.get("ZAB_REQUIRE_POSTGRES") or "").strip().lower()
+    if force in ("1", "true", "oui", "yes"):
+        return True
+    if force in ("0", "false", "non", "no"):
+        return False
+    try:
+        from zab.user_config import load_user_config
+
+        return bool((load_user_config() or {}).get("require_postgres"))
+    except Exception:
+        return False
+
+
 def backend() -> str:
     """`postgres` dès qu'un DSN répond ; SQLite sinon.
 
@@ -132,10 +162,20 @@ def backend() -> str:
     isole `HOME`, n'a pas besoin de connaître Postgres pour tourner.
 
     `ZAB_LEDGER_BACKEND=sqlite` force le repli même quand Postgres répond.
+    `require_postgres` dans la configuration interdit ce repli quand il n'est
+    pas voulu.
     """
     if (os.environ.get("ZAB_LEDGER_BACKEND") or "").strip().lower() == "sqlite":
         return "sqlite"
-    return "postgres" if resolve_postgres_dsn() else "sqlite"
+    if resolve_postgres_dsn():
+        return "postgres"
+    if require_postgres():
+        raise LedgerLocalRefuse(
+            "aucun DSN Postgres ne répond et cette machine a `require_postgres` : "
+            "vérifier ZAB_MEMORY_DATABASE_URL dans ~/.config/zab/.env et le proxy "
+            "de la base. Écrire en local séparerait à nouveau les deux magasins."
+        )
+    return "sqlite"
 
 
 def machine_id() -> str:
@@ -640,6 +680,7 @@ def status() -> dict[str, Any]:
         "backend": backend(),
         "machine": machine_id(),
         "schema": schema() if backend() == "postgres" else None,
+        "require_postgres": require_postgres(),
         "tables": {},
     }
     try:

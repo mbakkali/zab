@@ -119,3 +119,33 @@ def test_schema_dune_autre_machine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ZAB_LEDGER_SCHEMA", raising=False)
     assert ledger_db.schema("mac") == "zab_mac"
     assert ledger_db.schema("vm") == "zab_vm"
+
+
+def test_require_postgres_refuse_le_repli_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le repli silencieux est ce qui a produit deux magasins séparés."""
+    monkeypatch.delenv("ZAB_LEDGER_BACKEND", raising=False)
+    monkeypatch.setenv("ZAB_REQUIRE_POSTGRES", "1")
+    monkeypatch.setattr(ledger_db, "resolve_postgres_dsn", lambda: "")
+    with pytest.raises(ledger_db.LedgerLocalRefuse):
+        ledger_db.backend()
+
+
+def test_require_postgres_laisse_passer_si_le_dsn_repond(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ZAB_LEDGER_BACKEND", raising=False)
+    monkeypatch.setenv("ZAB_REQUIRE_POSTGRES", "1")
+    monkeypatch.setattr(ledger_db, "resolve_postgres_dsn", lambda: "postgres://x")
+    assert ledger_db.backend() == "postgres"
+
+
+def test_sans_exigence_le_repli_reste_possible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un Mac qui vient d'être installé écrit en local plutôt que d'échouer."""
+    monkeypatch.delenv("ZAB_LEDGER_BACKEND", raising=False)
+    monkeypatch.setenv("ZAB_REQUIRE_POSTGRES", "0")
+    monkeypatch.setattr(ledger_db, "resolve_postgres_dsn", lambda: "")
+    assert ledger_db.backend() == "sqlite"

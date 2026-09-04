@@ -104,3 +104,13 @@ tracked_env_extra: []
 # ce qui permet à `zab security status` de savoir quelles clés *devraient*
 # exister, et de balayer les coffres où elles vivent réellement.
 # connectors_registry: ~/projects/<org>-cowork/connectors/registry.json
+
+# Interdire l'écriture locale sur cette machine. Par défaut, zab retombe sur
+# un SQLite local quand aucun DSN Postgres ne répond — pratique sur une machine
+# neuve, dangereux sur une machine de travail : le jour où le DSN ne se charge
+# pas (un timer à l'environnement minimal, un `.env` non lu), zab se remet à
+# écrire dans un magasin que personne ne regarde, sans un mot.
+#
+# Ce drapeau vit ici et non dans le `.env` : au même endroit que le DSN, il
+# disparaîtrait avec lui, et ne servirait jamais au seul moment qui compte.
+# require_postgres: true
