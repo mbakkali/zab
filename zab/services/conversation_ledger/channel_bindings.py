@@ -217,7 +217,18 @@ def _attio_smoke() -> tuple[str, str]:
     load_standard_dotenvs_once()
     if os.environ.get("ATTIO_API_KEY", "").strip():
         return "ok", "attio_api_key=present"
-    return "degraded", "attio_api_key=missing"
+
+    # La clé peut être déclarée sous un autre nom, dans un coffre que les
+    # `.env` standards n'incluent pas. Ne chercher qu'`ATTIO_API_KEY` faisait
+    # alors répondre « absente » pour une clé bien présente. Le registre sait
+    # sous quel nom la chercher, et où.
+    try:
+        from zab.services.secrets_registry import connector_env_present
+
+        present, motif = connector_env_present("attio")
+    except Exception:
+        present, motif = False, "attio_api_key=missing"
+    return ("ok" if present else "degraded"), motif
 
 
 def _transport_smoke(binding: dict[str, Any]) -> tuple[str, str]:

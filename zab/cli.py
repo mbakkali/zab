@@ -248,11 +248,11 @@ def workpacket_list_cmd(
     organization: Optional[str] = typer.Option(None, "--organization", help="Filtrer par organization_id ou label"),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import list_workpackets
 
     states = [s.strip() for s in state.split(",") if s.strip()] or None
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         items = list_workpackets(conn, states=states, limit=200)
     if organization:
         needle = organization.lower()
@@ -277,11 +277,11 @@ def workpacket_show_cmd(
     fmt: str = typer.Option("md", "--format", help="md|json"),
     json_out: bool = typer.Option(False, "--json", help="Alias --format json"),
 ) -> None:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import get_workpacket, list_workpackets
     from zab.services.conversation_ledger.workpacket_builder import format_workpacket_markdown
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         packet = get_workpacket(conn, wp_id)
         if not packet:
             for candidate in list_workpackets(conn, limit=500):
@@ -487,12 +487,12 @@ def interactions_timeline_cmd(
     fmt: str = typer.Option("md", "--format"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import list_events
     from zab.services.conversation_ledger.sync import build_timeline_markdown
 
     if json_out or fmt == "json":
-        with local_db.transaction() as conn:
+        with ledger_db.transaction() as conn:
             events = list_events(conn, limit=200)
         typer.echo(json.dumps({"events": events}, ensure_ascii=False, indent=2))
         return
@@ -550,7 +550,7 @@ def interactions_enrich_content_cmd(
     from zab.services.conversation_ledger.content_enrichment import enrich_events_content, enrich_organization_content
     from zab.services.conversation_ledger.entity_resolver import DEFAULT_ORGANIZATIONS
     from zab.services.conversation_ledger.store import list_events
-    from zab.services import local_db
+    from zab.services import ledger_db
 
     cap = max_fetch if max_fetch > 0 else None
     if organization:
@@ -564,7 +564,7 @@ def interactions_enrich_content_cmd(
             raise typer.BadParameter(f"organization not recognized: {organization}")
         payload = enrich_organization_content(org_id, limit=limit, max_fetch=cap)
     else:
-        with local_db.transaction() as conn:
+        with ledger_db.transaction() as conn:
             events = list_events(conn, limit=limit)
         enriched, stats = enrich_events_content(events, persist=True, max_fetch=cap)
         payload = {
@@ -667,10 +667,10 @@ def workpacket_projections_cmd(
     *,
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import get_workpacket, list_projections, list_workpackets
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         packet = get_workpacket(conn, wp_id)
         if not packet:
             for candidate in list_workpackets(conn, limit=500):
@@ -687,6 +687,85 @@ def workpacket_projections_cmd(
         return
     for item in items:
         typer.echo(f"{item.get('target')}: {item.get('status')}")
+
+
+@ledger_app.command("db")
+def ledger_db_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Sur quel moteur tourne le ledger, et ce qu'il contient."""
+    from zab.services import ledger_db
+
+    payload = ledger_db.status()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"moteur   : {payload['backend']}")
+    typer.echo(f"machine  : {payload['machine']}")
+    for table, compte in (payload.get("tables") or {}).items():
+        typer.echo(f"  {table:28} {compte}")
+    legacy = payload.get("sqlite_legacy") or {}
+    if legacy.get("exists"):
+        typer.echo(
+            f"sqlite hérité : {legacy['path']} ({legacy['bytes'] // 1024} Ko) — "
+            "conservé comme sauvegarde, plus lu par défaut"
+        )
+
+
+@ledger_app.command("import-sqlite")
+def ledger_import_sqlite_cmd(
+    *,
+    apply: bool = typer.Option(False, "--apply", help="Écrit réellement dans Postgres"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Recopie le ledger SQLite hérité dans Postgres. Idempotent, rejouable."""
+    from zab.services import ledger_db
+
+    payload = ledger_db.import_sqlite(apply=apply)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"source : {payload['source']} ({payload['status']})")
+    for table, detail in (payload.get("tables") or {}).items():
+        typer.echo(
+            f"  {table:28} sqlite={detail['source']:5} "
+            f"postgres={detail.get('apres', 0):5} importées={detail.get('importees', 0)}"
+        )
+    if not apply:
+        typer.echo("simulation — relancer avec --apply pour écrire")
+
+
+@ledger_app.command("cursors")
+def ledger_cursors_cmd(
+    *,
+    machine: str = typer.Option("", "--machine", help="Une autre machine que celle-ci"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """L'avancement de lecture des canaux, par machine.
+
+    Le Mac et la VM partagent la base mais pas leur avancement : chacun lit ce
+    qu'il peut atteindre, et voir les deux colonnes dit d'un coup d'œil quel
+    canal n'est plus relevé, et depuis où.
+    """
+    from zab.services import ledger_db
+
+    cible = machine or ledger_db.machine_id()
+    curseurs = ledger_db.get_source_cursors(cible)
+    payload = {
+        "contract": "zab-ledger-cursors",
+        "machine": cible,
+        "cursors": curseurs,
+    }
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"machine : {cible}")
+    if not curseurs:
+        typer.echo("  aucun curseur — ce zab n'a encore relevé aucun canal ici")
+        return
+    for canal, detail in sorted(curseurs.items()):
+        typer.echo(f"  {canal:24} {detail.get('updated_at', '?')}")
 
 
 @ledger_app.command("eval")
@@ -3112,6 +3191,75 @@ def security_locate_cmd(
         line_text = f":{line}" if line else ""
         masked = row.get("masked") or "(vide/non présent)"
         typer.echo(f"  · {row.get('name')}  {masked}  {where}{line_text}")
+
+
+@security_app.command("scan")
+def security_scan_cmd(
+    *,
+    save: bool = typer.Option(True, "--save/--no-save", help="Enregistre le relevé pour cette machine"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Relève les `.env` de cette machine et dit où chaque clé se trouve.
+
+    Aucune valeur n'est lue ni stockée : des noms de variables, des chemins de
+    fichiers, et le fait qu'une valeur non vide s'y trouve.
+    """
+    from zab.services import secrets_inventory
+
+    payload = secrets_inventory.build(persist=save)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"machine  : {payload['machine']}  ({payload['generated_at_utc']})")
+    typer.echo(f"fichiers : {len(payload['files_scanned'])} .env balayés")
+    typer.echo(f"clés     : {len(payload['present'])} présentes, {len(payload['missing'])} absentes")
+    registre = payload.get("registry") or {}
+    if registre.get("present"):
+        typer.echo(
+            f"registre : {registre['connectors']} connecteurs, "
+            f"{registre['tracked_names']} variables déclarées"
+        )
+    else:
+        typer.echo("registre : aucun — poser `connectors_registry` dans config.yaml")
+    for nom in payload["missing"]:
+        sert = (payload["variables"][nom].get("connectors") or [])
+        suffixe = f"  → {', '.join(sert)}" if sert else ""
+        typer.echo(f"  absente  {nom}{suffixe}")
+    if save:
+        typer.echo("relevé enregistré — `zab security machines` compare les machines")
+
+
+@security_app.command("machines")
+def security_machines_cmd(
+    *,
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Quelle clé vit sur quelle machine — et laquelle n'existe nulle part.
+
+    Une clé absente ici mais présente sur l'autre machine n'appelle pas la même
+    réponse qu'une clé introuvable partout. C'est la distinction qui évite de
+    conclure « pas d'accès » à tort.
+    """
+    from zab.services import secrets_inventory
+
+    payload = secrets_inventory.compare()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not payload["machines"]:
+        typer.echo("aucun relevé — lancer `zab security scan` sur chaque machine")
+        return
+    for machine, detail in payload["machines"].items():
+        typer.echo(
+            f"{machine:28} {detail['present']} présentes / "
+            f"{detail['missing']} absentes  ({detail['generated_at_utc']})"
+        )
+    manquantes = payload["introuvables_partout"]
+    typer.echo("")
+    typer.echo(f"introuvables sur toutes les machines : {len(manquantes)}")
+    for nom in manquantes:
+        sert = payload["variables"][nom].get("connectors") or []
+        typer.echo(f"  {nom}" + (f"  → {', '.join(sert)}" if sert else ""))
 
 
 @security_app.command("publish-check")

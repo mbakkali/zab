@@ -760,11 +760,24 @@ def task_sources_from_user_config() -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def tracked_env_names_for_security() -> tuple[str, ...]:
+    """Les variables que le statut sécurité doit regarder.
+
+    Trois sources, dans cet ordre : le catalogue interne, le registre de
+    connecteurs déclaré en configuration, puis les ajouts de l'utilisateur.
+    Le registre est ce qui manquait : `ATTIO_API_KEY` et `FIREFLIES_API_KEY`
+    n'étaient dans aucun catalogue, alors que deux canaux du ledger en
+    dépendent — le statut ne les regardait donc jamais.
+    """
     from zab.secrets_catalog import ALL_TRACKED
 
-    extra = tracked_env_extra_from_user_config()
     merged: list[str] = list(ALL_TRACKED)
-    for x in extra:
+    try:
+        from zab.services.secrets_registry import tracked_names
+
+        depuis_registre = tracked_names()
+    except Exception:
+        depuis_registre = []
+    for x in list(depuis_registre) + list(tracked_env_extra_from_user_config()):
         if x not in merged:
             merged.append(x)
     return tuple(merged)

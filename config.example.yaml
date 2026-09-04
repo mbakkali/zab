@@ -95,3 +95,12 @@ tracked_env_extra: []
 #     org: work
 #     email_address: you@example.com
 #     enabled: true
+
+# Le registre de connecteurs qui fait autorité pour l'organisation, s'il en
+# existe un. Facultatif : sans lui, zab s'en tient à son catalogue interne.
+#
+# Il ne porte aucune valeur — des identifiants de connecteurs, les noms des
+# variables d'environnement qu'ils attendent, et les chemins des coffres. C'est
+# ce qui permet à `zab security status` de savoir quelles clés *devraient*
+# exister, et de balayer les coffres où elles vivent réellement.
+# connectors_registry: ~/projects/<org>-cowork/connectors/registry.json

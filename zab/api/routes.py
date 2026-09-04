@@ -333,7 +333,7 @@ def interactions_timeline_api(
     enrich: bool = True,
     enrich_max: int = 200,
 ) -> dict[str, Any]:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.content_enrichment import enrich_events_content
     from zab.services.conversation_ledger.entity_resolver import DEFAULT_ORGANIZATIONS, WORKSTREAM_SEEDS
     from zab.services.conversation_ledger.store import list_events
@@ -351,7 +351,7 @@ def interactions_timeline_api(
             if ws["label"].lower() == client_workstream.lower() or wid == client_workstream:
                 ws_id = wid
                 break
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, organization_id=org_id, client_workstream_id=ws_id, since=since, limit=limit)
     enrichment_stats: dict[str, int] = {"fetched": 0, "skipped": 0, "failed": 0}
     if enrich and events:
@@ -371,7 +371,7 @@ def interactions_timeline_api(
 @router.get("/interactions/organizations")
 def interactions_organizations_api(response: Response, limit: int = 2000) -> dict[str, Any]:
     """Aggregate indexed events per client organization for the cross-platform inbox."""
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.entity_resolver import DEFAULT_ORGANIZATIONS, WORKSTREAM_SEEDS
     from zab.services.conversation_ledger.store import list_events
 
@@ -393,7 +393,7 @@ def interactions_organizations_api(response: Response, limit: int = 2000) -> dic
                 return str(link["entity_id"])
         return None
 
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         events = list_events(conn, limit=limit)
 
     orgs: dict[str, dict[str, Any]] = {}
@@ -483,12 +483,12 @@ def workpackets_list_api(
     organization: str | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import list_workpackets
 
     response.headers["Cache-Control"] = "no-store"
     states = [s.strip() for s in state.split(",") if s.strip()] or None
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         items = list_workpackets(conn, states=states, limit=limit)
     if organization:
         needle = organization.lower()
@@ -503,11 +503,11 @@ def workpackets_list_api(
 
 @router.get("/workpackets/{wp_id}")
 def workpacket_detail_api(wp_id: str, response: Response) -> dict[str, Any]:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import get_workpacket, list_workpackets
 
     response.headers["Cache-Control"] = "no-store"
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         packet = get_workpacket(conn, wp_id)
         if not packet:
             for candidate in list_workpackets(conn, limit=500):
@@ -521,11 +521,11 @@ def workpacket_detail_api(wp_id: str, response: Response) -> dict[str, Any]:
 
 @router.get("/workpackets/{wp_id}/timeline")
 def workpacket_timeline_api(wp_id: str, response: Response) -> dict[str, Any]:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import get_event, get_workpacket, list_workpackets
 
     response.headers["Cache-Control"] = "no-store"
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         packet = get_workpacket(conn, wp_id)
         if not packet:
             for candidate in list_workpackets(conn, limit=500):
@@ -544,11 +544,11 @@ def workpacket_timeline_api(wp_id: str, response: Response) -> dict[str, Any]:
 
 @router.get("/workpackets/{wp_id}/projections")
 def workpacket_projections_api(wp_id: str, response: Response) -> dict[str, Any]:
-    from zab.services import local_db
+    from zab.services import ledger_db
     from zab.services.conversation_ledger.store import get_workpacket, list_projections, list_workpackets
 
     response.headers["Cache-Control"] = "no-store"
-    with local_db.transaction() as conn:
+    with ledger_db.transaction() as conn:
         packet = get_workpacket(conn, wp_id)
         if not packet:
             for candidate in list_workpackets(conn, limit=500):
@@ -1983,6 +1983,53 @@ def security_last(key: str | None = Query(None, description="Clé optionnelle du
 @router.get("/security/reports")
 def security_reports() -> dict[str, Any]:
     return {"reports": jobs.list_security_reports()}
+
+
+@router.get("/ledger/db")
+def ledger_db_api() -> dict[str, Any]:
+    """Sur quel moteur tourne le ledger, sur quelle machine, et ce qu'il contient."""
+    from zab.services import ledger_db as _ledger_db
+
+    return _ledger_db.status()
+
+
+@router.get("/ledger/cursors")
+def ledger_cursors_api(
+    machine: str = Query("", description="Une autre machine que celle-ci"),
+) -> dict[str, Any]:
+    """L'avancement de lecture des canaux, par machine.
+
+    Le Mac et la VM partagent la base mais pas leur avancement : voir les deux
+    dit d'un coup d'œil quel canal n'est plus relevé, et depuis où.
+    """
+    from zab.services import ledger_db as _ledger_db
+
+    cible = machine or _ledger_db.machine_id()
+    return {
+        "contract": "zab-ledger-cursors",
+        "machine": cible,
+        "cursors": _ledger_db.get_source_cursors(cible),
+    }
+
+
+@router.get("/security/inventory")
+def security_inventory_api(
+    refresh: bool = Query(False, description="Relève à nouveau au lieu de lire le dernier relevé"),
+) -> dict[str, Any]:
+    """Où chaque clé se trouve sur cette machine — noms et chemins, jamais de valeur."""
+    from zab.services import secrets_inventory
+
+    if refresh:
+        return secrets_inventory.build(persist=True)
+    return secrets_inventory.load() or secrets_inventory.build(persist=True)
+
+
+@router.get("/security/machines")
+def security_machines_api() -> dict[str, Any]:
+    """Quelle clé vit sur quelle machine, et laquelle n'existe nulle part."""
+    from zab.services import secrets_inventory
+
+    return secrets_inventory.compare()
 
 
 @router.get("/security/status")

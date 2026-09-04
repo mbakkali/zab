@@ -72,6 +72,16 @@ def _candidate_env_files() -> list[Path]:
     out.append(Path.home() / ".env")
     out.append(Path.home() / ".hermes" / ".env")
     out.append(config_dir() / ".env")
+
+    # Les coffres que le registre de connecteurs déclare. Sans eux, zab
+    # répondait « clé absente » pour une clé bien présente, rangée dans un
+    # coffre qu'il ne balayait pas — le cas d'`attio`, le 2026-09-04.
+    try:
+        from zab.services.secrets_registry import vault_paths
+
+        out.extend(vault_paths())
+    except Exception:
+        pass
     try:
         sr = skills_root_from_config_file_only()
     except Exception:
