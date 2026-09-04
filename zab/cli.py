@@ -246,13 +246,17 @@ def workpacket_list_cmd(
     *,
     state: str = typer.Option("", "--state", help="Filtrer par états CSV: active,candidate"),
     organization: Optional[str] = typer.Option(None, "--organization", help="Filtrer par organization_id ou label"),
+    all_devices: bool = typer.Option(
+        False, "--all-devices", help="Toutes les machines, pas seulement celle-ci"
+    ),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
 ) -> None:
     from zab.services import ledger_db
     from zab.services.conversation_ledger.store import list_workpackets
 
+    portee = "all" if all_devices else "device"
     states = [s.strip() for s in state.split(",") if s.strip()] or None
-    with ledger_db.transaction() as conn:
+    with ledger_db.transaction(scope=portee) as conn:
         items = list_workpackets(conn, states=states, limit=200)
     if organization:
         needle = organization.lower()
@@ -485,6 +489,9 @@ def interactions_timeline_cmd(
     client_workstream: Optional[str] = typer.Option(None, "--client-workstream"),
     since: Optional[str] = typer.Option(None, "--since"),
     fmt: str = typer.Option("md", "--format"),
+    all_devices: bool = typer.Option(
+        False, "--all-devices", help="Toutes les machines, pas seulement celle-ci"
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     from zab.services import ledger_db
@@ -492,7 +499,7 @@ def interactions_timeline_cmd(
     from zab.services.conversation_ledger.sync import build_timeline_markdown
 
     if json_out or fmt == "json":
-        with ledger_db.transaction() as conn:
+        with ledger_db.transaction(scope="all" if all_devices else "device") as conn:
             events = list_events(conn, limit=200)
         typer.echo(json.dumps({"events": events}, ensure_ascii=False, indent=2))
         return
@@ -703,8 +710,15 @@ def ledger_db_cmd(
         return
     typer.echo(f"moteur   : {payload['backend']}")
     typer.echo(f"machine  : {payload['machine']}")
+    if payload.get("schema"):
+        typer.echo(f"schéma   : {payload['schema']}  (un par machine)")
     for table, compte in (payload.get("tables") or {}).items():
         typer.echo(f"  {table:28} {compte}")
+    autres = payload.get("devices") or {}
+    if len(autres) > 1 or (autres and payload.get("schema", "").endswith(tuple(autres))):
+        typer.echo("interactions par machine :")
+        for nom, compte in sorted(autres.items()):
+            typer.echo(f"  {nom:28} {compte}")
     legacy = payload.get("sqlite_legacy") or {}
     if legacy.get("exists"):
         typer.echo(
@@ -731,6 +745,33 @@ def ledger_import_sqlite_cmd(
         typer.echo(
             f"  {table:28} sqlite={detail['source']:5} "
             f"postgres={detail.get('apres', 0):5} importées={detail.get('importees', 0)}"
+        )
+    if not apply:
+        typer.echo("simulation — relancer avec --apply pour écrire")
+
+
+@ledger_app.command("migrate-schema")
+def ledger_migrate_schema_cmd(
+    *,
+    apply: bool = typer.Option(False, "--apply", help="Écrit réellement"),
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
+) -> None:
+    """Déplace un ledger resté dans le schéma commun vers celui de la machine.
+
+    Le ledger a d'abord vécu dans le schéma partagé, avant d'être rangé par
+    machine. Idempotent ; rien n'est supprimé côté source.
+    """
+    from zab.services import ledger_db
+
+    payload = ledger_db.migrate_from_shared_schema(apply=apply)
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"{payload['from']} -> {payload['to']} ({payload['status']})")
+    for table, detail in (payload.get("tables") or {}).items():
+        typer.echo(
+            f"  {table:28} source={detail['source']:5} "
+            f"cible={detail.get('apres', 0):5} déplacées={detail.get('deplacees', 0)}"
         )
     if not apply:
         typer.echo("simulation — relancer avec --apply pour écrire")

@@ -332,6 +332,7 @@ def interactions_timeline_api(
     limit: int = 100,
     enrich: bool = True,
     enrich_max: int = 200,
+    all_devices: bool = False,
 ) -> dict[str, Any]:
     from zab.services import ledger_db
     from zab.services.conversation_ledger.content_enrichment import enrich_events_content
@@ -351,7 +352,7 @@ def interactions_timeline_api(
             if ws["label"].lower() == client_workstream.lower() or wid == client_workstream:
                 ws_id = wid
                 break
-    with ledger_db.transaction() as conn:
+    with ledger_db.transaction(scope="all" if all_devices else "device") as conn:
         events = list_events(conn, organization_id=org_id, client_workstream_id=ws_id, since=since, limit=limit)
     enrichment_stats: dict[str, int] = {"fetched": 0, "skipped": 0, "failed": 0}
     if enrich and events:
@@ -482,13 +483,14 @@ def workpackets_list_api(
     state: str = "",
     organization: str | None = None,
     limit: int = 100,
+    all_devices: bool = False,
 ) -> dict[str, Any]:
     from zab.services import ledger_db
     from zab.services.conversation_ledger.store import list_workpackets
 
     response.headers["Cache-Control"] = "no-store"
     states = [s.strip() for s in state.split(",") if s.strip()] or None
-    with ledger_db.transaction() as conn:
+    with ledger_db.transaction(scope="all" if all_devices else "device") as conn:
         items = list_workpackets(conn, states=states, limit=limit)
     if organization:
         needle = organization.lower()

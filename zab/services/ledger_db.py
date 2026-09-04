@@ -35,11 +35,14 @@ from zab.services import local_db, postgres_store
 from zab.services.postgres_dsn import resolve_postgres_dsn
 from zab.services.machine import get_machine
 
-SCHEMA = postgres_store.SCHEMA
+# Le schéma commun : registres, état, tâches, méta. Il ne porte plus le ledger.
+SCHEMA_COMMUN = postgres_store.SCHEMA
 
-# Les tables que ce module possède. Elles vivent dans le même schéma que le
-# reste de zab : un ledger dans un schéma à part se serait fait oublier des
-# sauvegardes et de `zab db status`, ce qui est exactement le défaut corrigé.
+# Le schéma des vues d'union, en lecture seule.
+SCHEMA_UNION = "zab_all"
+
+PREFIXE_DEVICE = "zab_"
+
 TABLES = (
     "ledger_events",
     "ledger_workpackets",
@@ -47,6 +50,71 @@ TABLES = (
     "ledger_organizations",
     "ledger_workstreams",
 )
+
+# Le ledger vit dans un schéma par machine — `zab_mac`, `zab_vm`. Deux zab
+# écrivent alors sans jamais se marcher dessus, et l'origine d'une ligne se lit
+# dans son emplacement plutôt que dans une colonne qu'on oublierait de remplir.
+# Ce qu'on y perd, une vue d'ensemble, se rattrape par les vues de `zab_all`,
+# qui font l'union de tous les schémas de machine.
+DDL_LEDGER = """
+CREATE TABLE IF NOT EXISTS {schema}.ledger_events (
+    event_id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    native_id TEXT NOT NULL,
+    channel_id TEXT,
+    timestamp TEXT,
+    payload_json JSONB NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (source, native_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_events_timestamp
+    ON {schema}.ledger_events (timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_ledger_events_channel
+    ON {schema}.ledger_events (channel_id);
+
+CREATE TABLE IF NOT EXISTS {schema}.ledger_workpackets (
+    workpacket_id TEXT PRIMARY KEY,
+    display_id TEXT UNIQUE,
+    state TEXT,
+    organization_id TEXT,
+    client_workstream_id TEXT,
+    payload_json JSONB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_workpackets_state
+    ON {schema}.ledger_workpackets (state);
+CREATE INDEX IF NOT EXISTS idx_ledger_workpackets_org
+    ON {schema}.ledger_workpackets (organization_id);
+
+CREATE TABLE IF NOT EXISTS {schema}.ledger_projection_states (
+    workpacket_id TEXT NOT NULL,
+    target TEXT NOT NULL,
+    status TEXT,
+    payload_json JSONB NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (workpacket_id, target)
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_projection_status
+    ON {schema}.ledger_projection_states (status);
+
+CREATE TABLE IF NOT EXISTS {schema}.ledger_organizations (
+    organization_id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    payload_json JSONB NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS {schema}.ledger_workstreams (
+    client_workstream_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    payload_json JSONB NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_workstreams_org
+    ON {schema}.ledger_workstreams (organization_id);
+"""
 
 
 
@@ -83,6 +151,55 @@ def machine_id() -> str:
         return forcee
     infos = get_machine()
     return str(infos.get("hote") or infos.get("genre") or "inconnue")
+
+
+def _assainir(nom: str) -> str:
+    """Un nom d'hôte devient un identifiant de schéma sûr.
+
+    ASCII strictement : `isalnum()` accepte les accents, et un `é` dans un nom
+    de schéma se cite différemment selon le client SQL. Le nom finit dans un
+    `CREATE SCHEMA` non paramétrable — c'est le seul endroit du module où une
+    chaîne entre dans du SQL sans passer par un marqueur.
+    """
+    propre = "".join(
+        c if (c.isascii() and c.isalnum()) else "_" for c in nom.lower()
+    ).strip("_")
+    return propre[:40] or "inconnu"
+
+
+def schema(machine: str | None = None) -> str:
+    """Le schéma d'écriture d'une machine — `zab_mac`, `zab_vm`.
+
+    Le genre plutôt que le nom d'hôte : un Mac reste un Mac même renommé, et
+    deux schémas nommés d'après des hôtes changeants laisseraient des schémas
+    orphelins derrière eux. Une machine qui n'est ni l'un ni l'autre retombe
+    sur son nom d'hôte, assaini.
+    """
+    force = (os.environ.get("ZAB_LEDGER_SCHEMA") or "").strip()
+    if force:
+        return force
+    if machine:
+        return f"{PREFIXE_DEVICE}{_assainir(machine)}"
+    infos = get_machine()
+    genre = str(infos.get("genre") or "")
+    if genre in ("mac", "vm"):
+        return f"{PREFIXE_DEVICE}{genre}"
+    return f"{PREFIXE_DEVICE}{_assainir(str(infos.get('hote') or 'inconnu'))}"
+
+
+def device_schemas() -> list[str]:
+    """Les schémas de machine existants, `zab_all` et le commun exclus."""
+    if backend() == "sqlite":
+        return []
+    with postgres_store.transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT nspname FROM pg_namespace "
+                "WHERE nspname LIKE %s AND nspname NOT IN (%s, %s) ORDER BY nspname",
+                (f"{PREFIXE_DEVICE}%", SCHEMA_COMMUN, SCHEMA_UNION),
+            )
+            lignes = cur.fetchall()
+    return [(l["nspname"] if isinstance(l, dict) else l[0]) for l in lignes]
 
 
 # --------------------------------------------------------------------------- #
@@ -215,17 +332,29 @@ class _Connexion:
 
 
 @contextmanager
-def transaction() -> Iterator[Any]:
-    """La transaction du ledger. Postgres par défaut, SQLite sur demande."""
+def transaction(*, scope: str = "device") -> Iterator[Any]:
+    """La transaction du ledger.
+
+    `scope="device"` — le schéma de cette machine. C'est le défaut, et le seul
+    qui accepte l'écriture.
+
+    `scope="all"` — les vues d'union de `zab_all`, qui rassemblent toutes les
+    machines. **Lecture seule** : une vue d'union n'est pas modifiable, et une
+    écriture y échouerait bruyamment plutôt que d'aller silencieusement dans le
+    mauvais schéma.
+    """
     if backend() == "sqlite":
         with local_db.transaction() as conn:
             yield conn
         return
 
+    cible = SCHEMA_UNION if scope == "all" else schema()
     with postgres_store.transaction() as conn:
         enveloppe = _Connexion(conn)
         with conn.cursor() as cur:
-            cur.execute(f"SET LOCAL search_path TO {SCHEMA}, public")
+            cur.execute(
+                f"SET LOCAL search_path TO {cible}, {SCHEMA_COMMUN}, public"
+            )
         yield enveloppe
 
 
@@ -235,11 +364,48 @@ def ensure_schema() -> dict[str, Any]:
         local_db.migrate_schema()
         return {"backend": "sqlite", "tables": list(TABLES), "created": False}
 
-    # Le DDL des tables `ledger_*` vit dans `postgres_store._migrate_v4` : le
-    # recopier ici en ferait une seconde vérité, qui divergerait au premier
-    # ajout de colonne.
     postgres_store.migrate_schema()
-    return {"backend": "postgres", "schema": SCHEMA, "tables": list(TABLES)}
+    mien = schema()
+    with postgres_store.transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {mien}")
+            cur.execute(DDL_LEDGER.format(schema=mien))
+    vues = rebuild_union_views()
+    return {
+        "backend": "postgres",
+        "schema": mien,
+        "shared_schema": SCHEMA_COMMUN,
+        "union_schema": SCHEMA_UNION,
+        "devices": vues["devices"],
+        "tables": list(TABLES),
+    }
+
+
+def rebuild_union_views() -> dict[str, Any]:
+    """(Re)construit les vues de `zab_all` : l'union de toutes les machines.
+
+    Une machine qui apparaît n'est pas vue tant que les vues n'ont pas été
+    rejouées — d'où l'appel à chaque `ensure_schema`. Chaque vue ajoute une
+    colonne `device` : sans elle, deux lignes venues de machines différentes
+    seraient indiscernables une fois réunies.
+    """
+    schemas = device_schemas()
+    with postgres_store.transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_UNION}")
+            for table in TABLES:
+                if not schemas:
+                    cur.execute(f"DROP VIEW IF EXISTS {SCHEMA_UNION}.{table}")
+                    continue
+                morceaux = " UNION ALL ".join(
+                    f"SELECT '{s[len(PREFIXE_DEVICE):]}'::text AS device, * "
+                    f"FROM {s}.{table}"
+                    for s in schemas
+                )
+                cur.execute(
+                    f"CREATE OR REPLACE VIEW {SCHEMA_UNION}.{table} AS {morceaux}"
+                )
+    return {"union_schema": SCHEMA_UNION, "devices": schemas, "tables": list(TABLES)}
 
 
 # --------------------------------------------------------------------------- #
@@ -405,12 +571,75 @@ def _import_curseurs_sqlite(chemin: Any, *, apply: bool) -> dict[str, Any]:
     return {"repris": len(anciens), "canaux": sorted(anciens), "machine": machine_id()}
 
 
+def migrate_from_shared_schema(*, apply: bool = False) -> dict[str, Any]:
+    """Déplace un ledger resté dans le schéma commun vers celui de la machine.
+
+    Le ledger a d'abord vécu dans `zab_core`, avant qu'on ne le range par
+    machine. Les lignes qui s'y trouvent viennent forcément de la machine qui
+    lance cette reprise : c'est la seule qui y écrivait. Rien n'est supprimé
+    côté source tant que `--apply` n'est pas passé, et la copie est idempotente.
+    """
+    mien = schema()
+    rapport: dict[str, Any] = {
+        "contract": "zab-ledger-schema-migration",
+        "from": SCHEMA_COMMUN,
+        "to": mien,
+        "dry_run": not apply,
+        "tables": {},
+    }
+    if backend() == "sqlite":
+        rapport["status"] = "sans_objet"
+        return rapport
+
+    ensure_schema()
+    with postgres_store.transaction() as conn:
+        with conn.cursor() as cur:
+            for table in TABLES:
+                cur.execute(
+                    "SELECT to_regclass(%s) IS NOT NULL AS existe",
+                    (f"{SCHEMA_COMMUN}.{table}",),
+                )
+                ligne = cur.fetchone()
+                if not (ligne["existe"] if isinstance(ligne, dict) else ligne[0]):
+                    rapport["tables"][table] = {"source": 0, "deplacees": 0}
+                    continue
+                cur.execute(f"SELECT count(*) AS n FROM {SCHEMA_COMMUN}.{table}")
+                ligne = cur.fetchone()
+                source = ligne["n"] if isinstance(ligne, dict) else ligne[0]
+                avant = 0
+                cur.execute(f"SELECT count(*) AS n FROM {mien}.{table}")
+                ligne = cur.fetchone()
+                avant = ligne["n"] if isinstance(ligne, dict) else ligne[0]
+                if apply and source:
+                    cur.execute(
+                        f"INSERT INTO {mien}.{table} "
+                        f"SELECT * FROM {SCHEMA_COMMUN}.{table} "
+                        "ON CONFLICT DO NOTHING"
+                    )
+                cur.execute(f"SELECT count(*) AS n FROM {mien}.{table}")
+                ligne = cur.fetchone()
+                apres = ligne["n"] if isinstance(ligne, dict) else ligne[0]
+                rapport["tables"][table] = {
+                    "source": source,
+                    "avant": avant,
+                    "apres": apres,
+                    "deplacees": apres - avant,
+                }
+    rapport["status"] = "applique" if apply else "simule"
+    rapport["note"] = (
+        "les tables d'origine sont laissées en place ; les vider est une "
+        "décision séparée, une fois la bascule vérifiée"
+    )
+    return rapport
+
+
 def status() -> dict[str, Any]:
     """Ce que le ledger contient, et sur quel moteur."""
     infos: dict[str, Any] = {
         "contract": "zab-ledger-db-status",
         "backend": backend(),
         "machine": machine_id(),
+        "schema": schema() if backend() == "postgres" else None,
         "tables": {},
     }
     try:
@@ -426,6 +655,22 @@ def status() -> dict[str, Any]:
     except Exception as souci:
         infos["ok"] = False
         infos["error"] = f"{type(souci).__name__}: {souci}"
+
+    # Ce que les autres machines détiennent. Sans cette vue, un chiffre bas ici
+    # se lit comme une perte alors que les lignes sont simplement ailleurs.
+    if backend() == "postgres":
+        infos["devices"] = {}
+        try:
+            for autre in device_schemas():
+                with postgres_store.transaction() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SELECT count(*) AS n FROM {autre}.ledger_events")
+                        ligne = cur.fetchone()
+                infos["devices"][autre[len(PREFIXE_DEVICE):]] = (
+                    ligne["n"] if isinstance(ligne, dict) else ligne[0]
+                )
+        except Exception as souci:
+            infos["devices_error"] = f"{type(souci).__name__}: {souci}"
 
     chemin = local_db.database_path()
     infos["sqlite_legacy"] = {

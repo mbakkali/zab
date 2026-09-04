@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-09-04 - One ledger schema per device, union views to read across
+
+- Trigger: mention
+- Context: after moving the ledger to Postgres in a single shared schema, the operator asked for one schema per device instead — one for the laptop, one for the VM.
+- Observation: a single shared schema makes two machines write to the same rows, and the origin of a row is then knowable only from a column somebody has to remember to fill. Isolating writes per device removes the conflict entirely, but on its own it also removes the one property that motivated the move: being able to see everything from either machine.
+- Improvement: the ledger now lives in `zab_<device>` — `zab_mac`, `zab_vm` — created on demand, while registries, state and metadata stay in the shared schema. Read scope is explicit: the default sees only this machine, and `--all-devices` (`all_devices=true` on the API) switches to views in `zab_all` that `UNION ALL` every device schema and add a `device` column, without which two rows from different machines would be indistinguishable once merged. Those views are rebuilt whenever a schema is ensured, so a machine that appears is visible without a manual step. Writing through the union scope fails rather than silently landing in the wrong schema — a union view is not updatable, and that is the desired behaviour. The schema name derives from the machine *kind*, not its hostname: a renamed laptop is still a laptop, where hostname-derived schemas would leave an orphan behind every rename. The name is the only string in the module that reaches SQL without a parameter marker, so it is sanitised to ASCII alphanumerics — `isalnum()` accepts accented characters, and those quote differently across clients. `zab ledger migrate-schema [--apply]` moves a ledger left in the shared schema, idempotently, without deleting the source.
+- Evidence: `uv run pytest zab/tests -q` green; five new unit tests pin the naming rule, the hostname fallback, the sanitiser and the override, none of them needing a database. On a real instance the move carried every ledger row into the device schema, and the union view reported the same total grouped by device.
+- Status: verified
+
 ## 2026-09-04 - The ledger lived in a second store nobody counted
 
 - Trigger: debug

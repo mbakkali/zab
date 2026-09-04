@@ -36,14 +36,9 @@ TABLES = (
     "brain_entities",
     "brain_edges",
     "brain_ingest_runs",
-    # Le Conversation Ledger. Absentes de cette liste jusqu'au 2026-09-04,
-    # `zab db status` affichait 18 tables et taisait 4 929 interactions,
-    # 220 work packets et 9 organisations restées côté SQLite.
-    "ledger_events",
-    "ledger_workpackets",
-    "ledger_projection_states",
-    "ledger_organizations",
-    "ledger_workstreams",
+    # Le Conversation Ledger n'est pas ici : il vit dans un schéma par machine
+    # (`zab_mac`, `zab_vm`), et `status()` le rapporte à part — le compter dans
+    # le schéma commun donnerait le total d'un magasin abandonné.
 )
 
 
@@ -409,6 +404,12 @@ def _migrate_v3(cur: Any) -> None:
 
 
 def _migrate_v4(cur: Any) -> None:
+    """Migration historique. Les tables `ledger_*` qu'elle crée dans le schéma
+    commun ne sont plus utilisées : depuis le 2026-09-04 le ledger vit dans un
+    schéma par machine (`zab_mac`, `zab_vm`), créé par `ledger_db`. Le DDL reste
+    ici parce qu'une migration déjà appliquée ne se réécrit pas — mais rien ne
+    lit ces tables. `zab ledger migrate-schema` déplace ce qui y traîne encore.
+    """
     cur.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {SCHEMA}.ledger_events (
@@ -552,6 +553,20 @@ def status() -> dict[str, Any]:
         payload["error"] = {"code": exc.code, "message": str(exc)}
     except Exception as exc:  # noqa: BLE001
         payload["error"] = {"code": "postgres_error", "message": f"{type(exc).__name__}: {str(exc).splitlines()[0][:240]}"}
+
+    # Le ledger vit dans un schéma par machine : le rapporter à part, sinon un
+    # `db status` complet ne dirait rien du magasin le plus volumineux.
+    try:
+        from zab.services import ledger_db
+
+        ledger = ledger_db.status()
+        payload["ledger"] = {
+            "schema": ledger.get("schema"),
+            "tables": ledger.get("tables"),
+            "devices": ledger.get("devices"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        payload["ledger"] = {"error": f"{type(exc).__name__}: {exc}"}
     return payload
 
 
