@@ -3714,6 +3714,36 @@ def vm_sync_cmd(
         )
 
 
+@vm_app.command("readiness")
+def vm_readiness_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Sortie JSON"),
+) -> None:
+    """Vérifie que la VM est prête pour un agent SSH : parité PATH login/non-login,
+    binaires attendus dans le PATH non-login, $HOME inscriptible."""
+    from zab.services import remote_vm
+
+    payload = remote_vm.readiness_report()
+    if json_out:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not payload.get("configured"):
+        typer.echo(typer.style(payload.get("error") or "remote_vm non configuré", fg=typer.colors.YELLOW))
+        raise typer.Exit(1)
+    if not payload.get("observable"):
+        typer.echo(typer.style(payload.get("error") or "ssh introuvable localement", fg=typer.colors.YELLOW))
+        raise typer.Exit(1)
+    for check in payload.get("checks") or []:
+        status = str(check.get("status") or "unknown")
+        color = {
+            "ok": typer.colors.GREEN,
+            "degraded": typer.colors.YELLOW,
+            "error": typer.colors.RED,
+        }.get(status, typer.colors.BRIGHT_BLACK)
+        typer.echo(typer.style(f"{check['id']}: {status}", fg=color) + f" — {check.get('detail')}")
+    if not payload.get("ok"):
+        raise typer.Exit(1)
+
+
 @vm_app.command("token")
 def vm_token_cmd(
     rotate: bool = typer.Option(False, "--rotate", help="Révoque le jeton actuel et en génère un nouveau."),

@@ -451,6 +451,122 @@ def test_sync_action_rejects_unknown_action(monkeypatch, tmp_path: Path) -> None
     assert "non autorisée" in out["error"]
 
 
+def test_readiness_not_configured(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    out = remote_vm.readiness_report()
+
+    assert out["configured"] is False
+
+
+def test_readiness_declares_when_ssh_is_absent(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: None)
+
+    out = remote_vm.readiness_report()
+
+    assert out["configured"] is True
+    assert out["observable"] is False
+    assert out["checks"] == []
+
+
+def _readiness_fake_run(login_path: str, non_login_path: str, *, missing_bins: tuple[str, ...] = (), home_writable: bool = True):
+    def fake_run(cmd: list[str], *, timeout: int = 30, env: dict[str, str] | None = None) -> tuple[int, str, str]:
+        tail = cmd[2:]
+        if tail == ["bash", "-lc", "echo $PATH"]:
+            return 0, login_path, ""
+        if tail == ["echo $PATH"]:
+            return 0, non_login_path, ""
+        if len(tail) == 1 and "command -v" in tail[0]:
+            lines = [
+                f"{bin_name}={'missing' if bin_name in missing_bins else 'ok'}"
+                for bin_name in remote_vm._READINESS_REQUIRED_BINS
+            ]
+            return 0, "\n".join(lines), ""
+        if tail == ['test -w "$HOME" && echo writable || echo not_writable']:
+            return 0, "writable" if home_writable else "not_writable", ""
+        raise AssertionError(cmd)
+
+    return fake_run
+
+
+def test_readiness_reports_ok_when_path_and_binaries_match(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(remote_vm, "_run", _readiness_fake_run("/usr/bin:/usr/local/bin", "/usr/bin:/usr/local/bin"))
+
+    out = remote_vm.readiness_report()
+
+    assert out["configured"] is True
+    assert out["observable"] is True
+    assert out["ok"] is True
+    by_id = {c["id"]: c["status"] for c in out["checks"]}
+    assert by_id["path_parity"] == "ok"
+    assert by_id["non_login_binaries"] == "ok"
+    assert by_id["home_writable"] == "ok"
+
+
+def test_readiness_flags_path_mismatch_and_missing_binary(tmp_path: Path, monkeypatch) -> None:
+    """Le piège réel : un binaire présent dans le PATH de login (interactif)
+    mais absent du PATH non-login est exactement ce qu'un agent lancé par
+    `ssh alias cmd` va rencontrer — la vérification doit le signaler, pas
+    seulement dire que la VM répond."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        remote_vm,
+        "_run",
+        _readiness_fake_run(
+            "/usr/bin:/usr/local/bin:/opt/homebrew/bin",
+            "/usr/bin",
+            missing_bins=("node",),
+        ),
+    )
+
+    out = remote_vm.readiness_report()
+
+    assert out["ok"] is False
+    by_id = {c["id"]: c["status"] for c in out["checks"]}
+    assert by_id["path_parity"] == "degraded"
+    assert by_id["non_login_binaries"] == "error"
+
+
+def test_readiness_flags_unwritable_home(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(remote_vm, "resolve_bin", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        remote_vm,
+        "_run",
+        _readiness_fake_run("/usr/bin", "/usr/bin", home_writable=False),
+    )
+
+    out = remote_vm.readiness_report()
+
+    assert out["ok"] is False
+    by_id = {c["id"]: c["status"] for c in out["checks"]}
+    assert by_id["home_writable"] == "error"
+
+
+def test_readiness_api_route(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path)
+    monkeypatch.setattr(
+        remote_vm,
+        "readiness_report",
+        lambda: {"configured": True, "observable": True, "ok": True, "checks": []},
+    )
+
+    client = TestClient(create_app())
+    resp = client.get("/api/remote-vm/readiness")
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
 def test_api_overview_and_cost(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     _write_config(tmp_path)

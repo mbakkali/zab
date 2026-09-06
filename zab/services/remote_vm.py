@@ -1035,6 +1035,120 @@ def sync_state() -> dict[str, Any]:
 # ── vue agrégée et actions ───────────────────────────────────────────────────
 
 
+# ── préparation d'un agent (readiness) ───────────────────────────────────────
+
+_READINESS_REQUIRED_BINS: tuple[str, ...] = ("git", "node", "python3")
+
+
+def readiness_report(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Vérifie, en lecture seule, qu'un agent lancé par SSH sur la VM aura ce
+    qu'il faut pour tourner.
+
+    Un shell de connexion interactif (login) lit les profils (`.bash_profile`,
+    `.zprofile`...) et expose souvent un PATH plus riche qu'une commande SSH
+    non-interactive (`ssh alias cmd`) — c'est pourtant ce second PATH qu'hérite
+    un agent lancé par l'automatisation, jamais le premier. Un binaire présent
+    en interactif mais absent du non-login casse silencieusement sous
+    l'automatisation, un piège déjà rencontré en pratique (voir
+    AGENT_IMPROVEMENTS.md, 2026-08-01) et jusqu'ici jamais vérifié par du code,
+    seulement par un audit manuel ponctuel.
+    """
+    cfg = cfg if cfg is not None else config()
+    if not is_configured(cfg):
+        return _not_configured("readiness")
+
+    alias = str(cfg.get("ssh_alias") or cfg["instance"])
+    out: dict[str, Any] = {"configured": True, "alias": alias, "observable": False, "checks": []}
+
+    ssh = resolve_bin("ssh")
+    if not ssh:
+        out["error"] = "ssh introuvable localement"
+        return out
+    out["observable"] = True
+
+    checks: list[dict[str, Any]] = []
+
+    login_code, login_out, login_err = _run([ssh, alias, "bash", "-lc", "echo $PATH"], timeout=15)
+    login_path = login_out.strip()
+    checks.append(
+        {
+            "id": "login_shell_reachable",
+            "status": "ok" if login_code == 0 and login_path else "error",
+            "detail": login_path[:300] if login_path else (login_err or "aucune sortie").strip()[:300],
+        }
+    )
+
+    nonlogin_code, nonlogin_out, nonlogin_err = _run([ssh, alias, "echo $PATH"], timeout=15)
+    nonlogin_path = nonlogin_out.strip()
+    checks.append(
+        {
+            "id": "non_login_shell_reachable",
+            "status": "ok" if nonlogin_code == 0 and nonlogin_path else "error",
+            "detail": nonlogin_path[:300] if nonlogin_path else (nonlogin_err or "aucune sortie").strip()[:300],
+        }
+    )
+
+    path_parity = bool(login_path) and login_path == nonlogin_path
+    checks.append(
+        {
+            "id": "path_parity",
+            "status": "ok" if path_parity else "degraded",
+            "detail": (
+                "PATH identique entre shell login et non-login"
+                if path_parity
+                else f"login={login_path[:150]!r} non_login={nonlogin_path[:150]!r}"
+            ),
+        }
+    )
+
+    if nonlogin_code == 0:
+        probe = " ; ".join(
+            f"command -v {bin_name} >/dev/null 2>&1 && echo {bin_name}=ok || echo {bin_name}=missing"
+            for bin_name in _READINESS_REQUIRED_BINS
+        )
+        probe_code, probe_out, probe_err = _run([ssh, alias, probe], timeout=15)
+        results = dict(line.split("=", 1) for line in probe_out.strip().splitlines() if "=" in line)
+        missing = [b for b in _READINESS_REQUIRED_BINS if results.get(b) != "ok"]
+        checks.append(
+            {
+                "id": "non_login_binaries",
+                "status": "ok" if probe_code == 0 and not missing else "error",
+                "detail": (
+                    f"manquants du PATH non-login: {', '.join(missing)}"
+                    if missing
+                    else "présents dans le PATH non-login: " + ", ".join(_READINESS_REQUIRED_BINS)
+                ),
+            }
+        )
+    else:
+        checks.append(
+            {
+                "id": "non_login_binaries",
+                "status": "unknown",
+                "detail": "non vérifiable : non_login_shell_reachable a échoué",
+            }
+        )
+
+    # Vérifie $HOME plutôt que ~/.config directement : un test en écriture reste
+    # en lecture seule (aucune création de répertoire), et $HOME existe toujours.
+    home_code, home_out, home_err = _run(
+        [ssh, alias, 'test -w "$HOME" && echo writable || echo not_writable'], timeout=15
+    )
+    home_detail = home_out.strip()
+    checks.append(
+        {
+            "id": "home_writable",
+            "status": "ok" if home_code == 0 and home_detail == "writable" else "error",
+            "detail": home_detail or (home_err or "aucune sortie").strip()[:200],
+        }
+    )
+
+    out["checks"] = checks
+    out["ok"] = all(c["status"] == "ok" for c in checks)
+    out["checked_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return out
+
+
 def overview() -> dict[str, Any]:
     """VM + SSH + sync en une lecture (sans requête de facturation)."""
     cfg = config()
