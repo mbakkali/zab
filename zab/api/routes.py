@@ -1754,6 +1754,13 @@ def remote_vm_ssh_api() -> dict[str, Any]:
     return remote_vm.ssh_state()
 
 
+@router.get("/remote-vm/readiness")
+def remote_vm_readiness_api() -> dict[str, Any]:
+    """Parité PATH login/non-login, binaires attendus et $HOME inscriptible sur la VM."""
+
+    return remote_vm.readiness_report()
+
+
 @router.post("/remote-vm/start")
 def remote_vm_start_api() -> dict[str, Any]:
     """Démarre la VM distante (via le script de pilotage si configuré)."""
