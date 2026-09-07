@@ -948,9 +948,14 @@ def channels_sync() -> None:
     # que la routine `ledger` le voie et que `history.jsonl` en garde la trace.
     en_panne = failing_channels(data)
     if en_panne:
-        console.print(f"[bold red]✖ {len(en_panne)} canal(aux) en erreur :[/bold red]")
         for c in en_panne:
-            console.print(f"   [red]- {describe_channel_failure(c)}[/red]")
+            console.print(f"[red]- {describe_channel_failure(c)}[/red]", soft_wrap=True)
+        # Le récapitulatif vient EN DERNIER, et nomme chaque canal : `step()` dans
+        # routine.sh ne consigne que les deux dernières lignes de la sortie. Un
+        # en-tête placé au-dessus du détail serait exactement ce qui manque au
+        # journal — on lirait « rc=1 » sans savoir quel canal est tombé.
+        ids = ", ".join(str(c.get("id") or c.get("label") or "?") for c in en_panne)
+        console.print(f"[bold red]✖ {len(en_panne)} canal(aux) en erreur : {ids}[/bold red]", soft_wrap=True)
         raise typer.Exit(1)
 
 

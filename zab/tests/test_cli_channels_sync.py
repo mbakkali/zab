@@ -57,6 +57,10 @@ def test_sync_echoue_sur_un_canal_en_erreur_et_le_nomme(monkeypatch) -> None:
     # rouvrir le cache pour savoir lequel des sept canaux est tombé.
     assert "whatsapp-evo" in result.stdout
     assert "timed out" in result.stdout
+    # `step()` ne consigne que les deux dernières lignes : le récapitulatif qui
+    # nomme les canaux doit être la dernière, sinon il n'atteint pas le journal.
+    derniere = [l for l in result.stdout.splitlines() if l.strip()][-1]
+    assert "whatsapp-evo" in derniere
 
 
 def test_sync_ne_echoue_pas_sur_degraded_ni_disabled(monkeypatch) -> None:
