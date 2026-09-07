@@ -918,7 +918,11 @@ app.add_typer(channels_app, name="channels")
 @channels_app.command(name="sync")
 def channels_sync() -> None:
     """Synchronise tous les canaux de communication et génère les actions du cockpit."""
-    from zab.services.communication_channels import sync_communication_channels
+    from zab.services.communication_channels import (
+        describe_channel_failure,
+        failing_channels,
+        sync_communication_channels,
+    )
     from rich.console import Console
 
     console = Console()
@@ -934,6 +938,34 @@ def channels_sync() -> None:
             
     console.print(f"[green]✔ Synchro terminée.[/green] {len(data.get('channels', []))} canaux synchronisés.")
     console.print(f"👉 Mails non lus : [bold cyan]{unread_emails}[/bold cyan] | Actions prioritaires détectées : [bold magenta]{actions_count}[/bold magenta]")
+
+    degraded = [c for c in data.get("channels", []) if (c.get("status") or "").lower() == "degraded"]
+    if degraded:
+        # Signalé, jamais fatal : voir CHANNEL_STATUS_FAILING dans le service.
+        console.print(f"[yellow]⚠ {len(degraded)} canal(aux) en mode dégradé (dépendance absente) — non bloquant.[/yellow]")
+
+    # Un canal en erreur sort en code retour non nul : c'est le seul moyen pour
+    # que la routine `ledger` le voie et que `history.jsonl` en garde la trace.
+    en_panne = failing_channels(data)
+    if en_panne:
+        console.print(f"[bold red]✖ {len(en_panne)} canal(aux) en erreur :[/bold red]")
+        for c in en_panne:
+            console.print(f"   [red]- {describe_channel_failure(c)}[/red]")
+        raise typer.Exit(1)
+
+
+def _channel_status_cell(channel: dict[str, Any]) -> str:
+    """Rend les trois états distinguables à l'œil — un dégradé durable n'est pas une panne."""
+    status = (channel.get("status") or "").lower()
+    reason = channel.get("reason") or ""
+    if status == "ok":
+        return "✔ OK"
+    if status == "disabled":
+        return "○ désactivé"
+    if status == "degraded":
+        return f"⚠ dégradé — {reason}" if reason else "⚠ dégradé"
+    return f"❌ {reason or 'Erreur'}"
+
 
 @channels_app.command(name="list")
 def channels_list(
@@ -977,7 +1009,7 @@ def channels_list(
             c.get("type", ""),
             c.get("connector", ""),
             c.get("org", "personal"),
-            "✔ OK" if c.get("status") == "ok" else f"❌ {c.get('reason', 'Erreur')}",
+            _channel_status_cell(c),
             summary_text
         )
 

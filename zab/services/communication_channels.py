@@ -486,6 +486,40 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Trois états, trois traitements — les confondre est ce qui a laissé WhatsApp
+# déconnecté trois semaines sans un signal.
+#
+#   error    : le fetcher a tourné et a échoué (HTTP, timeout, credentials
+#              refusées). C'est réparable, et personne ne le verra si la
+#              commande sort en 0. → code retour non nul.
+#   degraded : une dépendance manque (CLI absent, OAuth jamais fait, type sans
+#              fetcher). État durable — trois canaux sur sept y sont en
+#              permanence. Le faire échouer rendrait la routine rouge à chaque
+#              passage, et un voyant toujours rouge n'est plus lu : ce serait
+#              le même silence par un autre chemin. → neutre.
+#   disabled : canal éteint volontairement. → neutre.
+CHANNEL_STATUS_FAILING = ("error",)
+
+
+def failing_channels(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retourne les canaux dont le fetcher a échoué — ceux qui justifient une alerte."""
+    channels = payload.get("channels", []) if isinstance(payload, dict) else payload
+    return [
+        c
+        for c in channels
+        if isinstance(c, dict) and (c.get("status") or "").lower() in CHANNEL_STATUS_FAILING
+    ]
+
+
+def describe_channel_failure(channel: dict[str, Any]) -> str:
+    """Nomme le canal et la raison — un message d'échec qui ne fait pas rouvrir le JSON."""
+    name = channel.get("label") or channel.get("id") or "canal inconnu"
+    ident = channel.get("id")
+    if ident and ident != name:
+        name = f"{name} ({ident})"
+    return f"{name} : {channel.get('reason') or 'raison non renseignée'}"
+
+
 def sync_communication_channels() -> dict[str, Any]:
     """Déclenche la synchronisation de tous les canaux et consolide l'état (Postgres + local)."""
     channels = load_channels_config()

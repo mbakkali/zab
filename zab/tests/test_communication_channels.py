@@ -448,3 +448,41 @@ def test_convert_action_to_obsidian_task_postgres(monkeypatch, tmp_path) -> None
     assert daily_append_called is True
     queries = [q[0].strip() for q in mock_conn.cursor_obj.executed_queries]
     assert any("UPDATE zab_dashboard_actions SET" in q for q in queries)
+
+
+# ==========================================
+# CLASSEMENT DES ÉTATS DE CANAL
+# ==========================================
+# La sync a toujours écrit fidèlement `status: "error"` dans le cache, puis rendu
+# la main en 0 : la routine `ledger` affichait « ok » pendant qu'un canal était
+# en panne. Ces tests fixent la frontière — seul `error` alerte.
+
+
+def test_failing_channels_ne_retient_que_error() -> None:
+    payload = {
+        "channels": [
+            {"id": "alegria-email", "status": "ok"},
+            {"id": "slack-carrefour", "status": "degraded", "reason": "no_fetcher_for_type:slack"},
+            {"id": "vieux-canal", "status": "disabled", "reason": "channel_disabled"},
+            {"id": "whatsapp-evo", "status": "error", "reason": "evolution_http_error: timed out"},
+        ]
+    }
+    assert [c["id"] for c in cc.failing_channels(payload)] == ["whatsapp-evo"]
+
+
+def test_failing_channels_accepte_une_liste_nue_et_un_statut_absent() -> None:
+    assert cc.failing_channels([{"id": "sans-statut"}]) == []
+    assert [c["id"] for c in cc.failing_channels([{"id": "x", "status": "ERROR"}])] == ["x"]
+
+
+def test_describe_channel_failure_nomme_le_canal_et_la_raison() -> None:
+    msg = cc.describe_channel_failure(
+        {"id": "whatsapp-evo", "label": "WhatsApp (Evolution API)", "status": "error", "reason": "evolution_http_error: timed out"}
+    )
+    assert "WhatsApp (Evolution API)" in msg
+    assert "whatsapp-evo" in msg
+    assert "evolution_http_error: timed out" in msg
+
+
+def test_describe_channel_failure_sans_raison() -> None:
+    assert "raison non renseignée" in cc.describe_channel_failure({"id": "x", "status": "error"})
