@@ -486,3 +486,22 @@ def test_describe_channel_failure_nomme_le_canal_et_la_raison() -> None:
 
 def test_describe_channel_failure_sans_raison() -> None:
     assert "raison non renseignée" in cc.describe_channel_failure({"id": "x", "status": "error"})
+
+
+def test_cache_ecrit_en_0600(monkeypatch, tmp_path) -> None:
+    """Le cache recopie la clé Evolution en clair : il ne naît pas lisible par la machine."""
+    monkeypatch.setattr("zab.services.communication_channels.get_pg_connection", lambda: (None, None))
+    monkeypatch.setattr("zab.services.communication_channels.data_dir", lambda: tmp_path)
+    monkeypatch.setattr("zab.services.communication_channels.load_user_config", lambda: {
+        "communication_channels": [
+            {"id": "whatsapp-evo", "label": "WhatsApp", "type": "whatsapp", "connector": "evolution-api",
+             "credentials": {"evolution_api_key": "secret"}, "org": "flowmetrik"}
+        ]
+    })
+    monkeypatch.setattr("zab.services.communication_channels.fetch_for_channel", _stub_fetcher())
+
+    cc.sync_communication_channels()
+
+    cache = tmp_path / cc.CACHE_FILENAME
+    assert cache.is_file()
+    assert oct(cache.stat().st_mode & 0o777) == "0o600"

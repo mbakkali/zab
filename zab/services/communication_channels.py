@@ -457,6 +457,25 @@ def get_channels_cache_path() -> Path:
     return data_dir() / CACHE_FILENAME
 
 
+def _write_channels_cache(payload: dict[str, Any]) -> Path:
+    """Écrit l'export de compatibilité, lisible du seul propriétaire.
+
+    Ce fichier n'est qu'un miroir de debug — le store reste canonique — mais il
+    recopie le bloc `credentials` du canal, dont la clé Evolution en clair. Tant
+    qu'elle y est, le fichier n'a aucune raison d'être lisible par le reste de
+    la machine ; il naissait en 0644.
+    """
+    p = get_channels_cache_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+    try:
+        p.chmod(0o600)
+    except OSError:
+        pass  # système de fichiers sans permissions POSIX — l'écriture, elle, a réussi
+    return p
+
+
 def fetch_channels_cache() -> dict[str, Any]:
     """Charge le cache de synchronisation ou déclenche une synchro si absent."""
     db_actions = _store_load_dashboard_actions()
@@ -650,10 +669,7 @@ def sync_communication_channels() -> dict[str, Any]:
     }
 
     # Export de compatibilité pour debug; Postgres reste canonique.
-    p = get_channels_cache_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2, default=str)
+    _write_channels_cache(result)
     _store_update_channels(synced_channels)
     _store_replace_dashboard_actions(final_actions)
 
@@ -684,9 +700,7 @@ def dismiss_action_item(action_id: str) -> dict[str, Any]:
     cache["total_actions_count"] = len([a for a in actions if a.get("status") == "pending"])
     
     # Sauvegarder
-    p = get_channels_cache_path()
-    with p.open("w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2, default=str)
+    _write_channels_cache(cache)
     _store_replace_dashboard_actions([x for x in actions if isinstance(x, dict)])
         
     return cache
@@ -752,9 +766,7 @@ def convert_action_to_obsidian_task(action_id: str) -> dict[str, Any]:
     cache["total_actions_count"] = len([a for a in actions if a.get("status") == "pending"])
     
     # Sauvegarder le cache local
-    p = get_channels_cache_path()
-    with p.open("w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2, default=str)
+    _write_channels_cache(cache)
     _store_replace_dashboard_actions([x for x in actions if isinstance(x, dict)])
         
     return {
