@@ -222,7 +222,32 @@
     "npmAudit": "npm audit — zab-ui",
     "npmAuditHint": "Rapport npm audit dans zab-ui (nécessite package-lock.json)",
     "osvSkills": "OSV — dépôt skills",
-    "osvSkillsHint": "Même scanner sur la racine skills (config ~/.config/zab)."
+    "osvSkillsHint": "Même scanner sur la racine skills (config ~/.config/zab).",
+    "secretsHub": {
+      "title": "Vue par projet",
+      "subtitle": "Combien de secrets probables par projet, ce qui est écarté par le filtre de nom, et ce qui est déjà exclu car versionné — lecture seule.",
+      "tabHint": "Projets, secrets détectés, écartés, versionnés",
+      "counts": {
+        "referenced": "Référencées",
+        "plain": "En clair",
+        "process": "Environnement",
+        "missing": "Absentes"
+      },
+      "totalsLine": "{{projects}} projet(s) · {{detected}} secret(s) détecté(s) · {{skipped}} écarté(s) · {{versioned}} versionné(s) · {{scannedFiles}} fichier(s) .env balayé(s)",
+      "tableTitle": "Projets avec un .env",
+      "tableSubtitle": "Un couple organisation/projet par ligne — aucune valeur n'est jamais affichée.",
+      "columns": {
+        "org": "Organisation",
+        "project": "Projet",
+        "envFiles": "Fichiers .env",
+        "detected": "Secrets détectés",
+        "skipped": "Écartés (nom peu évocateur)",
+        "status": "Statut"
+      },
+      "statusVersioned": "Versionné — agrégé, pas miroité",
+      "statusNotMirrored": "Non versionné",
+      "empty": "Aucun projet avec un .env sous les racines déclarées."
+    }
   },
   "memory": {
     "title": "Mémoire",

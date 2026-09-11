@@ -304,3 +304,12 @@ Do not add user data, private workspace data, secrets, raw logs, or customer con
 - Improvement: prefer role-aware conversation projections for local personalization jobs, deduplicate user messages, and apply explicit secret, identifier and harness-noise filters before producing derived artifacts outside the repository.
 - Evidence: privacy-safe role/count queries, local vocabulary validation, and an exact-set downstream readback; no private rows, names or terms are stored here.
 - Status: verified
+
+## 2026-09-11 - Expose the secrets hub's per-project view in the dashboard
+
+- Trigger: code
+- Context: `secrets_hub.mirror_projects_to_provider(apply=False)` already computed, per `.env` file, which names look like secrets, which are skipped by the name filter, and which projects are aggregated instead of mirrored because they are version-controlled — but nothing surfaced that view; the dashboard only exposed the older per-variable sync flow.
+- Observation: the read-only aggregation (secrets detected / skipped / versioned, grouped by org and project) was straightforward to build on top of the existing service functions without touching the mirror/apply path at all.
+- Improvement: added a read-only API route (`GET /api/security/secrets-hub/overview`) that always calls the hub with `apply=False`, aggregates its `results`/`skipped`/`versioned_projects` by `(org, project)`, and returns only names, paths and counts — never a secret value. Added a matching "Projects" submenu in the Security screen (new `secrets-hub-projects-view.tsx` component, French/English labels) that only reads this route; no button in it can trigger a mirror, a push or a write to any `.env`.
+- Evidence: `uv run pytest zab/tests/test_secrets_hub_api.py -q` (new test, isolated via `tmp_path`/`HOME` monkeypatching, same fixture pattern as `test_secrets_hub.py`); `cd zab-ui && npm run build` succeeds with no TypeScript errors.
+- Status: verified

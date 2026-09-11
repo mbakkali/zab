@@ -222,7 +222,32 @@
     "npmAudit": "npm audit — zab-ui",
     "npmAuditHint": "npm audit report in zab-ui (requires package-lock.json)",
     "osvSkills": "OSV — skills repo",
-    "osvSkillsHint": "Same scanner on the skills root (~/.config/zab)."
+    "osvSkillsHint": "Same scanner on the skills root (~/.config/zab).",
+    "secretsHub": {
+      "title": "Projects view",
+      "subtitle": "How many likely secrets per project, what the name filter skips, and what's already excluded because it's versioned — read only.",
+      "tabHint": "Projects, detected, skipped, versioned",
+      "counts": {
+        "referenced": "Referenced",
+        "plain": "Plain",
+        "process": "Environment",
+        "missing": "Missing"
+      },
+      "totalsLine": "{{projects}} project(s) · {{detected}} secret(s) detected · {{skipped}} skipped · {{versioned}} versioned · {{scannedFiles}} .env file(s) scanned",
+      "tableTitle": "Projects with a .env",
+      "tableSubtitle": "One org/project pair per row — no value is ever shown.",
+      "columns": {
+        "org": "Organization",
+        "project": "Project",
+        "envFiles": ".env files",
+        "detected": "Secrets detected",
+        "skipped": "Skipped (name not telling)",
+        "status": "Status"
+      },
+      "statusVersioned": "Versioned — aggregated, not mirrored",
+      "statusNotMirrored": "Not versioned",
+      "empty": "No project with a .env under the declared roots."
+    }
   },
   "memory": {
     "title": "Memory",

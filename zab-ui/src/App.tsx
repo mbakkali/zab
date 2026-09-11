@@ -39,6 +39,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { SidebarNav, MobileNavDrawer, type NavId } from '@/components/sidebar-nav'
 import type { ChannelItem } from '@/components/channels-view'
+import { SecretsHubProjectsView } from '@/components/secrets-hub-projects-view'
 
 // Chaque vue est chargée à la demande (code-splitting) : le bundle initial ne
 // contient que le shell + la vue « overview », les autres pages téléchargent
@@ -1744,7 +1745,7 @@ type SecurityEnvOverviewPayload = {
   secret_sync?: SecuritySecretSyncPayload
 }
 
-type SecuritySubmenuId = 'env_files' | 'local_scans' | 'sync_secrets'
+type SecuritySubmenuId = 'env_files' | 'local_scans' | 'sync_secrets' | 'projects'
 
 function SecretManagerLogo({ className }: { className?: string }) {
   // Tracé local plutôt qu'une image distante : la pastille s'affiche même hors
@@ -2143,6 +2144,11 @@ function SecuritySection({
         ? `${secretSync.counts.pending} à créer · ${secretSync.counts.synced} sync`
         : `${envVars.length} variable(s)`,
     },
+    {
+      id: 'projects',
+      label: t('security.secretsHub.title'),
+      hint: t('security.secretsHub.tabHint'),
+    },
   ]
 
   return (
@@ -2152,7 +2158,7 @@ function SecuritySection({
         <p className="text-muted-foreground text-sm">{t('security.subtitle')}</p>
       </header>
 
-      <div className="grid gap-2 sm:grid-cols-3" role="tablist" aria-label="Sous-menus sécurité">
+      <div className="grid gap-2 sm:grid-cols-4" role="tablist" aria-label="Sous-menus sécurité">
         {securitySubmenus.map((item) => {
           const selected = securitySubmenu === item.id
           return (
@@ -2833,6 +2839,8 @@ function SecuritySection({
       </Card>
       </>
       ) : null}
+
+      {securitySubmenu === 'projects' ? <SecretsHubProjectsView /> : null}
     </div>
   )
 }

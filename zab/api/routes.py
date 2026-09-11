@@ -38,6 +38,7 @@ from zab.services import (
     request_logs,
     scan_persist,
     scanner,
+    secrets_hub,
     security_secret_sync,
     skills_fs,
     skills_registry,
@@ -2391,6 +2392,85 @@ def security_env_file_put(
         "path": str(target),
         "written": True,
         "backup": rel_backup,
+    }
+
+
+@router.get("/security/secrets-hub/overview")
+def security_secrets_hub_overview() -> dict[str, Any]:
+    """Vue par projet/organisation du hub de secrets — lecture seule.
+
+    Agrège ``mirror_projects_to_provider(apply=False)`` par ``(org, project)`` :
+    combien de secrets probables, combien écartés par le filtre de nom, et si le
+    couple est agrégé (projet versionné) plutôt que miroité. N'appelle jamais
+    ``apply=True`` : cet écran n'écrit ni dans Secret Manager ni dans un ``.env``.
+    Aucune valeur de secret ne transite ici — seulement des noms, des chemins et
+    des compteurs.
+    """
+    scan = secrets_hub.scan_tracked_values()
+    mirror = secrets_hub.mirror_projects_to_provider(apply=False)
+
+    versioned_keys = {
+        (v.get("org", ""), v.get("project", "")) for v in mirror.get("versioned_projects", [])
+    }
+
+    projects: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _bucket(org: str, project: str) -> dict[str, Any]:
+        key = (org, project)
+        bucket = projects.get(key)
+        if bucket is None:
+            bucket = {
+                "org": org,
+                "project": project,
+                "env_files": set(),
+                "detected_count": 0,
+                "skipped_count": 0,
+                "versioned": key in versioned_keys,
+            }
+            projects[key] = bucket
+        return bucket
+
+    for row in mirror.get("results", []):
+        bucket = _bucket(row.get("org", ""), row.get("project", ""))
+        bucket["detected_count"] += 1
+        path = row.get("path")
+        if path:
+            bucket["env_files"].add(path)
+
+    for row in mirror.get("skipped", []):
+        bucket = _bucket(row.get("org", ""), row.get("project", ""))
+        bucket["skipped_count"] += 1
+
+    # Un projet versionné n'a aucune ligne dans results (agrégé, jamais miroité) :
+    # sans ce passage, il resterait invisible du tableau alors que ses secrets
+    # existent bel et bien, simplement pas au même endroit.
+    for row in mirror.get("versioned_projects", []):
+        bucket = _bucket(row.get("org", ""), row.get("project", ""))
+        bucket["detected_count"] += 1
+
+    projects_payload = [
+        {
+            "org": bucket["org"],
+            "project": bucket["project"],
+            "env_file_count": len(bucket["env_files"]),
+            "detected_count": bucket["detected_count"],
+            "skipped_count": bucket["skipped_count"],
+            "versioned": bucket["versioned"],
+        }
+        for bucket in projects.values()
+    ]
+    projects_payload.sort(key=lambda p: (p["org"], p["project"]))
+
+    return {
+        "counts": scan["counts"],
+        "scanned_files": len(scan["scanned_files"]),
+        "projects": projects_payload,
+        "totals": {
+            "projects": len(projects_payload),
+            "detected": sum(p["detected_count"] for p in projects_payload),
+            "skipped": sum(p["skipped_count"] for p in projects_payload),
+            "versioned": sum(1 for p in projects_payload if p["versioned"]),
+        },
     }
 
 
