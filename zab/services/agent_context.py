@@ -370,7 +370,12 @@ def skills_manifest(
     rows: list[dict[str, Any]] = []
     for row in _iter_state_rows(state, ["skills"]):
         rs = str(row.get("registry_status") or "").lower()
-        if rs in ("candidate", "ignored", "conflict"):
+        # `candidate` is the default status every newly discovered skill gets — it
+        # is not a review queue nobody empties. Excluding it here made this manifest
+        # answer `total: 0` in production (341 candidate, 0 adopted, ever) while 527
+        # skills existed on disk. Only `ignored` (explicitly dismissed) and
+        # `conflict` (ambiguous canonical path) hide a skill from agents.
+        if rs in ("ignored", "conflict"):
             continue
         if org_n and str(row.get("org") or "").lower() != org_n:
             continue

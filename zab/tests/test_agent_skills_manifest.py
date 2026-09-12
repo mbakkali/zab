@@ -52,6 +52,43 @@ def test_agent_skills_manifest_exposes_cross_project_skills(monkeypatch, tmp_pat
     assert manifest["usage"]["inspect_command"] == "zab inspect skills <key> --json"
 
 
+def test_agent_skills_manifest_includes_candidate_status(monkeypatch) -> None:
+    """`candidate` is the default status every newly discovered skill gets, not a
+    review queue — a manifest that hides it answers `total: 0` even when hundreds
+    of skills exist on disk (constaté 2026-09-12 : 341 candidate, 0 adopted, ever).
+    Only `ignored` and `conflict` should hide a skill from agents."""
+
+    fake_state = {
+        "skills": {
+            "flowmetrik-secrets": {
+                "id": "flowmetrik-secrets",
+                "key": "flowmetrik-secrets",
+                "registry_status": "candidate",
+                "source": "global",
+            },
+            "dismissed-once": {
+                "id": "dismissed-once",
+                "key": "dismissed-once",
+                "registry_status": "ignored",
+                "source": "global",
+            },
+            "ambiguous-path": {
+                "id": "ambiguous-path",
+                "key": "ambiguous-path",
+                "registry_status": "conflict",
+                "source": "global",
+            },
+        }
+    }
+    monkeypatch.setattr(agent_context.state_index, "load_state", lambda: fake_state)
+
+    manifest = agent_context.skills_manifest()
+
+    ids = {row["id"] for row in manifest["skills"]}
+    assert ids == {"flowmetrik-secrets"}
+    assert manifest["total"] == 1
+
+
 def test_agent_skills_cli_outputs_manifest_json(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     cfg_dir = tmp_path / ".config" / "zab"
