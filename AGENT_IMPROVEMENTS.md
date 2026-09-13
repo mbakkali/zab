@@ -144,7 +144,8 @@ Do not add user data, private workspace data, secrets, raw logs, or customer con
 - Observation: three frictions. First, the digest reports an `intent` taken from the first user message, but some CLI providers prepend a boilerplate block (recommended plugins, environment context) so the intent field is identical across many unrelated conversations and unusable for triage. Second, project attribution is semantic, so sessions started inside a workspace directory can be labelled with a sub-project name, and there is no flag to select conversations by working directory. Third, `--limit` is capped at 300 while the retained set can be larger, and the truncation is silent for anyone filtering the result afterwards.
 - Improvement: skip known provider boilerplate prefixes when deriving `intent` and fall back to the first non-boilerplate user message; add an explicit working-directory filter alongside the semantic project match; and surface a clear "retained but not shown" count so downstream filters do not mistake truncation for an empty set.
 - Evidence: `zab conversations digest --days 14 --limit 300 --json` returns `scanned/retained/shown` counters where `retained > shown`, and repeated `intent` values for one provider.
-- Status: captured
+- Status: verified
+- Fix commits: the boilerplate-skip and retained/shown counters had already landed in the 2026-08-02 hygiene pass without this entry's status being flipped; the 2026-09-13 hygiene pass closed the remaining friction by adding `zab conversations digest --workdir <path>`, an exact filter on the transcript's own directory (independent of the fuzzy project/org matcher), with a new `skipped_workdir_conversations` counter for transparency and a regression test pinning that two conversations mentioning the same project keyword but started in different directories are told apart.
 
 ## 2026-07-29 - Make historical interaction backfills classifiable and storage-safe
 

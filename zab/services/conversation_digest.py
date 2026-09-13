@@ -57,8 +57,16 @@ def build_conversation_digest(
     include_subagents: bool = False,
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
+    workdir: str | None = None,
 ) -> dict[str, Any]:
-    """Construit un digest local sans ecrire dans Postgres."""
+    """Construit un digest local sans ecrire dans Postgres.
+
+    `workdir`, si fourni, filtre sur le chemin/wing du transcript lui-meme (le
+    repertoire ou la session a demarre) plutot que sur le rattachement projet
+    semantique : une session demarree dans un sous-dossier peut etre etiquetee
+    avec un nom de sous-projet par `_match_project`, ce qui rend ce
+    rattachement impropre a une selection exacte par repertoire de travail.
+    """
 
     now_utc = _ensure_aware(now or datetime.now(timezone.utc))
     window_since = _ensure_aware(since) if since is not None else now_utc - timedelta(days=max(1, int(days)))
@@ -79,10 +87,12 @@ def build_conversation_digest(
         )
     skipped_stale = int(collect_stats.get("skipped_stale", 0))
     project_rows = projects if projects is not None else discover_projects()
+    workdir_norm = _normalize_match_text(workdir) if workdir else None
 
     items: list[ConversationDigestItem] = []
     scanned_conversations = 0
     skipped_subagents = 0
+    skipped_workdir = 0
     provider_seen: Counter[str] = Counter()
     provider_retained: Counter[str] = Counter()
 
@@ -94,6 +104,9 @@ def build_conversation_digest(
         provider_seen[provider] += 1
         if not include_subagents and _is_subagent(doc):
             skipped_subagents += 1
+            continue
+        if workdir_norm and not _contains_phrase(_project_path_match_text(doc), workdir_norm):
+            skipped_workdir += 1
             continue
         updated_at = _document_updated_at(doc)
         if updated_at is None:
@@ -162,6 +175,8 @@ def build_conversation_digest(
         "batch_size": batch_n,
         "batches": batches,
         "skipped_subagents": skipped_subagents,
+        "workdir": workdir or None,
+        "skipped_workdir_conversations": skipped_workdir,
         "provider_counts": dict(sorted(provider_seen.items())),
         "retained_provider_counts": dict(sorted(provider_retained.items())),
         "org_counts": dict(org_counts.most_common()),
@@ -182,6 +197,7 @@ def build_conversation_digest_for_date(
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
     now: datetime | None = None,
+    workdir: str | None = None,
 ) -> dict[str, Any]:
     """Construit un digest pour une journee locale precise."""
 
@@ -201,6 +217,7 @@ def build_conversation_digest_for_date(
         include_subagents=include_subagents,
         documents=documents,
         projects=projects,
+        workdir=workdir,
     )
     payload["target_date"] = on.isoformat()
     payload["timezone"] = timezone_name
@@ -229,6 +246,11 @@ def format_conversation_digest_markdown(payload: dict[str, Any]) -> str:
     ]
     if int(payload.get("skipped_subagents") or 0):
         lines.append(f"Subagents ignores: {payload['skipped_subagents']}.")
+    if payload.get("workdir"):
+        lines.append(
+            f"Filtre repertoire de travail: `{payload['workdir']}` "
+            f"({payload.get('skipped_workdir_conversations') or 0} conversation(s) hors filtre)."
+        )
     lines.extend(["", "## Ce que tu as essaye de faire"])
 
     groups = payload.get("groups") or {}
