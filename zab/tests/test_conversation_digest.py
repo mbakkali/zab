@@ -227,6 +227,56 @@ def test_digest_for_date_uses_local_calendar_window_and_batches(tmp_path: Path) 
     assert payload["batches"] == [{"index": 1, "count": 1, "conversation_ids": ["hermes-abc"]}]
 
 
+def test_digest_workdir_filter_selects_exact_transcript_directory(tmp_path: Path, monkeypatch) -> None:
+    """`--workdir` filtre sur le repertoire reel du transcript, pas sur le
+    rattachement semantique : deux sessions peuvent toutes deux mentionner
+    "alpha" dans leur intention alors qu'elles ont demarre dans des
+    repertoires distincts (cf. AGENT_IMPROVEMENTS 2026-07-31)."""
+    monkeypatch.setattr(
+        "zab.services.conversation_digest.organization_slug_set_from_user_config",
+        lambda: {"example-client"},
+    )
+    in_alpha = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-alpha",
+        room="conversation",
+        path=tmp_path / "alpha.jsonl",
+        content="alpha",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:00:00Z", "content": "Avance sur alpha"},
+        ),
+    )
+    in_beta = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-beta",
+        room="conversation",
+        path=tmp_path / "beta.jsonl",
+        content="beta",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:05:00Z", "content": "Avance aussi sur alpha depuis beta"},
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[in_alpha, in_beta],
+        projects=[_project("alpha", "example-client", "/workspace/projects/client/alpha")],
+        workdir="/workspace/projects/client/alpha",
+    )
+
+    assert payload["shown_conversations"] == 1
+    assert payload["items"][0]["conversation_id"] == "alpha"
+    assert payload["skipped_workdir_conversations"] == 1
+    assert payload["workdir"] == "/workspace/projects/client/alpha"
+
+    md = format_conversation_digest_markdown(payload)
+    assert "Filtre repertoire de travail" in md
+    assert "1 conversation(s) hors filtre" in md
+
+
 def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     doc = AgentMemoryDocument(
         source="codex_transcript",
