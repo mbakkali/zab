@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-09-14 - A suspended database reads as a dropped connection
+
+- Trigger: CLI
+- Context: an operator asked to archive local agent conversations into Zab before pruning them from disk. The dry run succeeded; the real `conversations sync --providers <provider> --append` exited 1.
+- Observation: the only message Zab printed was `server closed the connection unexpectedly` from the local database port. The cause sat two layers down: the managed database instance behind the local auth proxy was in state `SUSPENDED` with reason `BILLING_ISSUE`, which the proxy logs as `409 invalidState` while still accepting TCP connections. Nothing on the Zab side distinguishes "network blip, retry" from "the instance is gone until someone pays". Worse for this workflow, the dry run never opens the database, so a clean dry run is no evidence that the write will land, and a pruning step gated only on "the dry run passed" would delete data that was never archived.
+- Improvement (proposed): before a write, open one real connection and fail with a named cause; when the DSN points at a local proxy port, say so and point at the proxy's journal. Have the dry run perform that same connection probe, so its green means the write can happen. Any downstream step that removes source files must key on the write report (`inserted_archive_documents + unchanged_archive_documents > 0`, no `failed_providers`), never on the dry run.
+- Evidence: proxy journal shows `409 invalidState` on every connection since the suspension; instance describe returns `state: SUSPENDED`, `suspensionReason: BILLING_ISSUE`.
+- Status: capture
+
 ## 2026-08-15 - A versioned project's secrets belong in the hub, not in the provider
 
 - Trigger: mention
