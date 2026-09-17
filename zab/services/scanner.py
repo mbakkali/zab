@@ -228,10 +228,29 @@ def _rel_contains_skip(rel: Path) -> bool:
     return any(part in _SCAN_SKIP_DIRS for part in rel.parts)
 
 
+def skills_scan_enabled() -> bool:
+    """``skills_scan: false`` dans ~/.config/zab/config.yaml coupe le balayage des SKILL.md.
+
+    Pourquoi ce commutateur (2026-09-17) : le balayage parcourt tout le répertoire personnel
+    (~50 s par passage) pour un inventaire qu'un autre outil tient déjà à jour — FlowSkills,
+    côté cowork. Deux collecteurs pour un même fait, c'est deux inventaires qui divergent ;
+    zab garde les projets, les CLIs et la mémoire, et rend les skills.
+    ``$ZAB_SKILLS_SCAN=1`` force le balayage pour un passage (diagnostic).
+    """
+    forced = os.environ.get("ZAB_SKILLS_SCAN")
+    if forced is not None:
+        return forced.strip().lower() not in {"0", "false", "no", "off"}
+    from zab.user_config import load_user_config
+
+    return bool(load_user_config().get("skills_scan", True))
+
+
 def scan_skill_md_files(root: Path) -> list[dict[str, Any]]:
     """
     Liste tous les fichiers nommés exactement SKILL.md sous root (ignore node_modules, .git…).
     """
+    if not skills_scan_enabled():
+        return []
     base = root.resolve()
     if not base.is_dir():
         return []
@@ -544,6 +563,9 @@ def workspace_scan(root: Path | None = None, *, allow_any_path: bool = False) ->
         "data_dir": str(data_dir()),
         "skill_md_count": len(skills),
         "skill_md_files": skills,
+        # Dire qu'on n'a pas regardé, plutôt que de laisser lire « aucun skill » : une liste
+        # vide et un balayage coupé ne se distinguent pas autrement.
+        "skills_scan": skills_scan_enabled(),
         "workspace_projects": discover_projects(),
         "clis": clis_block,
         "agentpipe": ap,
