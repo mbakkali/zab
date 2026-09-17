@@ -2217,6 +2217,11 @@ def skill_broadcast_cmd(
         typer.echo(typer.style(f"  → {tname}", bold=True))
         if tname == "claude":
             typer.echo(f"      dir            : {tres['skills_dir']}")
+            typer.echo(
+                f"      politique      : {tres['policy']} ({tres['filtered_out']} non diffusés)"
+            )
+            if tres["allowlist_missing"]:
+                typer.echo(f"      absents du magasin : {', '.join(tres['allowlist_missing'])}")
             typer.echo(f"      créés          : {len(tres['created'])}")
             typer.echo(f"      mis à jour     : {len(tres['updated'])}")
             typer.echo(f"      supprimés      : {len(tres['removed'])}")

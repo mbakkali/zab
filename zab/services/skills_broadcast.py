@@ -14,12 +14,21 @@ Le périmètre des skills est :
 - Chaque entrée de ``skills.external_dirs`` dans ``~/.hermes/config.yaml``
 - ``~/.config/secondbrain/skills/`` (skills perso versionnés)
 
+Politique d'exposition (``~/.config/zab/skills-policy.yml``, ou ``$ZAB_SKILLS_POLICY``) :
+un skill global est chargé dans **chaque** session Claude, quel que soit le projet, et
+il gagne sur un skill de projet du même nom. Diffuser tout le magasin Hermes revient
+donc à charger ses skills internes partout, et à masquer les versions à jour des skills
+de projet par des copies plus anciennes. Avec ``claude.mode: allowlist``, seuls les noms de
+``claude.global`` sont diffusés ; les autres entrées managées sont retirées au passage
+suivant. Sans fichier, ou avec ``mode: all``, le comportement historique est conservé.
+
 Idempotent. Safe à appeler depuis cron / launchd quotidien.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,6 +45,7 @@ HERMES_CONFIG_PATH = Path("~/.hermes/config.yaml").expanduser()
 SECONDBRAIN_SKILLS_DIR = Path("~/.config/secondbrain/skills").expanduser()
 MARKER_FILENAME = ".zab-managed.json"
 HERMES_DEFAULT_SKILLS_ROOT = Path("~/.hermes/skills").expanduser()
+DEFAULT_POLICY_PATH = Path("~/.config/zab/skills-policy.yml")
 
 
 @dataclass
@@ -47,6 +57,9 @@ class ClaudeResult:
     removed: list[str] = field(default_factory=list)
     skipped_existing: list[str] = field(default_factory=list)
     skipped_dup_name: list[str] = field(default_factory=list)
+    policy: str = "all"
+    filtered_out: int = 0
+    allowlist_missing: list[str] = field(default_factory=list)
     total_desired: int = 0
     total_managed: int = 0
     dry_run: bool = False
@@ -106,6 +119,29 @@ def enumerate_skills(roots: list[Path]) -> tuple[list[tuple[str, Path]], list[st
     return sorted(seen.items()), dupes
 
 
+def policy_path() -> Path:
+    return Path(os.environ.get("ZAB_SKILLS_POLICY") or DEFAULT_POLICY_PATH).expanduser()
+
+
+def load_claude_allowlist(path: Path | None = None) -> set[str] | None:
+    """Noms autorisés en global pour Claude, ou ``None`` si tout est diffusé.
+
+    Un fichier illisible ne doit pas vider ``~/.claude/skills`` : il lève, et le
+    passage quotidien échoue bruyamment au lieu de tout retirer en silence.
+    """
+    path = path or policy_path()
+    if not path.is_file():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    claude = data.get("claude") or {}
+    if (claude.get("mode") or "all") != "allowlist":
+        return None
+    names = claude.get("global")
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise ValueError(f"{path} : claude.global doit être une liste de noms de skills")
+    return {n.strip() for n in names if n.strip()}
+
+
 def _read_marker(marker_path: Path) -> dict[str, str]:
     if not marker_path.is_file():
         return {}
@@ -122,8 +158,16 @@ def broadcast_claude(
     *,
     target_dir: Path = CLAUDE_SKILLS_DIR,
     dry_run: bool = False,
+    allowlist: set[str] | None = None,
 ) -> ClaudeResult:
-    result = ClaudeResult(skills_dir=str(target_dir), dry_run=dry_run, total_desired=len(skills))
+    result = ClaudeResult(skills_dir=str(target_dir), dry_run=dry_run)
+    if allowlist is not None:
+        available = {name for name, _ in skills}
+        result.policy = "allowlist"
+        result.filtered_out = sum(1 for name, _ in skills if name not in allowlist)
+        result.allowlist_missing = sorted(allowlist - available)
+        skills = [(name, path) for name, path in skills if name in allowlist]
+    result.total_desired = len(skills)
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
     marker_path = target_dir / MARKER_FILENAME
@@ -226,7 +270,9 @@ def broadcast(
         dry_run=dry_run,
     )
     if "claude" in targets:
-        result.targets["claude"] = broadcast_claude(skills, dry_run=dry_run).__dict__
+        result.targets["claude"] = broadcast_claude(
+            skills, dry_run=dry_run, allowlist=load_claude_allowlist()
+        ).__dict__
     if "kimi" in targets:
         result.targets["kimi"] = broadcast_kimi(roots, dry_run=dry_run).__dict__
     return result
