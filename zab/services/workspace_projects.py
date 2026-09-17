@@ -139,6 +139,11 @@ def discover_skills_in_project(project_path: Path) -> list[Path]:
     for dot in (".cursor", ".claude"):
         discovered.extend(_iter_skill_md_under(root, subtree_name=dot, max_depth=12))
 
+    # skills/<id>/SKILL.md : bibliothèque de projet que l'agent ne charge pas d'office et
+    # qu'il expose par des liens dans .claude/skills — liens que ce scan ne suit pas. Sans
+    # elle, un projet dont .claude/skills n'est fait que de liens ne compte aucun skill.
+    discovered.extend(_iter_skill_md_under(root, subtree_name="skills", max_depth=2))
+
     seen: set[str] = set()
     uniq: list[Path] = []
     for p in discovered:
