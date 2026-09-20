@@ -212,6 +212,27 @@ def _meta(provider: str, **extra: Any) -> dict[str, Any]:
     return {"conversation_provider": provider, **extra}
 
 
+def _extract_cwd(raw_events: list[dict[str, Any]]) -> str | None:
+    """Read the session's working directory from its own transcript events.
+
+    Claude Code stamps a top-level `cwd` on most JSONL lines; Codex CLI carries
+    it under the `session_meta` event's `payload.cwd`. Checking both locations
+    on every event (rather than assuming a fixed line) keeps this resilient to
+    which line happens to carry it first, and simply finds nothing for
+    providers whose format never records a working directory.
+    """
+    for event in raw_events:
+        if not isinstance(event, dict):
+            continue
+        for holder in (event, event.get("payload"), event.get("message")):
+            if not isinstance(holder, dict):
+                continue
+            cwd = holder.get("cwd")
+            if isinstance(cwd, str) and cwd.strip():
+                return cwd.strip()
+    return None
+
+
 def _clean(text: str) -> str:
     return re.sub(r"\n{4,}", "\n\n\n", text.replace("\r\n", "\n")).strip()
 
@@ -466,7 +487,12 @@ def collect_claude_documents(
                         room="conversation",
                         path=path,
                         content=content,
-                        metadata=_meta(PROVIDER_CLAUDE, kind="claude_code_transcript", messages=list(messages)),
+                        metadata=_meta(
+                            PROVIDER_CLAUDE,
+                            kind="claude_code_transcript",
+                            messages=list(messages),
+                            cwd=_extract_cwd(raw_events),
+                        ),
                         raw_events=tuple(raw_events),
                         messages=tuple(messages),
                     )
@@ -493,7 +519,12 @@ def collect_codex_documents(
                     "conversation",
                     path,
                     content,
-                    _meta(PROVIDER_CODEX, kind="codex_session", messages=list(messages)),
+                    _meta(
+                        PROVIDER_CODEX,
+                        kind="codex_session",
+                        messages=list(messages),
+                        cwd=_extract_cwd(raw_events),
+                    ),
                     raw_events=tuple(raw_events),
                     messages=tuple(messages),
                 )
@@ -509,7 +540,12 @@ def collect_codex_documents(
                     "conversation",
                     history,
                     content,
-                    _meta(PROVIDER_CODEX, kind="codex_history", messages=list(messages)),
+                    _meta(
+                        PROVIDER_CODEX,
+                        kind="codex_history",
+                        messages=list(messages),
+                        cwd=_extract_cwd(raw_events),
+                    ),
                     raw_events=tuple(raw_events),
                     messages=tuple(messages),
                 )

@@ -14,10 +14,13 @@ from zab.services.agent_memory_import import (
     PROVIDER_CLAUDE,
     PROVIDER_GEMINI,
     PROVIDER_HERMES,
+    _extract_cwd,
     _parse_jsonl_transcript_arrays,
     _storage_metadata_stub,
     AgentMemoryDocument,
     collect_agent_memory_documents,
+    collect_claude_documents,
+    collect_codex_documents,
     collect_hermes_documents,
     discover_gemini_cli_status,
     discover_provider_dry_run_summary,
@@ -227,3 +230,53 @@ def test_collect_skips_transcripts_older_than_cutoff(tmp_path: Path, monkeypatch
     # Sans seuil, le fichier ancien reste collecté : le filtre est opt-in.
     all_docs = collect_agent_memory_documents(providers=frozenset({PROVIDER_CLAUDE}))
     assert sorted(d.path.name for d in all_docs) == ["recent.jsonl", "stale.jsonl"]
+
+
+def test_extract_cwd_reads_top_level_and_nested_payload() -> None:
+    """`digest --workdir` needs each session's real cwd; Claude Code stamps it at the
+    event's top level, Codex CLI nests it under `payload` on the session_meta line."""
+    assert _extract_cwd([{"type": "user", "cwd": "/workspace/projects/zab", "message": {}}]) == "/workspace/projects/zab"
+    assert (
+        _extract_cwd([{"type": "session_meta", "payload": {"id": "abc", "cwd": "/workspace/projects/zab"}}])
+        == "/workspace/projects/zab"
+    )
+    assert _extract_cwd([{"type": "user", "message": {}}]) is None
+    assert _extract_cwd([]) is None
+
+
+def test_collect_claude_documents_carries_cwd_into_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects = tmp_path / ".claude" / "projects" / "-workspace-projects-zab"
+    projects.mkdir(parents=True)
+    line = json.dumps(
+        {
+            "role": "user",
+            "cwd": "/workspace/projects/zab",
+            "message": {"content": [{"type": "text", "text": "bonjour"}]},
+        }
+    )
+    (projects / "session.jsonl").write_text(line + "\n", encoding="utf-8")
+
+    monkeypatch.setattr("zab.services.agent_memory_import.Path.home", lambda: tmp_path)
+    docs = collect_claude_documents()
+
+    assert len(docs) == 1
+    assert docs[0].metadata["cwd"] == "/workspace/projects/zab"
+
+
+def test_collect_codex_documents_carries_cwd_from_session_meta(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = tmp_path / ".codex" / "sessions"
+    sessions.mkdir(parents=True)
+    rows = [
+        {"type": "session_meta", "payload": {"id": "s1", "cwd": "/workspace/projects/zab"}},
+        {
+            "type": "response_item",
+            "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "bonjour"}]},
+        },
+    ]
+    (sessions / "rollout.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr("zab.services.agent_memory_import.Path.home", lambda: tmp_path)
+    docs = collect_codex_documents()
+
+    assert len(docs) == 1
+    assert docs[0].metadata["cwd"] == "/workspace/projects/zab"

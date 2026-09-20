@@ -55,6 +55,7 @@ def build_conversation_digest(
     limit: int = 80,
     batch_size: int = 10,
     include_subagents: bool = False,
+    workdir: str | None = None,
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -66,6 +67,7 @@ def build_conversation_digest(
     upper_bound = window_until if until is not None else window_until + RECENT_CLOCK_SKEW
     if window_until <= window_since:
         raise ValueError("until doit etre posterieur a since")
+    workdir_norm = _normalize_workdir(workdir)
     lim = max(1, min(int(limit), 300))
     batch_n = max(1, min(int(batch_size), 50))
     collect_stats: dict[str, int] = {}
@@ -83,6 +85,7 @@ def build_conversation_digest(
     items: list[ConversationDigestItem] = []
     scanned_conversations = 0
     skipped_subagents = 0
+    skipped_workdir = 0
     provider_seen: Counter[str] = Counter()
     provider_retained: Counter[str] = Counter()
 
@@ -94,6 +97,9 @@ def build_conversation_digest(
         provider_seen[provider] += 1
         if not include_subagents and _is_subagent(doc):
             skipped_subagents += 1
+            continue
+        if workdir_norm is not None and _normalize_workdir(doc.metadata.get("cwd")) != workdir_norm:
+            skipped_workdir += 1
             continue
         updated_at = _document_updated_at(doc)
         if updated_at is None:
@@ -162,6 +168,8 @@ def build_conversation_digest(
         "batch_size": batch_n,
         "batches": batches,
         "skipped_subagents": skipped_subagents,
+        "skipped_workdir": skipped_workdir,
+        "workdir": workdir_norm,
         "provider_counts": dict(sorted(provider_seen.items())),
         "retained_provider_counts": dict(sorted(provider_retained.items())),
         "org_counts": dict(org_counts.most_common()),
@@ -229,6 +237,8 @@ def format_conversation_digest_markdown(payload: dict[str, Any]) -> str:
     ]
     if int(payload.get("skipped_subagents") or 0):
         lines.append(f"Subagents ignores: {payload['skipped_subagents']}.")
+    if payload.get("workdir"):
+        lines.append(f"Filtre par repertoire de travail: {payload['workdir']} ({payload.get('skipped_workdir') or 0} ecartee(s)).")
     lines.extend(["", "## Ce que tu as essaye de faire"])
 
     groups = payload.get("groups") or {}
@@ -402,6 +412,13 @@ def _ensure_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _normalize_workdir(value: Any) -> str | None:
+    """Resolve `~` and drop a trailing slash so two spellings of one directory compare equal."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return str(Path(value.strip()).expanduser()).rstrip("/") or "/"
 
 
 def _useful_user_messages(doc: AgentMemoryDocument) -> list[str]:
