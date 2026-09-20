@@ -227,6 +227,46 @@ def test_digest_for_date_uses_local_calendar_window_and_batches(tmp_path: Path) 
     assert payload["batches"] == [{"index": 1, "count": 1, "conversation_ids": ["hermes-abc"]}]
 
 
+def test_digest_workdir_filter_keeps_only_matching_cwd_and_reports_skipped(tmp_path: Path) -> None:
+    """Project attribution is text-matched and can mislabel a session started inside a
+    sub-directory; `--workdir` lets an agent select by the session's real cwd instead."""
+    zab_session = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-zab",
+        room="conversation",
+        path=tmp_path / "zab.jsonl",
+        content="zab",
+        metadata={"conversation_provider": "claude", "cwd": "/workspace/projects/zab"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:00:00Z", "content": "Corrige le CLI de zab"},
+        ),
+    )
+    other_session = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-other",
+        room="conversation",
+        path=tmp_path / "other.jsonl",
+        content="autre",
+        metadata={"conversation_provider": "claude", "cwd": "/workspace/projects/other"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:05:00Z", "content": "Autre chose sans rapport"},
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[zab_session, other_session],
+        projects=[],
+        workdir="/workspace/projects/zab/",
+    )
+
+    assert payload["shown_conversations"] == 1
+    assert payload["items"][0]["path"] == str(tmp_path / "zab.jsonl")
+    assert payload["skipped_workdir"] == 1
+    assert payload["workdir"] == "/workspace/projects/zab"
+
+
 def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     doc = AgentMemoryDocument(
         source="codex_transcript",
