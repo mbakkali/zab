@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from zab.services.agent_memory_import import (
+    PROVIDER_CLAUDE,
     AgentMemoryDocument,
     collect_agent_memory_documents,
 )
@@ -57,9 +58,11 @@ def build_conversation_digest(
     include_subagents: bool = False,
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     """Construit un digest local sans ecrire dans Postgres."""
 
+    cwd_project_dir = _claude_project_dir_name(cwd) if cwd else None
     now_utc = _ensure_aware(now or datetime.now(timezone.utc))
     window_since = _ensure_aware(since) if since is not None else now_utc - timedelta(days=max(1, int(days)))
     window_until = _ensure_aware(until) if until is not None else now_utc
@@ -83,6 +86,7 @@ def build_conversation_digest(
     items: list[ConversationDigestItem] = []
     scanned_conversations = 0
     skipped_subagents = 0
+    skipped_cwd_mismatch = 0
     provider_seen: Counter[str] = Counter()
     provider_retained: Counter[str] = Counter()
 
@@ -92,6 +96,9 @@ def build_conversation_digest(
         scanned_conversations += 1
         provider = _provider(doc)
         provider_seen[provider] += 1
+        if cwd_project_dir is not None and not _matches_cwd(doc, provider, cwd_project_dir):
+            skipped_cwd_mismatch += 1
+            continue
         if not include_subagents and _is_subagent(doc):
             skipped_subagents += 1
             continue
@@ -161,6 +168,8 @@ def build_conversation_digest(
         "shown_conversations": len(limited),
         "batch_size": batch_n,
         "batches": batches,
+        "cwd_filter": cwd or None,
+        "skipped_cwd_mismatch": skipped_cwd_mismatch,
         "skipped_subagents": skipped_subagents,
         "provider_counts": dict(sorted(provider_seen.items())),
         "retained_provider_counts": dict(sorted(provider_retained.items())),
@@ -256,6 +265,24 @@ def format_conversation_digest_markdown(payload: dict[str, Any]) -> str:
 def _provider(doc: AgentMemoryDocument) -> str:
     raw = doc.metadata.get("conversation_provider")
     return str(raw or doc.source.replace("_transcript", "")).strip() or "unknown"
+
+
+def _claude_project_dir_name(path: str) -> str:
+    """Reproduit l'encodage de repertoire de Claude Code : chaque session vit sous
+    ``~/.claude/projects/<cwd-absolu-avec-slashs-remplaces-par-des-tirets>/``. On
+    encode la valeur donnee de la meme facon pour la comparer au nom de dossier
+    reel plutot que d'essayer de decoder ce dernier, une operation avec perte."""
+    resolved = str(Path(path).expanduser().resolve())
+    return resolved.replace("/", "-")
+
+
+def _matches_cwd(doc: AgentMemoryDocument, provider: str, project_dir_name: str) -> bool:
+    """Le filtre `--cwd` ne sait verifier que Claude Code aujourd'hui : c'est le
+    seul provider dont le chemin de stockage encode le repertoire de travail reel
+    de la session plutot qu'une simple date ou un identifiant opaque."""
+    if provider != PROVIDER_CLAUDE:
+        return False
+    return doc.path.parent.name == project_dir_name
 
 
 def _agent_tool(provider: str) -> str:

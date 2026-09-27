@@ -227,6 +227,56 @@ def test_digest_for_date_uses_local_calendar_window_and_batches(tmp_path: Path) 
     assert payload["batches"] == [{"index": 1, "count": 1, "conversation_ids": ["hermes-abc"]}]
 
 
+def test_digest_cwd_filter_selects_only_matching_claude_project_dir(tmp_path: Path) -> None:
+    """Une session lancee dans /workspace/projects/client/alpha peut se voir
+    attribuee a un sous-projet different par le rattachement semantique. Le
+    filtre --cwd doit permettre de retrouver exactement les sessions Claude Code
+    demarrees dans ce repertoire de travail, sans dependre de ce rattachement flou.
+    Claude Code nomme le dossier de chaque session d'apres le cwd absolu avec les
+    `/` remplaces par des `-` ; on reproduit cet encodage plutot que de le decoder."""
+    target_cwd = "/workspace/projects/client/alpha"
+    matching = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-alpha",
+        room="conversation",
+        path=tmp_path / "-workspace-projects-client-alpha" / "matching.jsonl",
+        content="alpha",
+        metadata={"conversation_provider": "claude"},
+        messages=({"role": "user", "timestamp": "2026-06-24T17:00:00Z", "content": "Corrige alpha"},),
+    )
+    other_project = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-client-beta",
+        room="conversation",
+        path=tmp_path / "-workspace-projects-client-beta" / "other.jsonl",
+        content="beta",
+        metadata={"conversation_provider": "claude"},
+        messages=({"role": "user", "timestamp": "2026-06-24T17:05:00Z", "content": "Corrige beta"},),
+    )
+    non_claude_same_dir_name = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "-workspace-projects-client-alpha" / "codex.jsonl",
+        content="alpha",
+        metadata={"conversation_provider": "codex"},
+        messages=({"role": "user", "timestamp": "2026-06-24T17:10:00Z", "content": "Corrige alpha aussi"},),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[matching, other_project, non_claude_same_dir_name],
+        projects=[],
+        cwd=target_cwd,
+    )
+
+    assert payload["shown_conversations"] == 1
+    assert payload["cwd_filter"] == target_cwd
+    assert payload["skipped_cwd_mismatch"] == 2
+    assert payload["items"][0]["conversation_id"] == "matching"
+
+
 def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     doc = AgentMemoryDocument(
         source="codex_transcript",
