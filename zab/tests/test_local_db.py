@@ -96,6 +96,24 @@ def test_state_roundtrip_normalizes_yaml_datetime(tmp_path: Path, monkeypatch) -
     assert loaded["skills"]["demo"]["updated_at"] == "2026-01-02T00:00:00+00:00"
 
 
+def test_replace_state_keeps_last_duplicate_item(tmp_path: Path, monkeypatch) -> None:
+    class DuplicateItems(dict):
+        def items(self):  # type: ignore[override]
+            return iter(
+                [
+                    ("user_config", {"version": 1}),
+                    ("user_config", {"version": 2}),
+                ]
+            )
+
+    monkeypatch.setenv("ZAB_LOCAL_DATABASE_PATH", str(tmp_path / "zab.db"))
+
+    local_db.replace_state({"sources": DuplicateItems()})
+    loaded = local_db.load_state()
+
+    assert loaded["sources"]["user_config"]["version"] == 2
+
+
 def test_search_state_matches_partial_multi_term_query(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ZAB_LOCAL_DATABASE_PATH", str(tmp_path / "zab.db"))
     state = {
