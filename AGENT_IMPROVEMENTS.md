@@ -322,3 +322,12 @@ Do not add user data, private workspace data, secrets, raw logs, or customer con
 - Improvement: added a read-only API route (`GET /api/security/secrets-hub/overview`) that always calls the hub with `apply=False`, aggregates its `results`/`skipped`/`versioned_projects` by `(org, project)`, and returns only names, paths and counts — never a secret value. Added a matching "Projects" submenu in the Security screen (new `secrets-hub-projects-view.tsx` component, French/English labels) that only reads this route; no button in it can trigger a mirror, a push or a write to any `.env`.
 - Evidence: `uv run pytest zab/tests/test_secrets_hub_api.py -q` (new test, isolated via `tmp_path`/`HOME` monkeypatching, same fixture pattern as `test_secrets_hub.py`); `cd zab-ui && npm run build` succeeds with no TypeScript errors.
 - Status: verified
+
+## 2026-09-28 - Classify a local connector-catalogue update
+
+- Trigger: CLI
+- Context: an agent classified a user-requested addition to a private local connection dashboard; account and customer details remained outside this public repository.
+- Observation: `zab workpacket intake` produced a stable idempotency key, grounding requirements, an approval boundary for external actions and a reread receipt requirement. Its keyword classifier interpreted a Gmail health probe as a communication action even though the requested change was local configuration.
+- Improvement: keep the conservative approval boundary, but distinguish configuring a connector health check from sending or mutating data through that connector.
+- Evidence: `zab workpacket intake "<anonymized local connector-catalogue signal>" --source codex --project flowmetrik-cowork --json`.
+- Status: captured
