@@ -254,3 +254,68 @@ def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     assert payload["shown_conversations"] == 1
     assert payload["items"][0]["org"] == "hors-org"
     assert payload["items"][0]["project"] == "side-project"
+
+
+def test_digest_workdir_filter_matches_session_cwd(tmp_path: Path) -> None:
+    # Le cwd d'une session n'est consigne nulle part dans `metadata` : Claude Code
+    # l'ecrit sur chaque evenement brut `user`, Codex sous `payload.cwd`.
+    matching_claude = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__zab",
+        room="conversation",
+        path=tmp_path / "claude.jsonl",
+        content="session zab",
+        metadata={"conversation_provider": "claude"},
+        raw_events=({"type": "user", "cwd": "/workspace/projects/zab/sub"},),
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T10:00:00Z", "content": "Travaille sur zab"},
+        ),
+    )
+    matching_codex = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "codex.jsonl",
+        content="session zab codex",
+        metadata={"conversation_provider": "codex"},
+        raw_events=({"type": "session_meta", "payload": {"cwd": "/workspace/projects/zab"}},),
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T11:00:00Z", "content": "Avance sur zab"},
+        ),
+    )
+    other_dir = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__autre",
+        room="conversation",
+        path=tmp_path / "autre.jsonl",
+        content="autre session",
+        metadata={"conversation_provider": "claude"},
+        raw_events=({"type": "user", "cwd": "/workspace/projects/autre"},),
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T12:00:00Z", "content": "Travaille sur autre"},
+        ),
+    )
+    no_cwd = AgentMemoryDocument(
+        source="hermes_transcript",
+        wing="hermes__session",
+        room="conversation",
+        path=tmp_path / "hermes.jsonl",
+        content="sans cwd",
+        metadata={"conversation_provider": "hermes", "hermes_session_id": "hermes-no-cwd"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T13:00:00Z", "content": "Sans cwd connu"},
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[matching_claude, matching_codex, other_dir, no_cwd],
+        projects=[],
+        workdir="/workspace/projects/zab",
+    )
+
+    assert payload["shown_conversations"] == 2
+    paths = {item["path"] for item in payload["items"]}
+    assert paths == {str(matching_claude.path), str(matching_codex.path)}
+    assert payload["window"]["workdir"] == "/workspace/projects/zab"

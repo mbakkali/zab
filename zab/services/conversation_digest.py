@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import hashlib
+import posixpath
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date as date_cls, datetime, timedelta, timezone
@@ -57,6 +58,7 @@ def build_conversation_digest(
     include_subagents: bool = False,
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
+    workdir: str | None = None,
 ) -> dict[str, Any]:
     """Construit un digest local sans ecrire dans Postgres."""
 
@@ -79,6 +81,7 @@ def build_conversation_digest(
         )
     skipped_stale = int(collect_stats.get("skipped_stale", 0))
     project_rows = projects if projects is not None else discover_projects()
+    workdir_norm = _normalize_workdir(workdir) if workdir else None
 
     items: list[ConversationDigestItem] = []
     scanned_conversations = 0
@@ -94,6 +97,8 @@ def build_conversation_digest(
         provider_seen[provider] += 1
         if not include_subagents and _is_subagent(doc):
             skipped_subagents += 1
+            continue
+        if workdir_norm is not None and not _matches_workdir(doc, workdir_norm):
             continue
         updated_at = _document_updated_at(doc)
         if updated_at is None:
@@ -150,6 +155,7 @@ def build_conversation_digest(
             "days": max(1, int(days)),
             "since": window_since.isoformat(),
             "until": window_until.isoformat(),
+            "workdir": workdir_norm,
         },
         # `scanned` reste le total considéré, que le transcript ait été lu ou écarté
         # sur sa seule date de modification : les compteurs restent comparables d'une
@@ -182,6 +188,7 @@ def build_conversation_digest_for_date(
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
     now: datetime | None = None,
+    workdir: str | None = None,
 ) -> dict[str, Any]:
     """Construit un digest pour une journee locale precise."""
 
@@ -201,6 +208,7 @@ def build_conversation_digest_for_date(
         include_subagents=include_subagents,
         documents=documents,
         projects=projects,
+        workdir=workdir,
     )
     payload["target_date"] = on.isoformat()
     payload["timezone"] = timezone_name
@@ -335,6 +343,33 @@ def _conversation_event_id_from_obj(obj: dict[str, Any]) -> str | None:
 def _is_subagent(doc: AgentMemoryDocument) -> bool:
     path = str(doc.path)
     return bool(doc.metadata.get("subagent")) or "/subagents/" in path or doc.wing.endswith("__subagents")
+
+
+def _normalize_workdir(path: str) -> str:
+    return posixpath.normpath(path.strip()).rstrip("/") or "/"
+
+
+def _document_cwd(doc: AgentMemoryDocument) -> str | None:
+    """Repertoire ou la session tournait, quand le provider l'a consigne (Claude
+    Code et Codex ecrivent `cwd` sur les evenements bruts, pas dans `metadata`)."""
+    for event in doc.raw_events:
+        val = event.get("cwd")
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        payload = event.get("payload")
+        if isinstance(payload, dict):
+            val = payload.get("cwd")
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    return None
+
+
+def _matches_workdir(doc: AgentMemoryDocument, workdir_norm: str) -> bool:
+    doc_cwd = _document_cwd(doc)
+    if doc_cwd is None:
+        return False
+    doc_norm = _normalize_workdir(doc_cwd)
+    return doc_norm == workdir_norm or doc_norm.startswith(workdir_norm + "/")
 
 
 def _document_updated_at(doc: AgentMemoryDocument) -> datetime | None:
