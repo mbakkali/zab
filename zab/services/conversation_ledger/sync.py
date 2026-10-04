@@ -12,10 +12,6 @@ from zab.services.conversation_ledger.channel_bindings import (
     check_channel_binding,
     list_channels,
 )
-from zab.services.conversation_ledger.org_profiles import INTERNAL_DOMAINS
-
-# Une boîte grand public identifie un tiers, pas l'utilisateur : elle discrimine.
-PUBLIC_MAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com", "hotmail.com", "outlook.com", "yahoo.com", "yahoo.fr"})
 from zab.services.conversation_ledger.entity_resolver import (
     build_entity_links,
     extract_contact_addresses,
@@ -33,8 +29,12 @@ from zab.services.conversation_ledger.normalizers import (
     normalize_imessage_message,
     normalize_whatsapp_message,
 )
+from zab.services.conversation_ledger.org_profiles import INTERNAL_DOMAINS
 from zab.services.conversation_ledger.store import set_source_cursor, upsert_event
 from zab.services.dotenv_locate import load_standard_dotenvs_once
+
+# Une boîte grand public identifie un tiers, pas l'utilisateur : elle discrimine.
+PUBLIC_MAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com", "hotmail.com", "outlook.com", "yahoo.com", "yahoo.fr"})
 
 
 def _now() -> str:
