@@ -43,6 +43,7 @@ class ConversationDigestItem:
     project_path: str | None
     match_reason: str | None
     user_message_count: int
+    cwd: str | None
 
 
 def build_conversation_digest(
@@ -57,6 +58,7 @@ def build_conversation_digest(
     include_subagents: bool = False,
     documents: Iterable[AgentMemoryDocument] | None = None,
     projects: list[dict[str, Any]] | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     """Construit un digest local sans ecrire dans Postgres."""
 
@@ -79,10 +81,12 @@ def build_conversation_digest(
         )
     skipped_stale = int(collect_stats.get("skipped_stale", 0))
     project_rows = projects if projects is not None else discover_projects()
+    cwd_filter = str(Path(cwd).expanduser().resolve()) if cwd else None
 
     items: list[ConversationDigestItem] = []
     scanned_conversations = 0
     skipped_subagents = 0
+    skipped_cwd_mismatch = 0
     provider_seen: Counter[str] = Counter()
     provider_retained: Counter[str] = Counter()
 
@@ -99,6 +103,10 @@ def build_conversation_digest(
         if updated_at is None:
             continue
         if updated_at < window_since or updated_at >= upper_bound:
+            continue
+        doc_cwd = _document_cwd(doc)
+        if cwd_filter is not None and not _cwd_matches(doc_cwd, cwd_filter):
+            skipped_cwd_mismatch += 1
             continue
         user_messages = _useful_user_messages(doc)
         if not user_messages:
@@ -123,6 +131,7 @@ def build_conversation_digest(
                 project_path=match.get("path"),
                 match_reason=match.get("reason"),
                 user_message_count=len(user_messages),
+                cwd=doc_cwd,
             )
         )
 
@@ -162,6 +171,8 @@ def build_conversation_digest(
         "batch_size": batch_n,
         "batches": batches,
         "skipped_subagents": skipped_subagents,
+        "cwd_filter": cwd_filter,
+        "skipped_cwd_mismatch": skipped_cwd_mismatch,
         "provider_counts": dict(sorted(provider_seen.items())),
         "retained_provider_counts": dict(sorted(provider_retained.items())),
         "org_counts": dict(org_counts.most_common()),
@@ -606,6 +617,34 @@ def _canonical_org(org: str | None) -> str | None:
     return "hors-org"
 
 
+def _document_cwd(doc: AgentMemoryDocument) -> str | None:
+    """Return the literal working directory a session ran in, when the provider stamps one.
+
+    Claude Code and Codex record an exact `cwd` on their JSONL turns, unlike `wing`
+    (a lossy, per-provider slug derived from the session's storage path) or the
+    free-text project/org match below — this is real data, not a guess, so it can
+    support an exact `--cwd` filter instead of only fuzzy attribution.
+    """
+    for event in doc.raw_events:
+        if not isinstance(event, dict):
+            continue
+        value = event.get("cwd")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _cwd_matches(doc_cwd: str | None, cwd_filter: str) -> bool:
+    if not doc_cwd:
+        return False
+    try:
+        candidate = Path(doc_cwd).resolve()
+    except (OSError, RuntimeError):
+        return False
+    target = Path(cwd_filter)
+    return candidate == target or candidate.is_relative_to(target)
+
+
 def _project_path_match_text(doc: AgentMemoryDocument) -> str:
     path = str(doc.path)
     if "/.hermes/_zab_session_export/" in path:
@@ -644,6 +683,7 @@ def _item_dict(item: ConversationDigestItem) -> dict[str, Any]:
         "project_path": item.project_path,
         "match_reason": item.match_reason,
         "user_message_count": item.user_message_count,
+        "cwd": item.cwd,
     }
 
 
