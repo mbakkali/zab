@@ -254,3 +254,73 @@ def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     assert payload["shown_conversations"] == 1
     assert payload["items"][0]["org"] == "hors-org"
     assert payload["items"][0]["project"] == "side-project"
+
+
+def test_digest_cwd_filter_selects_exact_working_directory(tmp_path: Path) -> None:
+    """Deux sessions peuvent viser le meme projet par rattachement semantique tout en
+    ayant tourne dans des repertoires differents (ex: un sous-module). `--cwd` doit
+    distinguer les deux, alors que le match projet/org seul ne le peut pas."""
+    in_scope = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-zab",
+        room="conversation",
+        path=tmp_path / "in-scope.jsonl",
+        content="zab",
+        metadata={"conversation_provider": "claude"},
+        raw_events=(
+            {"type": "user", "cwd": "/workspace/zab/zab-ui", "timestamp": "2026-06-24T10:00:00Z"},
+            {"type": "user", "cwd": "/workspace/zab/zab-ui", "timestamp": "2026-06-24T10:00:01Z"},
+        ),
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T10:00:01Z", "content": "Corrige le build de zab-ui"},
+        ),
+    )
+    out_of_scope = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-zab",
+        room="conversation",
+        path=tmp_path / "out-of-scope.jsonl",
+        content="zab",
+        metadata={"conversation_provider": "claude"},
+        raw_events=(
+            {"type": "user", "cwd": "/workspace/other-project", "timestamp": "2026-06-24T10:05:00Z"},
+            {"type": "user", "cwd": "/workspace/other-project", "timestamp": "2026-06-24T10:05:01Z"},
+        ),
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T10:05:01Z", "content": "Avance sur zab aussi"},
+        ),
+    )
+    no_cwd = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "no-cwd.jsonl",
+        content="zab",
+        metadata={"conversation_provider": "codex"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T10:10:00Z", "content": "Tache zab sans cwd connu"},
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[in_scope, out_of_scope, no_cwd],
+        projects=[_project("zab", "example-org", "/workspace/zab")],
+        cwd="/workspace/zab/zab-ui",
+    )
+
+    assert payload["shown_conversations"] == 1
+    assert payload["items"][0]["conversation_id"] == "in-scope"
+    assert payload["items"][0]["cwd"] == "/workspace/zab/zab-ui"
+    assert payload["skipped_cwd_mismatch"] == 2
+    assert payload["cwd_filter"] == "/workspace/zab/zab-ui"
+
+    unfiltered = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[in_scope, out_of_scope, no_cwd],
+        projects=[_project("zab", "example-org", "/workspace/zab")],
+    )
+    assert unfiltered["shown_conversations"] == 3
+    assert unfiltered["cwd_filter"] is None
