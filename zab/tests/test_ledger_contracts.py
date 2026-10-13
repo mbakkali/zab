@@ -823,6 +823,16 @@ def test_evolution_preflight_rejects_unresolved_secret_references(
     assert "EVOLUTION_API_KEY" in payload["detail"]
 
 
+def test_plane_preflight_reports_key_presence_without_value(monkeypatch) -> None:
+    from zab.services.conversation_ledger.preflight import check_plane
+
+    monkeypatch.setenv("PLANE_API_KEY", "plane-secret-value")
+    assert check_plane() == {"status": "ok", "detail": "PLANE_API_KEY set"}
+
+    monkeypatch.setenv("PLANE_API_KEY", "")
+    assert check_plane() == {"status": "degraded", "detail": "missing API key"}
+
+
 def test_fireflies_normalizer_uses_structured_summary_and_sentences() -> None:
     from zab.services.conversation_ledger.normalizers import normalize_fireflies_meeting
 

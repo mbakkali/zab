@@ -1,4 +1,4 @@
-"""Agrégation légère des tâches (GitLab, Linear, Notion) pour GET /api/tasks/inbox."""
+"""Agrégation légère des tâches (GitLab, Linear, Plane, Notion, GitHub) pour GET /api/tasks/inbox."""
 
 from __future__ import annotations
 
@@ -285,6 +285,115 @@ def _fetch_linear(token: str, team_keys: list[str], project_id: str | None = Non
     return out
 
 
+# Plane groupe ses états : backlog, unstarted, started, completed, cancelled (deux « l »).
+_PLANE_CLOSED_GROUPS = ("completed", "cancelled")
+
+
+def _plane_settings(entry: dict[str, Any]) -> dict[str, str]:
+    """Réglages Plane d'une source : champ de l'entrée, sinon PLANE_* (processus puis .env).
+
+    ``api_url``, ``workspace`` et ``project`` sont obligatoires ; ``public_url`` (liens
+    vers les tâches) vaut ``api_url`` par défaut. ``project`` est l'identifiant court
+    du projet (ex. ``ENG``) ou son UUID.
+    """
+    local_project_path = entry.get("local_project_path")
+
+    def pick(field: str, env_name: str) -> str | None:
+        value = entry.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return _token_for_with_fallbacks(env_name, [], local_project_path=local_project_path)
+
+    settings = {
+        "api_url": pick("api_url", "PLANE_URL"),
+        "workspace": pick("workspace", "PLANE_WORKSPACE"),
+        "project": pick("project", "PLANE_PROJECT"),
+    }
+    missing = {"api_url": "PLANE_URL", "workspace": "PLANE_WORKSPACE", "project": "PLANE_PROJECT"}
+    absent = [missing[k] for k, v in settings.items() if not v]
+    if absent:
+        raise ValueError(
+            f"configuration Plane incomplète : {', '.join(absent)} "
+            "(champ de la source ou variable d'environnement)"
+        )
+    settings["public_url"] = pick("public_url", "PLANE_PUBLIC_URL") or settings["api_url"]
+    return {k: str(v).rstrip("/") for k, v in settings.items()}
+
+
+def _fetch_plane(
+    token: str,
+    *,
+    api_url: str,
+    workspace: str,
+    project: str,
+    public_url: str | None = None,
+) -> list[dict[str, Any]]:
+    """Tâches ouvertes d'un projet Plane (API REST v1), les plus récemment modifiées d'abord.
+
+    Lecture seule : ``GET projects/``, ``GET projects/{id}/states/`` puis
+    ``GET projects/{id}/work-items/`` paginé par curseur.
+    """
+    base = f"{api_url.rstrip('/')}/api/v1/workspaces/{quote(workspace, safe='')}/"
+    links_root = (public_url or api_url).rstrip("/")
+    headers = {"X-Api-Key": token, "Accept": "application/json"}
+    out: list[dict[str, Any]] = []
+    with httpx.Client(timeout=_TIMEOUT, headers=headers) as client:
+
+        def pages(path: str, params: dict[str, Any] | None = None):
+            query: dict[str, Any] = {**(params or {}), "per_page": _PER_PAGE}
+            while True:
+                r = client.get(base + path, params=query)
+                r.raise_for_status()
+                body = r.json()
+                if isinstance(body, list):
+                    yield from body
+                    return
+                if not isinstance(body, dict):
+                    return
+                yield from body.get("results") or []
+                cursor = body.get("next_cursor")
+                if not body.get("next_page_results") or not cursor:
+                    return
+                query["cursor"] = cursor
+
+        proj = next(
+            (
+                p
+                for p in pages("projects/")
+                if isinstance(p, dict) and project in (p.get("identifier"), p.get("id"))
+            ),
+            None,
+        )
+        if proj is None:
+            raise RuntimeError(f"projet Plane {project!r} introuvable dans l'espace {workspace!r}")
+        identifier = str(proj.get("identifier") or project)
+        project_path = f"projects/{proj['id']}/"
+        states = {
+            s["id"]: s for s in pages(project_path + "states/") if isinstance(s, dict) and s.get("id")
+        }
+        for item in pages(project_path + "work-items/", {"order_by": "-updated_at"}):
+            if not isinstance(item, dict) or item.get("archived_at") or item.get("is_draft"):
+                continue
+            state = item.get("state")
+            state_obj = state if isinstance(state, dict) else states.get(state) or {}
+            if state_obj.get("group") in _PLANE_CLOSED_GROUPS:
+                continue
+            ref = f"{identifier}-{item.get('sequence_id')}"
+            out.append(
+                {
+                    "identifier": ref,
+                    "title": str(item.get("name") or "(sans titre)"),
+                    "url": f"{links_root}/{workspace}/browse/{ref}/",
+                    "state": str(state_obj.get("name") or ""),
+                    "updated_at": str(item.get("updated_at") or ""),
+                    "source_label": "Plane",
+                }
+            )
+            if len(out) >= _PER_PAGE:
+                break
+    return out
+
+
 def _dedupe_task_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Avoid duplicate issues when broad and project-specific sources overlap."""
     out: list[dict[str, Any]] = []
@@ -475,6 +584,8 @@ def _fetch_items_for_entry(entry: dict[str, Any], token: str) -> list[dict[str, 
             if m:
                 project_id = m.group(1)
         return _fetch_linear(token, list(entry.get("team_keys") or []), project_id=project_id)
+    if backend == "plane":
+        return _fetch_plane(token, **_plane_settings(entry))
     if backend == "github":
         return _fetch_github(token, list(entry.get("repos") or []))
     return _fetch_notion(

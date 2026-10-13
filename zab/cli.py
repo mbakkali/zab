@@ -66,7 +66,7 @@ from zab.services import skills_broadcast
 app = typer.Typer(no_args_is_help=True, help="CLI zab — dashboard, scan workspace et jobs du dépôt skills.")
 add_app = typer.Typer(help="Ajouter MCP (skills/configs), CLI watchlist, proxy API ou variable suivie (Sécurité).")
 app.add_typer(add_app, name="add")
-pm_env_app = typer.Typer(help="Jetons gestion de projet (GitLab / Linear / Notion) depuis les .env locaux.")
+pm_env_app = typer.Typer(help="Jetons gestion de projet (GitLab / Linear / Plane / Notion) depuis les .env locaux.")
 app.add_typer(pm_env_app, name="pm-env")
 projects_app = typer.Typer(help="Projets locaux sous projects_roots (skills + métadonnées Git).")
 app.add_typer(projects_app, name="projects")
@@ -108,7 +108,7 @@ app.add_typer(ws_app, name="ws")
 vm_app = typer.Typer(help="VM de dev distante : coût, heures, SSH et sync.", no_args_is_help=True)
 app.add_typer(vm_app, name="vm")
 
-tasks_app = typer.Typer(help="Gestion des tâches unifiée (GitLab, Linear, Notion, GitHub).", no_args_is_help=True)
+tasks_app = typer.Typer(help="Gestion des tâches unifiée (GitLab, Linear, Plane, Notion, GitHub).", no_args_is_help=True)
 app.add_typer(tasks_app, name="tasks")
 
 brain_app = typer.Typer(help="Zab-as-GBrain status et schema.", no_args_is_help=True)
@@ -2973,7 +2973,7 @@ def pm_env_sync_cmd(
     """Alias historique de `zab secrets collect`, limité aux jetons de gestion de projet."""
     typer.echo(
         typer.style(
-            "`zab pm-env sync` ne couvre que les jetons GitLab / Linear / Notion / GitHub. "
+            "`zab pm-env sync` ne couvre que les jetons GitLab / Linear / Plane / Notion / GitHub. "
             "`zab secrets collect` fait la même chose sur tout le catalogue suivi.",
             dim=True,
         )

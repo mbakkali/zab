@@ -108,7 +108,7 @@ zab is a thin orchestration layer: most capabilities come from **local CLIs and 
 | **Obsidian** | Vault list/read/search and quick-capture from agent context tools |
 | **[Open WebUI](https://github.com/open-webui/open-webui)** | `flowmetrik-openwebui/` — bridge to Hermes profiles (compose jobs in dashboard) |
 | **Security scanners** | OSV Scanner, `npm audit`, Gitleaks, `pip audit` (preset jobs, no secret echo) |
-| **PM / Git** | `gh`, GitLab / Linear / Notion via `task_sources` in config |
+| **PM / Git** | `gh`, GitLab / Linear / Plane / Notion / GitHub via `task_sources` in config |
 | **Coding agents** | Cursor, Claude Code, Codex, Kimi, Gemini CLI — indexed as code-tools, skills broadcast targets |
 
 Install only what you use; `zab doctor` and the dashboard **System check** tab report presence without failing the whole app.

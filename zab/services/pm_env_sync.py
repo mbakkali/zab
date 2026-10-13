@@ -1,4 +1,4 @@
-"""Scan des .env sous projects_roots + skills — fusion GITLAB_TOKEN / LINEAR_API_KEY / NOTION_TOKEN dans ~/.config/zab/.env."""
+"""Scan des .env sous projects_roots + skills — fusion GITLAB_TOKEN / LINEAR_API_KEY / PLANE_API_KEY / NOTION_TOKEN dans ~/.config/zab/.env."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from dotenv import dotenv_values
 from zab.paths import config_dir, skills_root_from_config_file_only
 from zab.user_config import projects_roots_resolved
 
-PM_KEYS: tuple[str, ...] = ("GITLAB_TOKEN", "LINEAR_API_KEY", "NOTION_TOKEN", "GITHUB_TOKEN")
+PM_KEYS: tuple[str, ...] = ("GITLAB_TOKEN", "LINEAR_API_KEY", "PLANE_API_KEY", "NOTION_TOKEN", "GITHUB_TOKEN")
 # Clés supplémentaires trouvées dans les .env projets (ex. Carrefour danmdata : jeton API projet GitLab).
 PM_SCAN_KEYS: tuple[str, ...] = (
     *PM_KEYS,

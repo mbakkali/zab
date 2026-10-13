@@ -89,13 +89,22 @@ tracked_env_extra: []
 #   - ~/projects/skills/.env
 #   - ~/.hermes/.env
 
-# Tâches agrégées : jetons GitLab / Linear / Notion — préférez ~/.config/zab/.env
+# Tâches agrégées : jetons GitLab / Linear / Plane / Notion — préférez ~/.config/zab/.env
 # (fusion : zab pm-env sync ou bouton dans l’onglet Tâches). Ne mettez pas de secrets dans ce YAML.
-# Liste task_sources pour GET /api/tasks/inbox — chaque entrée : id, label, backend (gitlab|linear|notion),
+# Liste task_sources pour GET /api/tasks/inbox — chaque entrée : id, label, backend (gitlab|linear|plane|notion|github),
 # routing_doc (chemin ou URL), mcp_hint (optionnel), local_project_path (optionnel),
-# env_token (défaut GITLAB_TOKEN / LINEAR_API_KEY / NOTION_TOKEN).
+# env_token (défaut GITLAB_TOKEN / LINEAR_API_KEY / PLANE_API_KEY / NOTION_TOKEN / GITHUB_TOKEN).
 # GitLab : host (défaut gitlab.com), path_with_namespace OU project_id ; optionnel assignee_username.
 # Linear : optionnel team_keys (clés d’équipe).
+# Plane : api_url, workspace, project (identifiant court, ex. ENG, ou UUID), public_url (liens,
+#   défaut api_url) — chaque champ absent se lit dans PLANE_URL / PLANE_WORKSPACE / PLANE_PROJECT /
+#   PLANE_PUBLIC_URL. Exemple :
+#   - id: team-plane
+#     label: Équipe (Plane)
+#     backend: plane
+#     api_url: https://plane.example.com
+#     workspace: my-workspace
+#     project: ENG
 # Notion : database_id ; notion_title_prop (défaut Name).
 # task_sources: []
 
@@ -707,8 +716,8 @@ def task_sources_from_user_config() -> tuple[list[dict[str, Any]], list[str]]:
         if not label:
             errors.append(f"{prefix} id={sid!r}: label manquant")
             continue
-        if backend not in ("gitlab", "linear", "notion", "github"):
-            errors.append(f"{prefix} id={sid!r}: backend invalide (gitlab|linear|notion|github)")
+        if backend not in ("gitlab", "linear", "plane", "notion", "github"):
+            errors.append(f"{prefix} id={sid!r}: backend invalide (gitlab|linear|plane|notion|github)")
             continue
 
         entry: dict[str, Any] = {
@@ -743,6 +752,10 @@ def task_sources_from_user_config() -> tuple[list[dict[str, Any]], list[str]]:
         elif backend == "linear":
             entry["env_token"] = env_token or "LINEAR_API_KEY"
             entry["team_keys"] = [k.upper() for k in _as_str_list(item.get("team_keys"))]
+        elif backend == "plane":
+            entry["env_token"] = env_token or "PLANE_API_KEY"
+            for key in ("api_url", "public_url", "workspace", "project"):
+                entry[key] = _as_str(item.get(key))
         elif backend == "github":
             entry["env_token"] = env_token or "GITHUB_TOKEN"
             entry["repos"] = _as_str_list(item.get("repos"))

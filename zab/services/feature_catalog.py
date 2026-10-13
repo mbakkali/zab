@@ -73,7 +73,7 @@ FEATURES: list[dict[str, Any]] = [
     {
         "id": "tasks",
         "category": "workspace",
-        "summary": "Agrège tickets GitLab, Linear et Notion configurés dans task_sources.",
+        "summary": "Agrège tickets GitLab, Linear, Plane, Notion et GitHub configurés dans task_sources.",
         "cli": ["zab pm-env sync"],
         "api": ["GET /api/tasks/inbox", "POST /api/tasks/pm-env/sync"],
         "files": ["~/.config/zab/config.yaml#task_sources", "~/.config/zab/.env"],

@@ -272,3 +272,233 @@ def test_check_single_source_http_error_reflected(tmp_path, monkeypatch):
     assert body["status"] == "error"
     assert "404" in (body.get("reason") or "")
     assert body["token_present"] is True
+
+
+# --- Plane -----------------------------------------------------------------
+
+_PLANE_PROJECT_ID = "11111111-2222-3333-4444-555555555555"
+
+
+def _plane_transport(seen: list):
+    """Instance Plane factice : un projet, des états, deux pages de work items."""
+    import httpx as _httpx
+
+    states = [
+        {"id": "st-todo", "name": "Todo", "group": "unstarted"},
+        {"id": "st-done", "name": "Done", "group": "completed"},
+        {"id": "st-cancel", "name": "Canceled", "group": "cancelled"},
+        {"id": "st-review", "name": "In Review", "group": "started"},
+    ]
+    page_1 = {
+        "results": [
+            {"id": "w1", "sequence_id": 12, "name": "Open task", "state": "st-todo",
+             "updated_at": "2026-01-03T00:00:00Z", "archived_at": None, "is_draft": False},
+            {"id": "w2", "sequence_id": 11, "name": "Closed task", "state": "st-done",
+             "updated_at": "2026-01-02T00:00:00Z"},
+        ],
+        "next_page_results": True,
+        "next_cursor": "100:1:0",
+    }
+    page_2 = {
+        "results": [
+            {"id": "w3", "sequence_id": 10, "name": "Cancelled task", "state": "st-cancel",
+             "updated_at": "2026-01-01T00:00:00Z"},
+            {"id": "w4", "sequence_id": 9, "name": "Archived task", "state": "st-todo",
+             "updated_at": "2026-01-01T00:00:00Z", "archived_at": "2026-01-01T00:00:00Z"},
+            {"id": "w5", "sequence_id": 8, "name": "Under review", "state": "st-review",
+             "updated_at": "2025-12-31T00:00:00Z"},
+        ],
+        "next_page_results": False,
+        "next_cursor": "100:2:0",
+    }
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        seen.append(request)
+        path = request.url.path
+        prefix = "/api/v1/workspaces/acme/"
+        assert path.startswith(prefix), path
+        rest = path[len(prefix):]
+        if rest == "projects/":
+            return _httpx.Response(200, json={"results": [
+                {"id": "other", "identifier": "OPS"},
+                {"id": _PLANE_PROJECT_ID, "identifier": "ENG"},
+            ], "next_page_results": False})
+        if rest == f"projects/{_PLANE_PROJECT_ID}/states/":
+            return _httpx.Response(200, json={"results": states, "next_page_results": False})
+        if rest == f"projects/{_PLANE_PROJECT_ID}/work-items/":
+            cursor = request.url.params.get("cursor")
+            return _httpx.Response(200, json=page_2 if cursor == "100:1:0" else page_1)
+        return _httpx.Response(404, json={"detail": "not found"})
+
+    return _httpx.MockTransport(handler)
+
+
+def _mock_plane_http(monkeypatch, seen: list) -> None:
+    import httpx as _httpx
+
+    real_client = _httpx.Client
+    transport = _plane_transport(seen)
+    monkeypatch.setattr(
+        "zab.services.tasks_inbox.httpx.Client",
+        lambda **kw: real_client(transport=transport, **{k: v for k, v in kw.items() if k != "transport"}),
+    )
+
+
+def test_plane_fetch_paginates_and_skips_closed_items(monkeypatch):
+    from zab.services.tasks_inbox import _fetch_plane
+
+    seen: list = []
+    _mock_plane_http(monkeypatch, seen)
+
+    rows = _fetch_plane(
+        "plane-test-key",
+        api_url="http://plane.internal:8080/",
+        workspace="acme",
+        project="ENG",
+        public_url="https://plane.example.com",
+    )
+
+    assert [r["identifier"] for r in rows] == ["ENG-12", "ENG-8"]
+    assert rows[0] == {
+        "identifier": "ENG-12",
+        "title": "Open task",
+        "url": "https://plane.example.com/acme/browse/ENG-12/",
+        "state": "Todo",
+        "updated_at": "2026-01-03T00:00:00Z",
+        "source_label": "Plane",
+    }
+    assert rows[1]["state"] == "In Review"
+    # Lecture seule, clé dans X-Api-Key (pas de Bearer), pagination par curseur.
+    assert {req.method for req in seen} == {"GET"}
+    assert all(req.headers.get("x-api-key") == "plane-test-key" for req in seen)
+    assert all("authorization" not in req.headers for req in seen)
+    work_item_calls = [req for req in seen if req.url.path.endswith("/work-items/")]
+    assert [req.url.params.get("cursor") for req in work_item_calls] == [None, "100:1:0"]
+    assert work_item_calls[0].url.params.get("order_by") == "-updated_at"
+
+
+def test_plane_fetch_accepts_project_uuid_and_reports_unknown_project(monkeypatch):
+    import pytest
+
+    from zab.services.tasks_inbox import _fetch_plane
+
+    _mock_plane_http(monkeypatch, [])
+    rows = _fetch_plane("k", api_url="http://plane.internal", workspace="acme", project=_PLANE_PROJECT_ID)
+    assert rows[0]["identifier"] == "ENG-12"
+    assert rows[0]["url"] == "http://plane.internal/acme/browse/ENG-12/"
+
+    with pytest.raises(RuntimeError, match="NOPE"):
+        _fetch_plane("k", api_url="http://plane.internal", workspace="acme", project="NOPE")
+
+
+def _write_task_sources(tmp_path, sources):
+    cfg = tmp_path / ".config" / "zab" / "config.yaml"
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    data["task_sources"] = sources
+    cfg.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def _clear_plane_env(monkeypatch):
+    for name in ("PLANE_API_KEY", "PLANE_URL", "PLANE_PUBLIC_URL", "PLANE_WORKSPACE", "PLANE_PROJECT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_task_sources_parse_plane_entry(tmp_path):
+    _write_task_sources(tmp_path, [
+        {"id": "eng", "label": "Eng (Plane)", "backend": "plane", "workspace": "acme", "project": "ENG"},
+        {"id": "bad", "label": "Bad", "backend": "jira"},
+    ])
+    sources, errs = task_sources_from_user_config()
+    assert len(sources) == 1
+    entry = sources[0]
+    assert entry["backend"] == "plane"
+    assert entry["env_token"] == "PLANE_API_KEY"
+    assert entry["workspace"] == "acme"
+    assert entry["project"] == "ENG"
+    assert entry["api_url"] is None and entry["public_url"] is None
+    assert any("gitlab|linear|plane|notion|github" in e for e in errs)
+
+
+def test_tasks_inbox_plane_settings_from_entry_then_env(tmp_path, monkeypatch):
+    _write_task_sources(tmp_path, [
+        {"id": "eng", "label": "Eng (Plane)", "backend": "plane", "project": "ENG"},
+    ])
+    _clear_plane_env(monkeypatch)
+    monkeypatch.setenv("PLANE_API_KEY", "plane-test-key")
+    monkeypatch.setenv("PLANE_URL", "http://plane.internal:8080/")
+    monkeypatch.setenv("PLANE_WORKSPACE", "acme")
+    monkeypatch.setenv("PLANE_PROJECT", "IGNORED")  # le champ de l'entrée prime
+
+    seen: dict = {}
+
+    def fake_fetch(token, **settings):
+        seen["token"] = token
+        seen.update(settings)
+        return [{"identifier": "ENG-1", "title": "T", "url": "u", "state": "Todo",
+                 "updated_at": "2026-01-01T00:00:00Z", "source_label": "Plane"}]
+
+    monkeypatch.setattr("zab.services.tasks_inbox._fetch_plane", fake_fetch)
+    body = TestClient(create_app()).get("/api/tasks/inbox").json()
+
+    assert body["sources"][0]["status"] == "ok"
+    assert body["sources"][0]["env_token"] == "PLANE_API_KEY"
+    assert seen == {
+        "token": "plane-test-key",
+        "api_url": "http://plane.internal:8080",
+        "workspace": "acme",
+        "project": "ENG",
+        "public_url": "http://plane.internal:8080",
+    }
+
+
+def test_tasks_inbox_plane_incomplete_config_is_an_error_without_network(tmp_path, monkeypatch):
+    _write_task_sources(tmp_path, [{"id": "eng", "label": "Eng (Plane)", "backend": "plane"}])
+    _clear_plane_env(monkeypatch)
+    monkeypatch.setenv("PLANE_API_KEY", "plane-test-key")
+
+    def no_network(*_a, **_k):
+        raise AssertionError("no HTTP call expected")
+
+    monkeypatch.setattr("zab.services.tasks_inbox._fetch_plane", no_network)
+    body = TestClient(create_app()).get("/api/tasks/inbox").json()
+
+    source = body["sources"][0]
+    assert source["status"] == "error"
+    for name in ("PLANE_URL", "PLANE_WORKSPACE", "PLANE_PROJECT"):
+        assert name in source["reason"]
+    assert "plane-test-key" not in str(body)
+
+
+def test_tasks_sources_add_recognises_plane_urls(tmp_path, monkeypatch):
+    monkeypatch.setattr("zab.services.tasks_inbox.sync_tasks_inbox", lambda: {})
+    client = TestClient(create_app())
+
+    r = client.post("/api/tasks/sources/add", json={"url": "https://plane.example.com/acme/browse/ENG-42/"})
+    assert r.status_code == 200, r.text
+    assert r.json()["source"] == {
+        "id": "plane-acme-eng",
+        "label": "Plane acme/ENG",
+        "backend": "plane",
+        "api_url": "https://plane.example.com",
+        "public_url": "https://plane.example.com",
+        "workspace": "acme",
+        "project": "ENG",
+        "url": "https://plane.example.com/acme/browse/ENG-42/",
+    }
+
+    r = client.post(
+        "/api/tasks/sources/add",
+        json={"url": f"https://app.plane.so/acme/projects/{_PLANE_PROJECT_ID}/issues/"},
+    )
+    assert r.status_code == 200, r.text
+    source = r.json()["source"]
+    assert source["api_url"] == "https://api.plane.so"
+    assert source["public_url"] == "https://app.plane.so"
+    assert source["project"] == _PLANE_PROJECT_ID
+
+    sources, errs = task_sources_from_user_config()
+    assert [s["backend"] for s in sources] == ["plane", "plane"]
+    assert not errs
+
+    r = client.post("/api/tasks/sources/add", json={"url": "https://example.com/acme/settings/"})
+    assert r.status_code == 400

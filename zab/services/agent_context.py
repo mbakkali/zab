@@ -1049,7 +1049,7 @@ def mcp_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "task_sources_status",
-            "description": "Liste les sources de tâches configurées (GitLab, Linear, Notion, GitHub) avec statut cache et présence de token masquée.",
+            "description": "Liste les sources de tâches configurées (GitLab, Linear, Plane, Notion, GitHub) avec statut cache et présence de token masquée.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {

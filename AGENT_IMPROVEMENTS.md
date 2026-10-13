@@ -3,6 +3,15 @@
 This file is a public-safe roadmap of frictions observed by agents while using Zab.
 Do not add user data, private workspace data, secrets, raw logs, or customer context.
 
+## 2026-10-13 - Plane as a task source next to Linear
+
+- Trigger: code
+- Context: an installation moved its tracker from Linear to a self-hosted Plane instance, keeping references, states and labels; only URLs changed. The tasks inbox could only read Linear, so after the move it would either go stale or keep polling the frozen tracker.
+- Observation: three differences break a straight port silently. Plane takes the key in `X-Api-Key` (no `Bearer`); its closed state group is spelled `cancelled` where Linear says `canceled`, so a copied filter lets cancelled items through; and the human reference (`ENG-12`) is not in the payload, it is `<project identifier>-<sequence_id>`. Plane is self-hostable, so no domain can identify it: URL recognition has to match the path shape (`/<workspace>/projects/<uuid>/`, `/<workspace>/browse/<REF>-<n>/`), not a host.
+- Improvement: new `plane` backend in `task_sources` with `api_url`, `workspace`, `project` (identifier or UUID) and `public_url` (links, defaults to `api_url`); each falls back to `PLANE_URL` / `PLANE_WORKSPACE` / `PLANE_PROJECT` / `PLANE_PUBLIC_URL`, token `PLANE_API_KEY`. Read-only httpx client with cursor pagination, capped at 100 open items like the Linear backend. Incomplete settings surface as a source error naming the missing variables, before any HTTP call. `PLANE_API_KEY` joins the PM key set (`pm-env sync`), the Security catalogue and the ledger preflight; `POST /api/tasks/sources/add` recognises Plane URLs. Linear stays available: switching trackers is a config change, not a code removal. The WorkPacket projection is still named `linear` and remains local-only.
+- Evidence: `uv run --frozen pytest zab/tests/test_tasks_inbox.py -q` (mock transport: GET only, `X-Api-Key`, cursor pagination, closed groups, archived items, URL recognition); a read-only run against a live instance returned the same first 100 references, in the same order and with the same URLs, as an independent client.
+- Status: verified
+
 ## 2026-09-14 - A suspended database reads as a dropped connection
 
 - Trigger: CLI

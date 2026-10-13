@@ -115,6 +115,15 @@ def check_linear() -> dict[str, Any]:
     }
 
 
+def check_plane() -> dict[str, Any]:
+    load_standard_dotenvs_once()
+    key = os.environ.get("PLANE_API_KEY", "").strip()
+    return {
+        "status": "ok" if key else "degraded",
+        "detail": "PLANE_API_KEY set" if key else "missing API key",
+    }
+
+
 def check_attio() -> dict[str, Any]:
     load_standard_dotenvs_once()
     key = os.environ.get("ATTIO_API_KEY", "").strip()
@@ -150,6 +159,7 @@ def run_preflight() -> dict[str, Any]:
         "fireflies": check_fireflies(),
         "whatsapp": check_evolution(),
         "linear": check_linear(),
+        "plane": check_plane(),
         "attio": check_attio(),
         "imessage": check_imessage(),
     }

@@ -1110,9 +1110,28 @@ def tasks_sources_add(body: TaskSourceAddBody) -> dict[str, Any]:
                 "repos": [repo],
                 "url": url
             }
-            
+    else:
+        # Plane : l'hôte est libre (auto-hébergé), on reconnaît la forme du chemin.
+        m = re.search(
+            r'^/([^/]+)/(?:projects/([0-9a-f-]{36})|browse/([A-Za-z][A-Za-z0-9]*)-\d+)(?:/|$)',
+            parsed.path,
+        )
+        if m and parsed.scheme in ("http", "https"):
+            workspace, project = m.group(1), m.group(2) or m.group(3).upper()
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            new_source = {
+                "id": f"plane-{workspace}-{project[:12]}".lower(),
+                "label": f"Plane {workspace}/{project[:12]}",
+                "backend": "plane",
+                "api_url": "https://api.plane.so" if parsed.netloc == "app.plane.so" else origin,
+                "public_url": origin,
+                "workspace": workspace,
+                "project": project,
+                "url": url,
+            }
+
     if not new_source:
-        raise HTTPException(status_code=400, detail="URL non reconnue (Notion, Linear, GitLab, GitHub attendus)")
+        raise HTTPException(status_code=400, detail="URL non reconnue (Notion, Linear, Plane, GitLab, GitHub attendus)")
         
     sources.append(new_source)
     cfg["task_sources"] = sources
@@ -1134,7 +1153,7 @@ class SkillsGithubSyncBody(BaseModel):
 
 @router.post("/tasks/pm-env/sync")
 def tasks_pm_env_sync(body: PmEnvSyncBody = Body(default_factory=PmEnvSyncBody)) -> dict[str, Any]:
-    """Scanne les .env sous projects_roots (+ skills/.env) et fusionne GITLAB_TOKEN / LINEAR_API_KEY / NOTION_TOKEN dans ~/.config/zab/.env."""
+    """Scanne les .env sous projects_roots (+ skills/.env) et fusionne GITLAB_TOKEN / LINEAR_API_KEY / PLANE_API_KEY / NOTION_TOKEN dans ~/.config/zab/.env."""
     return sync_pm_tokens_to_user_dotenv(force=body.force)
 
 

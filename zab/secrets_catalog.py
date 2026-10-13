@@ -43,6 +43,7 @@ LLM_VARS: tuple[str, ...] = (
 PM_VARS: tuple[str, ...] = (
     "GITLAB_TOKEN",
     "LINEAR_API_KEY",
+    "PLANE_API_KEY",
     "NOTION_TOKEN",
 )
 

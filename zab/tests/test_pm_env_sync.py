@@ -18,7 +18,7 @@ def test_sync_writes_zab_dotenv_from_projects(tmp_path) -> None:
     proj = proot / "demo-app"
     proj.mkdir()
     (proj / ".env").write_text(
-        "GITLAB_TOKEN=glpat-from-demo\nLINEAR_API_KEY=lin_from_demo\nOTHER=x\n",
+        "GITLAB_TOKEN=glpat-from-demo\nLINEAR_API_KEY=lin_from_demo\nPLANE_API_KEY=plane_from_demo\nOTHER=x\n",
         encoding="utf-8",
     )
 
@@ -32,9 +32,12 @@ def test_sync_writes_zab_dotenv_from_projects(tmp_path) -> None:
     assert summary["path"] == str(zab_env.resolve())
     assert "GITLAB_TOKEN" in summary["keys_updated"]
     assert "LINEAR_API_KEY" in summary["keys_updated"]
+    assert "PLANE_API_KEY" in summary["keys_updated"]
     vals = dotenv_values(zab_env)
     assert vals.get("GITLAB_TOKEN") == "glpat-from-demo"
     assert vals.get("LINEAR_API_KEY") == "lin_from_demo"
+    assert vals.get("PLANE_API_KEY") == "plane_from_demo"
+    assert "OTHER" not in vals
 
 
 def test_apply_loads_custom_task_source_env_token(tmp_path, monkeypatch) -> None:

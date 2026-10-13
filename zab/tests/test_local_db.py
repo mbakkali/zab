@@ -53,8 +53,11 @@ def test_tasks_cache_roundtrip(tmp_path: Path, monkeypatch) -> None:
     payload = {
         "generated_at_utc": "2026-01-01T00:00:00+00:00",
         "parse_errors": [],
-        "env_hints": {"LINEAR_API_KEY": False},
-        "sources": [{"id": "linear-main", "backend": "linear", "status": "ok"}],
+        "env_hints": {"LINEAR_API_KEY": False, "PLANE_API_KEY": True},
+        "sources": [
+            {"id": "linear-main", "backend": "linear", "status": "ok"},
+            {"id": "plane-main", "backend": "plane", "status": "ok"},
+        ],
         "all_tasks": [
             {
                 "source_id": "linear-main",
@@ -63,17 +66,26 @@ def test_tasks_cache_roundtrip(tmp_path: Path, monkeypatch) -> None:
                 "title": "Do the thing",
                 "state": "Todo",
                 "updated_at": "2026-01-02T00:00:00Z",
-            }
+            },
+            {
+                "source_id": "plane-main",
+                "source_label": "Plane",
+                "identifier": "ENG-7",
+                "title": "Review the thing",
+                "state": "In Review",
+                "updated_at": "2026-01-03T00:00:00Z",
+            },
         ],
-        "total_count": 1,
+        "total_count": 2,
     }
 
     local_db.replace_tasks_cache(payload)
     cached = local_db.load_tasks_cache()
 
     assert cached is not None
-    assert cached["total_count"] == 1
-    assert cached["all_tasks"][0]["identifier"] == "ABC-1"
+    assert cached["total_count"] == 2
+    assert {t["identifier"] for t in cached["all_tasks"]} == {"ABC-1", "ENG-7"}
+    assert {s["backend"] for s in cached["sources"]} == {"linear", "plane"}
 
 
 def test_state_roundtrip_normalizes_yaml_datetime(tmp_path: Path, monkeypatch) -> None:

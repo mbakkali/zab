@@ -23,7 +23,13 @@ def test_source_health_contract_masks_secret_values(monkeypatch) -> None:
                     "env_token": "LINEAR_API_KEY",
                     "token_present": True,
                     "cached_items_count": 2,
-                }
+                },
+                {
+                    "id": "plane",
+                    "env_token": "PLANE_API_KEY",
+                    "token_present": True,
+                    "cached_items_count": 3,
+                },
             ],
         },
     )
@@ -36,6 +42,7 @@ def test_source_health_contract_masks_secret_values(monkeypatch) -> None:
     assert all(row["status"] in ALLOWED_SOURCE_STATUSES for row in payload["sources"])
     dumped = json.dumps(payload)
     assert "LINEAR_API_KEY" in dumped
+    assert "PLANE_API_KEY" in dumped
     assert "super-secret-value" not in dumped
     assert all(row["auth"].get("secret_values_exposed") is False for row in payload["sources"])
 
