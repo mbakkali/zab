@@ -436,6 +436,8 @@ def replace_state(state: dict[str, Any]) -> None:
                     """
                     INSERT INTO state_sections (section, item_key, payload_json, updated_at)
                     VALUES (?, ?, ?, ?)
+                    ON CONFLICT(section, item_key)
+                    DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at
                     """,
                     (section, str(item_key), payload_json, now),
                 )
