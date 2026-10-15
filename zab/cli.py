@@ -2681,6 +2681,11 @@ def conversations_digest_cmd(
     ),
     limit: int = typer.Option(80, "--limit", min=1, max=300, help="Nombre maximal d'items affiches"),
     include_subagents: bool = typer.Option(False, "--include-subagents", help="Inclure les conversations de subagents"),
+    workdir: Optional[str] = typer.Option(
+        None,
+        "--workdir",
+        help="Ne garder que les sessions dont le repertoire de travail (cwd du transcript) correspond exactement",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Sortie JSON pour agents/scripts"),
 ) -> None:
     """Digest local des conversations recentes, annote avec projets/orgs Zab."""
@@ -2699,6 +2704,7 @@ def conversations_digest_cmd(
         providers=prov_set,
         limit=limit,
         include_subagents=include_subagents,
+        workdir=workdir,
     )
     if json_out:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
