@@ -390,7 +390,7 @@ def get_capabilities() -> dict[str, Any]:
             summary="List communication channels and cached action items; refresh can read external channels explicitly.",
             risk="external_read",
             core="zab.services.agent_context.channels_list",
-            cli="zab channels list",
+            cli="zab channels list --json",
             mcp="channels_list",
             api="GET /api/channels",
             ui="Channels / Cockpit",
