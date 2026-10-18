@@ -227,6 +227,74 @@ def test_digest_for_date_uses_local_calendar_window_and_batches(tmp_path: Path) 
     assert payload["batches"] == [{"index": 1, "count": 1, "conversation_ids": ["hermes-abc"]}]
 
 
+def test_digest_cwd_filter_keeps_only_matching_working_directory(tmp_path: Path) -> None:
+    """Project attribution is semantic (name/alias text matching) and can mislabel a
+    session started inside a workspace directory. `--cwd` filters on the working
+    directory the session actually recorded instead, read from its own events."""
+    in_zab = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-zab",
+        room="conversation",
+        path=tmp_path / "zab-session.jsonl",
+        content="session in zab",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:00:00Z", "content": "Lance les tests"},
+        ),
+        raw_events=({"cwd": "/workspace/projects/zab", "type": "user"},),
+    )
+    in_zab_subdir = AgentMemoryDocument(
+        source="codex_transcript",
+        wing="codex__sessions",
+        room="conversation",
+        path=tmp_path / "zab-sub-session.jsonl",
+        content="session in zab subdir",
+        metadata={"conversation_provider": "codex"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:05:00Z", "content": "Deploie la sous-app"},
+        ),
+        raw_events=({"type": "session_meta", "payload": {"cwd": "/workspace/projects/zab/sub-app"}},),
+    )
+    elsewhere = AgentMemoryDocument(
+        source="claude_code_transcript",
+        wing="claude__-workspace-projects-other",
+        room="conversation",
+        path=tmp_path / "other-session.jsonl",
+        content="session elsewhere",
+        metadata={"conversation_provider": "claude"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:10:00Z", "content": "Travaille sur autre chose"},
+        ),
+        raw_events=({"cwd": "/workspace/projects/other", "type": "user"},),
+    )
+    no_cwd_recorded = AgentMemoryDocument(
+        source="hermes_transcript",
+        wing="hermes__abc",
+        room="conversation",
+        path=tmp_path / "_zab_session_export" / "no-cwd.jsonl",
+        content="zab mentioned but no recorded cwd",
+        metadata={"conversation_provider": "hermes"},
+        messages=(
+            {"role": "user", "timestamp": "2026-06-24T17:15:00Z", "content": "Parle-moi de zab"},
+        ),
+    )
+
+    payload = build_conversation_digest(
+        days=2,
+        now=datetime(2026, 6, 25, 0, 0, tzinfo=timezone.utc),
+        documents=[in_zab, in_zab_subdir, elsewhere, no_cwd_recorded],
+        projects=[],
+        cwd="/workspace/projects/zab",
+    )
+
+    assert payload["shown_conversations"] == 2
+    conversation_ids = {item["conversation_id"] for item in payload["items"]}
+    assert conversation_ids == {"zab-session", "zab-sub-session"}
+    assert payload["skipped_cwd_mismatch"] == 2
+    assert payload["cwd_filter"] == "/workspace/projects/zab"
+    assert all(item["cwd"] is not None for item in payload["items"])
+
+
 def test_digest_canonicalizes_unknown_org_to_hors_org(tmp_path: Path) -> None:
     doc = AgentMemoryDocument(
         source="codex_transcript",
