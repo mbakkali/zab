@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -62,6 +63,9 @@ def _evolution_send(text: str) -> dict[str, Any]:
 
 
 def _telegram_send(text: str) -> dict[str, Any]:
+    if (Path.home() / ".config/flowmetrik/telegram-coupe").exists():
+        # Coupé par Mehdi le 2026-10-24 (mail de 7 h 30) ; retirer le fichier le rallume.
+        return {"sent": False, "skipped": True, "reason": "telegram_coupe", "channel": "telegram"}
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or "").strip()
     chat = (os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_NOTIFY_CHAT_ID") or "").strip()
     if not token or not chat:
