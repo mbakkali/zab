@@ -14,9 +14,8 @@ cli_watchlist:
   - gh
 
 proxies:
+  # La passerelle LiteLLM de Flowmetrik (tailnet seulement) : le seul accès aux modèles par API.
+  # La sonde appelle {base_url}/v1/models avec la clé virtuelle de zab.
   litellm:
-    base_url: "https://litellm.example.com"
-    api_key_env: "OPENAI_API_KEY"
-  openrouter:
-    base_url: "https://openrouter.ai/api/v1"
-    api_key_env: "OPENROUTER_API_KEY"
+    base_url: "https://litellm.tailef30ea.ts.net"
+    api_key_env: "LLM_API_KEY"

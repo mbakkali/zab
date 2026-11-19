@@ -9,6 +9,7 @@ import httpx
 import yaml
 
 from zab.paths import dashboard_local_tools_config_path
+from zab.services import llm
 
 
 def _load_yaml() -> dict[str, Any]:
@@ -34,7 +35,7 @@ def probe_models(kind: str) -> dict[str, Any]:
 
     base = (block.get("base_url") or "").rstrip("/")
     env_key_name = block.get("api_key_env") or (
-        "OPENROUTER_API_KEY" if kind == "openrouter" else "OPENAI_API_KEY"
+        "OPENROUTER_API_KEY" if kind == "openrouter" else llm.ENV_CLE
     )
     api_key = os.environ.get(str(env_key_name), "").strip()
     if not base:

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from zab.services import llm
 from zab.services.workspace_projects import infer_org_slug
 
 
@@ -50,8 +50,8 @@ def _extract_json(text: str) -> dict[str, object] | None:
 
 
 def _run_local_cli(provider: str, prompt: str, timeout_sec: int) -> str:
-    if provider == "openrouter":
-        return _run_openrouter(prompt, timeout_sec)
+    if provider == "passerelle":
+        return llm.chat(prompt, timeout=timeout_sec)
     if shutil.which(provider) is None:
         raise RuntimeError(f"{provider} absent du PATH")
     cmd_by_provider = {
@@ -65,35 +65,6 @@ def _run_local_cli(provider: str, prompt: str, timeout_sec: int) -> str:
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout).strip() or f"{provider} failed")
     return proc.stdout
-
-
-def _run_openrouter(prompt: str, timeout_sec: int) -> str:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY absent")
-    import httpx
-
-    model = os.environ.get("OPENROUTER_SKILL_ROUTER_MODEL", "deepseek/deepseek-chat")
-    response = httpx.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,
-        },
-        timeout=timeout_sec,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    choices = payload.get("choices") if isinstance(payload, dict) else None
-    if not choices:
-        raise RuntimeError("OpenRouter response without choices")
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, str):
-        raise RuntimeError("OpenRouter response without content")
-    return content
 
 
 def _heuristic(name: str, description: str, project_path: Path | None, org: str | None) -> SkillPlacement:
@@ -148,7 +119,7 @@ def choose_skill_placement(
         return fallback
     run = runner or _run_local_cli
     prompt = _prompt(name, description, project, org)
-    for provider in providers or ["gemini", "claude", "codex", "kimi", "openrouter"]:
+    for provider in providers or ["gemini", "claude", "codex", "kimi", "passerelle"]:
         try:
             raw = _extract_json(run(provider, prompt, timeout_sec))
             if raw is None:
