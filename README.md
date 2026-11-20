@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **Archived (2026-11-20).** zab is no longer maintained and this repository is read-only. The code stays available for reference; no new releases, issues or pull requests will be accepted.
+
 <p align="center">
   <img src="docs/assets/zab-logo.png" alt="zab logo" width="120" />
 </p>
